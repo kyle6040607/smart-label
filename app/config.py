@@ -1,7 +1,7 @@
 """應用設定。
 
 集中管理路徑、門檻、模型開關等可調參數。
-之後要接 MySQL / MongoDB（提案第 9 頁）就在這裡加連線設定。
+之後要接 MySQL / MongoDB 就在這裡加連線設定。
 """
 from __future__ import annotations
 

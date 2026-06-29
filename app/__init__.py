@@ -1,4 +1,4 @@
-"""Flask 應用工廠（提案第 9 頁：Flask 網頁開發）。
+"""Flask 應用。
 
 create_app() 建立 app、初始化 Repository 與 Pipeline，註冊 API blueprint。
 單一進入點，方便測試與部署（Docker / GCP）。
