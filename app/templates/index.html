@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智慧分割標記助手</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <header>
+    <h1>智慧分割標記助手</h1>
+    <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
+  </header>
+
+  <main>
+    <!-- 1. 上傳 -->
+    <section class="panel">
+      <h2>1 · 上傳照片</h2>
+      <input type="file" id="fileInput" multiple accept="image/*" />
+      <button id="uploadBtn">上傳</button>
+      <div id="thumbs" class="thumbs"></div>
+    </section>
+
+    <!-- 2. 標記畫布 -->
+    <section class="panel">
+      <h2>2 · 標記 / 分割</h2>
+      <div class="toolbar">
+        <button id="autoSegBtn" disabled>自動分割整張</button>
+        <button id="drawBtn" disabled>✏️ 手動描邊</button>
+        <span class="hint" id="modeHint">點物件做單點分割</span>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="canvas"></canvas>
+      </div>
+    </section>
+
+    <!-- 3. 審核佇列 + 統計 -->
+    <aside class="panel side">
+      <h2>3 · 審核與成果</h2>
+      <div id="stats" class="stats"></div>
+
+      <h3>已建立的類別</h3>
+      <ul id="labelList" class="labels"></ul>
+
+      <h3>低信心待審（標紅）</h3>
+      <ul id="reviewQueue" class="queue"></ul>
+
+      <h3>匯出資料集</h3>
+      <div class="export">
+        <select id="exportFormat">
+          <option value="coco">COCO（instance seg）</option>
+          <option value="yolo">YOLOv8-seg</option>
+          <option value="mask">Mask PNG（語意分割）</option>
+        </select>
+        <button id="exportBtn">下載 ZIP</button>
+        <p class="hint">只匯出已標好類別的片段（圖 + 遮罩 + 標籤）</p>
+      </div>
+    </aside>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

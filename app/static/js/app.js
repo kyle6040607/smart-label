@@ -1,0 +1,285 @@
+// 智慧分割標記助手 — 前端最小可用版
+// 流程：上傳 → 選圖 → 自動/單點分割 → 標種子 → 審核紅色低信心片段 → 看統計
+"use strict";
+
+const state = { currentImage: null, drawMode: false, drawing: false, points: [] };
+const $ = (id) => document.getElementById(id);
+
+const canvas = $("canvas");
+const ctx = canvas.getContext("2d");
+
+// 把滑鼠座標換算成 canvas（原圖）座標
+function toImageXY(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: Math.round((e.clientX - rect.left) * (canvas.width / rect.width)),
+    y: Math.round((e.clientY - rect.top) * (canvas.height / rect.height)),
+  };
+}
+
+// ---------- 上傳 ----------
+$("uploadBtn").onclick = async () => {
+  const files = $("fileInput").files;
+  if (!files.length) return alert("先選檔案");
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+  const res = await fetch("/api/images", { method: "POST", body: fd });
+  if (!res.ok) return alert("上傳失敗：" + (await res.text()));
+  await loadThumbs();
+};
+
+async function loadThumbs() {
+  const imgs = await (await fetch("/api/images")).json();
+  const box = $("thumbs");
+  box.innerHTML = "";
+  imgs.forEach((im) => {
+    const wrap = document.createElement("div");
+    wrap.className = "thumb";
+
+    const el = document.createElement("img");
+    el.src = `/api/images/${im.id}/file`;
+    el.title = im.filename;
+    el.onclick = () => selectImage(im, el);
+
+    const del = document.createElement("button");
+    del.className = "thumb-del";
+    del.textContent = "×";
+    del.title = "刪除這張";
+    del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
+
+    wrap.append(el, del);
+    box.appendChild(wrap);
+  });
+}
+
+async function deleteImage(im) {
+  if (!confirm(`確定刪除「${im.filename}」？連同它的遮罩會一起清掉。`)) return;
+  const res = await fetch(`/api/images/${im.id}`, { method: "DELETE" });
+  if (!res.ok) return alert("刪除失敗：" + (await res.text()));
+  // 若刪的是目前選中的圖，清空畫布
+  if (state.currentImage && state.currentImage.id === im.id) {
+    state.currentImage = null;
+    $("autoSegBtn").disabled = true;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  await loadThumbs();
+  await refreshSidebar();
+}
+
+// ---------- 選圖並畫到 canvas ----------
+function selectImage(im, el) {
+  state.currentImage = im;
+  document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
+  el.classList.add("active");
+  $("autoSegBtn").disabled = false;
+  $("drawBtn").disabled = false;
+
+  const pic = new Image();
+  pic.onload = () => {
+    canvas.width = pic.width;
+    canvas.height = pic.height;
+    ctx.drawImage(pic, 0, 0);
+  };
+  pic.src = `/api/images/${im.id}/file`;
+}
+
+// ---------- 自動分割整張 ----------
+$("autoSegBtn").onclick = async () => {
+  if (!state.currentImage) return;
+  const res = await fetch(`/api/images/${state.currentImage.id}/segment`, { method: "POST" });
+  const segs = await res.json();
+  await redraw(segs);
+  await refreshSidebar();
+};
+
+// ---------- 模式切換：手動描邊 ----------
+$("drawBtn").onclick = () => {
+  state.drawMode = !state.drawMode;
+  $("drawBtn").classList.toggle("on", state.drawMode);
+  canvas.style.cursor = state.drawMode ? "crosshair" : "crosshair";
+  $("modeHint").textContent = state.drawMode
+    ? "按住滑鼠沿物件邊界拖曳，放開即完成描邊"
+    : "點物件做單點分割";
+};
+
+// ---------- 單點分割（一般模式：點 canvas）----------
+canvas.onclick = async (e) => {
+  if (!state.currentImage || state.drawMode) return;
+  const { x, y } = toImageXY(e);
+  const res = await fetch(`/api/images/${state.currentImage.id}/segment_point`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ x, y }),
+  });
+  const seg = await res.json();
+  const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+  await redraw(all);
+  await refreshSidebar();
+  promptLabel(seg);
+};
+
+// ---------- 手動描邊（draw 模式：按住拖曳描邊界）----------
+canvas.onmousedown = (e) => {
+  if (!state.currentImage || !state.drawMode) return;
+  state.drawing = true;
+  state.points = [toImageXY(e)];
+};
+
+canvas.onmousemove = (e) => {
+  if (!state.drawing) return;
+  const p = toImageXY(e);
+  state.points.push(p);
+  // 即時畫出正在描的線
+  ctx.strokeStyle = "#ffd93d";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const a = state.points[state.points.length - 2];
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+};
+
+canvas.onmouseup = async () => {
+  if (!state.drawing) return;
+  state.drawing = false;
+  const points = state.points.map((p) => [p.x, p.y]);
+  state.points = [];
+  if (points.length < 3) {
+    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+    return redraw(all); // 點太少，取消
+  }
+  const res = await fetch(`/api/images/${state.currentImage.id}/segment_polygon`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ points }),
+  });
+  if (!res.ok) return alert("描邊失敗：" + (await res.text()));
+  const seg = await res.json();
+  const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+  await redraw(all);
+  await refreshSidebar();
+  promptLabel(seg);
+};
+
+// ---------- 把遮罩疊回圖上：高信心綠框、低信心紅框 ----------
+async function redraw(segments) {
+  const pic = new Image();
+  await new Promise((r) => { pic.onload = r; pic.src = `/api/images/${state.currentImage.id}/file`; });
+  ctx.drawImage(pic, 0, 0);
+  for (const s of segments) {
+    const [x, y, w, h] = s.bbox;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = s.needs_review ? "#ff5470" : "#36d399";
+    ctx.strokeRect(x, y, w, h);
+    if (s.final_label) {
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.font = "14px sans-serif";
+      ctx.fillText(`${s.final_label} ${s.confidence.toFixed(2)}`, x + 2, y + 14);
+    }
+  }
+}
+
+// 點完一塊後問使用者類別，存成種子範例
+async function promptLabel(seg) {
+  const label = prompt("這塊是什麼類別？（留空跳過）");
+  if (!label) return;
+  await fetch(`/api/segments/${seg.id}/label`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+  await redraw(all);
+  await refreshSidebar();
+}
+
+// 刪掉建錯的類別（連同它的種子範例，並回訓）
+async function deleteLabel(name) {
+  if (!confirm(`刪除類別「${name}」？它的種子範例會一起清掉。`)) return;
+  const res = await fetch(`/api/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!res.ok) return alert("刪除失敗：" + (await res.text()));
+  if (state.currentImage) {
+    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+    await redraw(all);
+  }
+  await refreshSidebar();
+}
+
+// 片段有變動後重畫目前的圖 + 更新側欄
+async function refreshAfterSegChange() {
+  if (state.currentImage) {
+    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+    await redraw(all);
+  }
+  await refreshSidebar();
+}
+
+// ---------- 右側：統計 + 審核佇列 ----------
+async function refreshSidebar() {
+  const stats = await (await fetch("/api/stats")).json();
+  $("stats").innerHTML = `
+    總片段：${stats.total_segments}<br>
+    自動接受：<b>${stats.auto_accepted}</b>（省下工時 ≈ <b>${(stats.auto_ratio * 100).toFixed(0)}%</b>）<br>
+    待審：${stats.need_review} · 已審：${stats.reviewed}<br>
+    範例數：${stats.num_examples} · 類別數：${stats.num_labels}`;
+
+  const labels = await (await fetch("/api/labels")).json();
+  const ll = $("labelList");
+  ll.innerHTML = "";
+  if (!labels.length) ll.innerHTML = "<li class='hint'>尚未建立任何類別</li>";
+  labels.forEach((name) => {
+    const li = document.createElement("li");
+    li.textContent = name;
+    const del = document.createElement("button");
+    del.className = "label-del";
+    del.textContent = "×";
+    del.title = "刪除這個類別";
+    del.onclick = () => deleteLabel(name);
+    li.appendChild(del);
+    ll.appendChild(li);
+  });
+
+  const queue = await (await fetch("/api/review/queue")).json();
+  const ul = $("reviewQueue");
+  ul.innerHTML = "";
+  queue.forEach((s) => {
+    const li = document.createElement("li");
+    const probs = Object.entries(s.probs)
+      .map(([k, v]) => `${k}:${v.toFixed(2)}`)
+      .join(" · ") || "（尚無範例可分類）";
+    li.innerHTML = `
+      <div>預測：${s.predicted_label ?? "—"} · 信心 ${s.confidence.toFixed(2)}</div>
+      <div class="probs">${probs}</div>
+      <div style="margin-top:6px">
+        <input placeholder="正確類別" data-seg="${s.id}" />
+        <button class="confirm">確認</button>
+        <button class="seg-del" title="刪掉這個切壞的片段">刪除</button>
+      </div>`;
+    li.querySelector(".confirm").onclick = async () => {
+      const label = li.querySelector("input").value.trim();
+      if (!label) return;
+      await fetch(`/api/segments/${s.id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label }),
+      });
+      await refreshAfterSegChange();
+    };
+    li.querySelector(".seg-del").onclick = async () => {
+      await fetch(`/api/segments/${s.id}`, { method: "DELETE" });
+      await refreshAfterSegChange();
+    };
+    ul.appendChild(li);
+  });
+}
+
+// ---------- 匯出資料集（專案的最終產出：圖 + 遮罩 + 標籤）----------
+$("exportBtn").onclick = () => {
+  const fmt = $("exportFormat").value;
+  // 直接導向下載端點，瀏覽器自動存檔
+  window.location = `/api/export?format=${encodeURIComponent(fmt)}`;
+};
+
+// 初始載入
+loadThumbs();
+refreshSidebar();
