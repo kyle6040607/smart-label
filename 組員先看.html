@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Label Platform - 4週計畫 PPT</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft JhengHei', '微軟正黑體', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .presentation {
+            width: 100%;
+            max-width: 1000px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .slide {
+            display: none;
+            min-height: 600px;
+            padding: 60px 80px;
+            background: linear-gradient(135deg, #ffffff 0%, #f5f7fa 100%);
+            animation: fadeIn 0.5s;
+        }
+
+        .slide.active {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        /* 標題投影片 */
+        .title-slide {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+        }
+
+        .title-slide h1 {
+            font-size: 3.5em;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .title-slide p {
+            font-size: 1.5em;
+            opacity: 0.95;
+            margin-bottom: 10px;
+        }
+
+        .title-slide .subtitle {
+            font-size: 1.2em;
+            opacity: 0.8;
+            margin-top: 40px;
+        }
+
+        /* 內容投影片 */
+        h2 {
+            font-size: 2.5em;
+            color: #667eea;
+            margin-bottom: 30px;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 15px;
+        }
+
+        h3 {
+            font-size: 1.8em;
+            color: #764ba2;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+
+        p, li {
+            font-size: 1.1em;
+            line-height: 1.8;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        ul {
+            margin-left: 30px;
+        }
+
+        li {
+            margin-bottom: 12px;
+        }
+
+        /* 表格 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 0.95em;
+        }
+
+        th {
+            background: #667eea;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: bold;
+        }
+
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        tr:hover {
+            background: #f0f4ff;
+        }
+
+        /* 分工表 */
+        .team-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .team-card {
+            background: white;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.1);
+        }
+
+        .team-card h4 {
+            color: #667eea;
+            font-size: 1.3em;
+            margin-bottom: 10px;
+        }
+
+        .team-card .role {
+            color: #764ba2;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .team-card p {
+            font-size: 0.95em;
+            margin-bottom: 5px;
+        }
+
+        /* 週次進度 */
+        .week-timeline {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .week-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+        }
+
+        .week-box h4 {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+        }
+
+        .week-box p {
+            font-size: 0.9em;
+            color: #f0f0f0;
+        }
+
+        /* 知識點 */
+        .knowledge-box {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+
+        .knowledge-box strong {
+            color: #667eea;
+        }
+
+        /* 底部導航 */
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            background: #f5f7fa;
+            border-top: 1px solid #ddd;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #764ba2;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .slide-counter {
+            font-size: 1.1em;
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        /* 重點項目 */
+        .highlight {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #ffc107;
+        }
+
+        .highlight strong {
+            color: #856404;
+        }
+
+        /* 成果指標 */
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .metric {
+            background: white;
+            border: 2px solid #667eea;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .metric .label {
+            font-size: 0.9em;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .metric .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #764ba2;
+        }
+
+        /* 分欄 */
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        .column-box {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #ddd;
+        }
+
+        .column-box h4 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .column-box ul {
+            margin-left: 20px;
+        }
+
+        .column-box li {
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+    </style>
+</head>
+<body>
+    <div class="presentation">
+        <!-- 投影片 1: 標題 -->
+        <div class="slide active title-slide">
+            <h1>🚀 Smart Label Platform</h1>
+            <p>智慧標注訓練平台</p>
+            <p>從原始圖片到可部署 AI 模型</p>
+            <div class="subtitle">
+                <p><strong>4 週完整開發計畫</strong></p>
+                <p>4 人小組 | 期末專案</p>
+            </div>
+        </div>
+
+        <!-- 投影片 2: 項目概述 -->
+        <div class="slide">
+            <h2>📋 項目概述</h2>
+            <h3>核心目標</h3>
+            <p>打造一個完整的端對端 AI 標注和訓練平台：</p>
+            <ul>
+                <li><strong>自動分割</strong> → SAM + Grounding DINO</li>
+                <li><strong>人工審核</strong> → 主動學習篩選</li>
+                <li><strong>一鍵訓練</strong> → YOLOv8 模型</li>
+                <li><strong>雲端部署</strong> → Google Cloud Platform</li>
+            </ul>
+            <div class="highlight">
+                <strong>核心價值：</strong> 用 AI 輔助標注，省時省力。一個平台完成從標注→訓練→部署的全流程
+            </div>
+        </div>
+
+        <!-- 投影片 3: 技術棧 -->
+        <div class="slide">
+            <h2>🛠️ 技術棧</h2>
+            <div class="two-column">
+                <div class="column-box">
+                    <h4>🧠 AI/ML</h4>
+                    <ul>
+                        <li>SAM - 圖像分割</li>
+                        <li>Grounding DINO - 文字驅動</li>
+                        <li>DINOv2 - 特徵提取</li>
+                        <li>YOLOv8 - 物件偵測</li>
+                        <li>主動學習引擎</li>
+                    </ul>
+                </div>
+                <div class="column-box">
+                    <h4>🖥️ 平台技術</h4>
+                    <ul>
+                        <li>Python 3.13 + Flask</li>
+                        <li>HTML5 Canvas + Vanilla JS</li>
+                        <li>Chart.js 數據可視化</li>
+                        <li>Docker 容器化</li>
+                        <li>Google Cloud Run</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- 投影片 4: 4人分工 -->
+        <div class="slide">
+            <h2>👥 4 人小組分工</h2>
+            <div class="team-grid">
+                <div class="team-card">
+                    <h4>組長（你）</h4>
+                    <div class="role">架構師 + 協調者</div>
+                    <p>✓ 整體系統設計</p>
+                    <p>✓ 技術決策</p>
+                    <p>✓ 進度協調</p>
+                </div>
+                <div class="team-card">
+                    <h4>組員 A</h4>
+                    <div class="role">分割工程師</div>
+                    <p>✓ SAM 圖像分割</p>
+                    <p>✓ Grounding DINO 整合</p>
+                    <p>✓ Benchmark 實驗</p>
+                </div>
+                <div class="team-card">
+                    <h4>組員 B</h4>
+                    <div class="role">特徵 + 前端工程師</div>
+                    <p>✓ DINOv2 特徵提取</p>
+                    <p>✓ KNN 分類器</p>
+                    <p>✓ Dashboard 設計</p>
+                </div>
+                <div class="team-card">
+                    <h4>組員 C</h4>
+                    <div class="role">訓練 + 部署工程師</div>
+                    <p>✓ YOLOv8 訓練</p>
+                    <p>✓ Docker 容器化</p>
+                    <p>✓ GCP 部署</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 投影片 5: 週次計畫概覽 -->
+        <div class="slide">
+            <h2>📅 4 週開發時程</h2>
+            <div class="week-timeline">
+                <div class="week-box">
+                    <h4>Week 1</h4>
+                    <p>環境搭建</p>
+                    <p>SAM mock 跑通</p>
+                </div>
+                <div class="week-box">
+                    <h4>Week 2</h4>
+                    <p>Grounding DINO</p>
+                    <p>DINOv2 + 分類器</p>
+                    <p>YOLOv8 Pipeline</p>
+                </div>
+                <div class="week-box">
+                    <h4>Week 3</h4>
+                    <p>全流程整合</p>
+                    <p>Dashboard</p>
+                    <p>GCP 部署</p>
+                </div>
+                <div class="week-box">
+                    <h4>Week 4</h4>
+                    <p>文件撰寫</p>
+                    <p>展示排練</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 投影片 6: Week 1 詳細 -->
+        <div class="slide">
+            <h2>📍 Week 1 - 環境搭建</h2>
+            <h3>目標：所有人本地跑通，A 定好輸出格式讓 B、C 同步開工</h3>
+            <table>
+                <tr>
+                    <th>組員</th>
+                    <th>主要任務</th>
+                    <th>交付物</th>
+                </tr>
+                <tr>
+                    <td><strong>組長</strong></td>
+                    <td>系統架構設計、API 介面規格定義</td>
+                    <td>架構文件 + API 介面規格</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 A</strong></td>
+                    <td>SAM mock 跑通、輸出遮罩格式定義</td>
+                    <td>mock segmenter + 格式文件</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 B</strong></td>
+                    <td>前端改版、確認 A 的遮罩格式</td>
+                    <td>index.html 改進版</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 C</strong></td>
+                    <td>Docker 環境建好、YOLOv8 環境準備</td>
+                    <td>Dockerfile + 環境確認報告</td>
+                </tr>
+            </table>
+            <div class="knowledge-box">
+                <strong>📚 推薦學習：</strong> SAM 論文、DINOv2 論文、YOLOv8 文檔、Docker 官方教程
+            </div>
+        </div>
+
+        <!-- 投影片 7: Week 2 詳細 -->
+        <div class="slide">
+            <h2>📍 Week 2 - AI 核心功能</h2>
+            <h3>目標：三條 ML 線路各自跑通，C 用 mock 資料先跑 YOLOv8</h3>
+            <table>
+                <tr>
+                    <th>組員</th>
+                    <th>主要任務</th>
+                    <th>交付物</th>
+                </tr>
+                <tr>
+                    <td><strong>組長</strong></td>
+                    <td>Code Review、模組整合協調</td>
+                    <td>Code Review 紀錄</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 A</strong></td>
+                    <td>Grounding DINO 整合</td>
+                    <td>Grounding DINO Pipeline</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 B</strong></td>
+                    <td>DINOv2 特徵提取 + KNN 分類器</td>
+                    <td>特徵模組 + 分類器</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 C</strong></td>
+                    <td>YOLOv8 pipeline（mock 資料先跑通）</td>
+                    <td>YOLOv8 pipeline + 測試報告</td>
+                </tr>
+            </table>
+            <div class="knowledge-box">
+                <strong>📚 推薦學習：</strong> Grounding DINO 論文、DINOv2 文檔、YOLOv8 訓練流程、KNN 原理
+            </div>
+        </div>
+
+        <!-- 投影片 8: Week 3 詳細 -->
+        <div class="slide">
+            <h2>📍 Week 3 - 整合 & 部署</h2>
+            <h3>目標：三條線匯流，全流程端對端跑通，GCP 上線</h3>
+            <table>
+                <tr>
+                    <th>組員</th>
+                    <th>主要任務</th>
+                    <th>交付物</th>
+                </tr>
+                <tr>
+                    <td><strong>組長</strong></td>
+                    <td>整合全流程、效能調優</td>
+                    <td>整合測試報告 + 部署清單</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 A</strong></td>
+                    <td>SAM + Grounding DINO Benchmark 實驗</td>
+                    <td>效能比較報告</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 B</strong></td>
+                    <td>Dashboard 圖表、主動學習流程串接</td>
+                    <td>完整 Dashboard</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 C</strong></td>
+                    <td>真實標注資料訓練 YOLOv8、GCP 部署</td>
+                    <td>訓練結果報告 + GCP 部署</td>
+                </tr>
+            </table>
+            <div class="knowledge-box">
+                <strong>📚 推薦學習：</strong> Chart.js、Google Cloud Run、pytest、效能測試
+            </div>
+        </div>
+
+        <!-- 投影片 9: Week 4 詳細 -->
+        <div class="slide">
+            <h2>📍 Week 4 - 衝刺&展示</h2>
+            <h3>目標：完成文檔、最後測試、排練展示</h3>
+            <table>
+                <tr>
+                    <th>組員</th>
+                    <th>主要任務</th>
+                    <th>交付物</th>
+                </tr>
+                <tr>
+                    <td><strong>組長</strong></td>
+                    <td>展示排練主持、最終整合、簡報準備</td>
+                    <td>展示腳本 + 系統架構圖</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 A</strong></td>
+                    <td>ML 技術文檔、實驗結果整理</td>
+                    <td>技術文檔 (3-5 頁)</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 B</strong></td>
+                    <td>UI/UX 設計文檔、最後微調</td>
+                    <td>設計文檔 (2-3 頁)</td>
+                </tr>
+                <tr>
+                    <td><strong>組員 C</strong></td>
+                    <td>部署文檔、故障排除指南</td>
+                    <td>部署文檔 (3-4 頁)</td>
+                </tr>
+            </table>
+            <p><strong>📢 展示排練 (30-40 分鐘)：</strong> 各人 8-10 分鐘發言 + Q&A</p>
+        </div>
+
+        <!-- 投影片 10: 核心知識點 -->
+        <div class="slide">
+            <h2>📚 核心知識點</h2>
+            <h3>組員 A（分割工程師）</h3>
+            <ul>
+                <li>✓ Segment Anything Model (SAM) 原理</li>
+                <li>✓ Vision Transformer (ViT) 基礎</li>
+                <li>✓ Zero-shot 物件偵測 (Grounding DINO)</li>
+                <li>✓ 分割效能評估指標（IoU、mAP）</li>
+                <li>✓ Benchmark 實驗設計</li>
+            </ul>
+            <p style="margin-top: 20px;"><strong>推薦論文：</strong> Kirillov et al. 2023 (SAM)、Liu et al. 2023 (Grounding DINO)</p>
+        </div>
+
+        <!-- 投影片 11: 核心知識點 (續) -->
+        <div class="slide">
+            <h2>📚 核心知識點 (續)</h2>
+            <h3>組員 B（特徵 + 前端工程師）</h3>
+            <ul>
+                <li>✓ DINOv2 特徵提取原理</li>
+                <li>✓ KNN 分類器與 few-shot learning</li>
+                <li>✓ 主動學習與不確定性估計</li>
+                <li>✓ HTML5、CSS3、Vanilla JavaScript</li>
+                <li>✓ 資料可視化 (Chart.js)</li>
+            </ul>
+            <p style="margin-top: 20px;"><strong>推薦資源：</strong> DINOv2 論文、MDN Web Docs、Chart.js 官方文檔</p>
+        </div>
+
+        <!-- 投影片 12: 核心知識點 (續 2) -->
+        <div class="slide">
+            <h2>📚 核心知識點 (續 2)</h2>
+            <h3>組員 C（訓練 + 部署工程師）</h3>
+            <ul>
+                <li>✓ YOLOv8 訓練流程與推論</li>
+                <li>✓ 資料格式轉換（COCO → YOLO）</li>
+                <li>✓ Docker 容器化和多階段構建</li>
+                <li>✓ Google Cloud Platform (Cloud Run、Cloud Storage)</li>
+                <li>✓ 自動化測試 (pytest)</li>
+            </ul>
+            <p style="margin-top: 20px;"><strong>推薦資源：</strong> YOLOv8 官方文檔、Docker 官方文檔、Google Cloud 教程</p>
+        </div>
+
+        <!-- 投影片 13: 預期成果 -->
+        <div class="slide">
+            <h2>🎯 預期成果指標</h2>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="label">功能完整度</div>
+                    <div class="value">8/10</div>
+                </div>
+                <div class="metric">
+                    <div class="label">代碼品質</div>
+                    <div class="value">7/10</div>
+                </div>
+                <div class="metric">
+                    <div class="label">學習深度</div>
+                    <div class="value">9/10</div>
+                </div>
+                <div class="metric">
+                    <div class="label">展示效果</div>
+                    <div class="value">9/10</div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- 投影片 15: 展示要點 -->
+        <div class="slide">
+            <h2>🎤 展示時的 Q&A 準備</h2>
+            <h3>組員 A 必須能回答：</h3>
+            <p>「為什麼選 SAM？benchmark 數據是多少？」</p>
+
+            <h3>組員 B 必須能回答：</h3>
+            <p>「Dashboard 設計理念是什麼？提升了用戶效率多少？」</p>
+
+            <h3>組員 C 必須能回答：</h3>
+            <p>「Docker 和 Cloud Run 有什麼區別？自動化測試覆蓋率是多少？」</p>
+
+            <h3>組長 必須能回答：</h3>
+            <p>「整個系統的架構是什麼？有什麼 trade-off？」</p>
+        </div>
+
+        <!-- 投影片 16: 總結 -->
+        <div class="slide title-slide">
+            <h1>✨ 讓我們開始吧！</h1>
+            <p>記住：</p>
+            <div class="subtitle" style="margin-top: 60px;">
+                <p>✓ AI 是加速工具，不是替代品</p>
+                <p>✓ 理解代碼勝於複製貼上</p>
+                <p>✓ 每個人都要深入自己的領域</p>
+                <p>✓ 團隊協作是成功的關鍵</p>
+            </div>
+        </div>
+
+        <!-- 控制區 -->
+        <div class="controls">
+            <button id="prevBtn" onclick="changeSlide(-1)">← 上一頁</button>
+            <span class="slide-counter"><span id="currentSlide">1</span> / <span id="totalSlides">16</span></span>
+            <button id="nextBtn" onclick="changeSlide(1)">下一頁 →</button>
+        </div>
+    </div>
+
+    <script>
+        let currentSlide = 1;
+        const totalSlides = document.querySelectorAll('.slide').length;
+        document.getElementById('totalSlides').textContent = totalSlides;
+
+        function showSlide(n) {
+            const slides = document.querySelectorAll('.slide');
+
+            if (n > totalSlides) currentSlide = totalSlides;
+            if (n < 1) currentSlide = 1;
+
+            slides.forEach(slide => slide.classList.remove('active'));
+            slides[currentSlide - 1].classList.add('active');
+
+            document.getElementById('currentSlide').textContent = currentSlide;
+            document.getElementById('prevBtn').disabled = currentSlide === 1;
+            document.getElementById('nextBtn').disabled = currentSlide === totalSlides;
+        }
+
+        function changeSlide(n) {
+            currentSlide += n;
+            showSlide(currentSlide);
+        }
+
+        // 鍵盤控制
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') changeSlide(-1);
+            if (e.key === 'ArrowRight') changeSlide(1);
+        });
+
+        // 初始化
+        showSlide(currentSlide);
+    </script>
+</body>
+</html>
