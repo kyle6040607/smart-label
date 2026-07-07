@@ -46,6 +46,12 @@ class Config:
     use_real_sam: bool = os.getenv("USE_REAL_SAM", "0") == "1"
     use_real_embedding: bool = os.getenv("USE_REAL_EMBEDDING", "0") == "1"
 
+    # --- 登入 / session ---
+    # 正式部署請用環境變數覆蓋，勿沿用預設值。
+    secret_key: str = os.getenv("SECRET_KEY", "dev-smart-label-change-me")
+    default_admin_user: str = os.getenv("DEFAULT_ADMIN_USER", "sa")
+    default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "sa")
+
     # --- 上傳限制 ---
     max_content_length: int = 32 * 1024 * 1024  # 32 MB
     allowed_ext: tuple[str, ...] = field(
