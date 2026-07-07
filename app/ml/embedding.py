@@ -88,10 +88,15 @@ class DinoEmbedder:
         elif "dinov2-base" in model_name or "vitb14" in model_name:
             hub_model = "dinov2_vitb14"
             self.dim = 768
+        else:
+            raise ValueError(
+                f"Unsupported DinoV2 model_name: {model_name!r} (expected dinov2-small/vits14 or dinov2-base/vitb14)"
+            )
 
         # 載入模型
         self.model = torch.hub.load("facebookresearch/dinov2", hub_model)
         self.model.eval().to(self.device)
+        self._normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     def encode(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
         # 1. 取得遮罩的 bounding box
@@ -109,8 +114,7 @@ class DinoEmbedder:
 
         # 5. 轉換為 PyTorch Tensor，縮放到 [0, 1] 並進行 ImageNet 常態化
         tensor = torch.from_numpy(crop_resized).permute(2, 0, 1).float() / 255.0
-        normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        tensor = normalize(tensor).unsqueeze(0).to(self.device)
+        tensor = self._normalize(tensor).unsqueeze(0).to(self.device)
 
         # 6. 推論取得特徵向量
         with torch.no_grad():
