@@ -10,5 +10,6 @@ services:
 
     volumes:
       - .:/app
+      - /app/.venv
 
-    restart: unless-stopped[]
+    restart: unless-stopped

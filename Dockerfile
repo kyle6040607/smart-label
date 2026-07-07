@@ -4,8 +4,11 @@ FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 安裝 uv
-RUN pip install --no-cache-dir uv
+# 安裝系統相依：git（mobile-sam 為 git 相依）與 opencv 執行所需的 libgl1、libglib2.0-0，並安裝 uv
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv
 
 # 工作目錄
 WORKDIR /app
