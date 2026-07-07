@@ -10,13 +10,15 @@ from dotenv import load_dotenv
 from dataclasses import dataclass, field
 from pathlib import Path
 
-load_dotenv()
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=BASE_DIR / ".env")
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 MASK_DIR = DATA_DIR / "masks"
 DB_FILE = DATA_DIR / "store.json"
+
 
 
 def _resolve_secret_key() -> str:
@@ -34,6 +36,7 @@ def _resolve_secret_key() -> str:
             "SECRET_KEY 未設定：正式環境必須以環境變數提供 SECRET_KEY"
         )
     return "dev-smart-label-change-me"
+
 
 
 @dataclass
