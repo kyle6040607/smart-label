@@ -141,7 +141,11 @@ class SamSegmenter:
             # 若有進行縮放，需將 mask 用最近鄰插值法 resize 回原圖尺寸
             if need_resize:
                 mask = cv2.resize(mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
-            masks.append(_to_mask_dict(mask))
+            
+            md = _to_mask_dict(mask)
+            # 防呆：只加入大於 0 像素的有效遮罩
+            if md["area"] > 0:
+                masks.append(md)
         return masks
 
     def segment_at(self, image: np.ndarray, point: tuple[int, int]) -> MaskDict:
@@ -165,6 +169,10 @@ class SamSegmenter:
         # 挑選分數最高的遮罩
         best_idx = np.argmax(scores)
         best_mask = masks[best_idx].astype(np.uint8)
+
+        # 防止空遮罩：若預測出的遮罩像素和為 0，則拋出異常
+        if best_mask.sum() == 0:
+            raise ValueError("SAM 在此點擊位置沒有找到任何物件。")
 
         # 若有進行縮放，需將 mask 用最近鄰插值法 resize 回原圖尺寸
         if need_resize:
