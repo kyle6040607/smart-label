@@ -184,3 +184,40 @@ def _write_mask(z, repo, by_image, labels):
 
     classes = "0\t__background__\n" + "".join(f"{cls_idx[n]}\t{n}\n" for n in labels)
     z.writestr("classes.txt", classes)
+
+def main():
+    print("=" * 50)
+    print("      YOLO Dataset Exporter")
+    print("=" * 50)
+
+    # 建立 Repository
+    repo = Repository(Path("data/db.json"))
+
+    # 顯示資料資訊
+    images = repo.list_images()
+    segments = repo.list_segments()
+    labeled = [s for s in segments if s.final_label]
+
+    print(f"圖片數量        : {len(images)}")
+    print(f"Segment 數量    : {len(segments)}")
+    print(f"已完成標註數量   : {len(labeled)}")
+
+    if not labeled:
+        print("\n❌ 沒有可匯出的資料")
+        return
+
+    print("\n開始建立 YOLO 資料集...")
+
+    # 固定匯出 YOLO
+    zip_bytes = build_dataset(repo, "yolo")
+
+    output = Path("yolo_dataset.zip")
+    output.write_bytes(zip_bytes)
+
+    print("\n✅ 匯出成功")
+    print(f"檔案：{output.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
+    

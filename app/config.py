@@ -6,14 +6,19 @@
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv
 from dataclasses import dataclass, field
 from pathlib import Path
 
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=BASE_DIR / ".env")
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 MASK_DIR = DATA_DIR / "masks"
 DB_FILE = DATA_DIR / "store.json"
+
 
 
 def _resolve_secret_key() -> str:
@@ -31,6 +36,7 @@ def _resolve_secret_key() -> str:
             "SECRET_KEY 未設定：正式環境必須以環境變數提供 SECRET_KEY"
         )
     return "dev-smart-label-change-me"
+
 
 
 @dataclass
@@ -63,6 +69,9 @@ class Config:
     use_real_sam: bool = os.getenv("USE_REAL_SAM", "0") == "1"
     use_real_embedding: bool = os.getenv("USE_REAL_EMBEDDING", "0") == "1"
 
+    # --- LINE Bot ---
+    line_channel_secret: str = os.getenv("LINE_CHANNEL_SECRET", "")
+    line_channel_access_token: str = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
     # --- 登入 / session ---
     # 正式部署請用環境變數覆蓋，勿沿用預設值（見 _resolve_secret_key）。
     secret_key: str = field(default_factory=_resolve_secret_key)

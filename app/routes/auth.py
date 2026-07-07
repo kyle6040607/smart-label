@@ -55,13 +55,7 @@ def do_login():
     session["user_id"] = user.id
     session["username"] = user.username
 
-    # 只允許站內絕對路徑（單一 "/" 開頭），避免 open redirect。
-    # 同時擋掉 //evil.com、/\evil.com 這種會被瀏覽器解讀成外站的
-    # protocol-relative 形式（第二個字元是 "/" 或 "\"）。
-    nxt = request.args.get("next") or request.form.get("next") or ""
-    if not nxt.startswith("/") or nxt[:2] in ("//", "/\\"):
-        nxt = url_for("index")
-    return redirect(nxt)
+    return redirect(url_for("index"))
 
 
 @bp.get("/logout")
