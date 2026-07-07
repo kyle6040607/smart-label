@@ -1,0 +1,13 @@
+.venv
+.git
+.gitignore
+__pycache__
+*.pyc
+.env
+runs
+data/
+uploads/
+masks/
+store.json
+models/*.pth
+models/*.pt
