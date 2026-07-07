@@ -93,11 +93,12 @@ class SamSegmenter:
         from mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 
         # 檢查 GPU 是否可用，若指定 cuda 但不可用，則降級為 cpu
-        if device == "cuda" and not torch.cuda.is_available():
-            print("CUDA 不可用，自動切換至 CPU 設備")
-            self.device = "cpu"
+        if torch.cuda.is_available():
+            self.device = "cuda"
+            print("使用 GPU 訓練")
         else:
-            self.device = device
+            self.device = "cpu"
+            print("GPU 不可用，改用 CPU")
 
         # 如果載入的是 MobileSAM 權重，則模型類型應修正為 vit_t
         if "mobile_sam" in checkpoint.lower() and model_type == "vit_h":
@@ -125,8 +126,7 @@ class SamSegmenter:
         return masks
 
     def segment_at(self, image: np.ndarray, point: tuple[int, int]) -> MaskDict:
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        self.predictor.set_image(image_rgb)
+        self.predictor.set_image(image)
         input_point = np.array([point])
         input_label = np.array([1])
 
