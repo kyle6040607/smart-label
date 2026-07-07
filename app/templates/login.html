@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登入 · 智慧分割標記助手</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  <style>
+    .login-wrap {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 360px;
+      background: var(--panel);
+      border: 1px solid #28323f;
+      border-radius: 12px;
+      padding: 28px 24px;
+    }
+    .login-card h1 { margin: 0 0 4px; font-size: 20px; }
+    .login-card .subtitle { margin: 0 0 20px; }
+    .login-card label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin: 12px 0 6px;
+    }
+    .login-card input {
+      width: 100%;
+      padding: 10px 12px;
+      background: #0f1419;
+      border: 1px solid #28323f;
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+    }
+    .login-card input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .login-card button {
+      width: 100%;
+      margin-top: 20px;
+      padding: 11px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    .login-card button:hover { filter: brightness(1.08); }
+    .login-error {
+      margin-top: 14px;
+      padding: 10px 12px;
+      background: rgba(255, 84, 112, 0.12);
+      border: 1px solid var(--danger);
+      border-radius: 8px;
+      color: var(--danger);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" method="post" action="{{ url_for('auth.do_login') }}">
+      <h1>智慧分割標記助手</h1>
+      <p class="subtitle">請登入以繼續</p>
+
+      {% if request.args.get('next') %}
+      <input type="hidden" name="next" value="{{ request.args.get('next') }}" />
+      {% endif %}
+
+      <label for="username">帳號</label>
+      <input id="username" name="username" type="text" autocomplete="username" autofocus required />
+
+      <label for="password">密碼</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+      {% if error %}
+      <div class="login-error">{{ error }}</div>
+      {% endif %}
+
+      <button type="submit">登入</button>
+    </form>
+  </div>
+</body>
+</html>
