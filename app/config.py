@@ -6,8 +6,11 @@
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv
 from dataclasses import dataclass, field
 from pathlib import Path
+
+load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -45,6 +48,10 @@ class Config:
     # --- 後端模型開關：mock 先跑通流程，之後抽換真模型 ---
     use_real_sam: bool = os.getenv("USE_REAL_SAM", "0") == "1"
     use_real_embedding: bool = os.getenv("USE_REAL_EMBEDDING", "0") == "1"
+
+    # --- LINE Bot ---
+    line_channel_secret: str = os.getenv("LINE_CHANNEL_SECRET", "")
+    line_channel_access_token: str = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 
     # --- 上傳限制 ---
     max_content_length: int = 32 * 1024 * 1024  # 32 MB

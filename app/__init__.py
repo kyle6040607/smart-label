@@ -29,12 +29,14 @@ def create_app(config: Config | None = None) -> Flask:
     from app.routes.labels import bp as labels_bp
     from app.routes.review import bp as review_bp
     from app.routes.export import bp as export_bp
+    from app.routes.linebot import bp as linebot_bp
 
     app.register_blueprint(images_bp)
     app.register_blueprint(segment_bp)
     app.register_blueprint(labels_bp)
     app.register_blueprint(review_bp)
     app.register_blueprint(export_bp)
+    app.register_blueprint(linebot_bp)
 
     @app.get("/")
     def index():
