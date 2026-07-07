@@ -18,7 +18,6 @@ def test_dino_embedder_initialization(monkeypatch):
             return self
         def __call__(self, x):
             return torch.ones((x.shape[0], 768))
-            #return torch.zeros((x.shape[0], 768)) 正常跑請使用這個 現在都使用 假model進行測試確認流程正確 
     monkeypatch.setattr(torch.hub, "load", lambda *args, **kwargs: _DummyModel())
     embedder = DinoEmbedder(model_name="facebook/dinov2-base", device="cpu")
     assert embedder.dim == 768
@@ -36,7 +35,6 @@ def test_dino_embedder_encode(monkeypatch):
             return self
         def __call__(self, x):
             return torch.ones((x.shape[0], 768))
-            #return torch.zeros((x.shape[0], 768)) 正常跑請使用這個 現在都使用 假model進行測試確認流程正確 
     monkeypatch.setattr(torch.hub, "load", lambda *args, **kwargs: _DummyModel())
     embedder = DinoEmbedder(model_name="facebook/dinov2-base", device="cpu")
     
