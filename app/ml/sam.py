@@ -41,6 +41,21 @@ def _to_mask_dict(mask: np.ndarray) -> MaskDict:
     return MaskDict(mask=mask, bbox=(x, y, w, h), area=int(mask.sum()))
 
 
+def _resize_if_needed(image: np.ndarray, max_side: int = 1024) -> tuple[np.ndarray, float, bool, int, int]:
+    """若影像長邊大於 max_side，則等比例縮小。
+
+    回傳: (處理後的影像, 縮放比例, 是否進行了縮放, 原始高度, 原始寬度)
+    """
+    orig_h, orig_w = image.shape[:2]
+    need_resize = max(orig_h, orig_w) > max_side
+    if need_resize:
+        scale = max_side / max(orig_h, orig_w)
+        new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+        resized_img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return resized_img, scale, True, orig_h, orig_w
+    return image, 1.0, False, orig_h, orig_w
+
+
 class MockSegmenter:
     """免模型的替身：用傳統影像處理切塊，讓流程立刻能跑。
 
@@ -118,16 +133,27 @@ class SamSegmenter:
         print(f"MobileSAM 載入成功，已就緒！")
 
     def segment(self, image: np.ndarray) -> list[MaskDict]:
-        raw_masks = self.auto.generate(image)
+        infer_image, _, need_resize, orig_h, orig_w = _resize_if_needed(image)
+        raw_masks = self.auto.generate(infer_image)
         masks: list[MaskDict] = []
         for rm in raw_masks:
             mask = rm["segmentation"].astype(np.uint8)
+            # 若有進行縮放，需將 mask 用最近鄰插值法 resize 回原圖尺寸
+            if need_resize:
+                mask = cv2.resize(mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
             masks.append(_to_mask_dict(mask))
         return masks
 
     def segment_at(self, image: np.ndarray, point: tuple[int, int]) -> MaskDict:
-        self.predictor.set_image(image)
-        input_point = np.array([point])
+        orig_h, orig_w = image.shape[:2]
+        x, y = point
+
+        infer_image, scale, need_resize, _, _ = _resize_if_needed(image)
+        if need_resize:
+            x, y = int(x * scale), int(y * scale)
+
+        self.predictor.set_image(infer_image)
+        input_point = np.array([[x, y]])
         input_label = np.array([1])
 
         masks, scores, logits = self.predictor.predict(
@@ -139,6 +165,11 @@ class SamSegmenter:
         # 挑選分數最高的遮罩
         best_idx = np.argmax(scores)
         best_mask = masks[best_idx].astype(np.uint8)
+
+        # 若有進行縮放，需將 mask 用最近鄰插值法 resize 回原圖尺寸
+        if need_resize:
+            best_mask = cv2.resize(best_mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+
         return _to_mask_dict(best_mask)
 
 
