@@ -13,6 +13,9 @@ from typing import Protocol
 
 import cv2
 import numpy as np
+import torch
+import torchvision.transforms as T
+
 
 
 class Embedder(Protocol):
@@ -64,25 +67,59 @@ class MockEmbedder:
 
 
 class DinoEmbedder:
-    """真正的 DINOv2 / CLIP 特徵（提案第 6 頁，凍結不訓練）。
+    """真正的 DINOv2 特徵（凍結不訓練）。
 
-        uv add torch torchvision transformers
-    這裡先留骨架，第 2 週接上即可（USE_REAL_EMBEDDING=1）。
+    使用 PyTorch Hub 載入預訓練模型。
     """
 
     dim: int = 768
 
-    def __init__(self, model_name: str = "facebook/dinov2-base", device: str = "cpu"):
-        # TODO: 載入凍結的 DINOv2 / CLIP
-        # from transformers import AutoImageProcessor, AutoModel
-        # self.proc = AutoImageProcessor.from_pretrained(model_name)
-        # self.model = AutoModel.from_pretrained(model_name).eval().to(device)
-        raise NotImplementedError(
-            "DinoEmbedder 尚未接上——先用 MockEmbedder，第 2 週補完特徵抽取。"
-        )
+    def __init__(self, model_name: str = "facebook/dinov2-base", device: str | None = None):
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
 
-    def encode(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:  # pragma: no cover
-        raise NotImplementedError
+        # 把預設的 Hugging Face 模型名稱對應到 PyTorch Hub 模組名
+        hub_model = "dinov2_vitb14"
+        if "dinov2-small" in model_name or "vits14" in model_name:
+            hub_model = "dinov2_vits14"
+            self.dim = 384
+        elif "dinov2-base" in model_name or "vitb14" in model_name:
+            hub_model = "dinov2_vitb14"
+            self.dim = 768
+
+        # 載入模型
+        self.model = torch.hub.load("facebookresearch/dinov2", hub_model)
+        self.model.eval().to(self.device)
+
+    def encode(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        # 1. 取得遮罩的 bounding box
+        crop, crop_mask = _crop_to_bbox(image, mask)
+
+        # 2. 套用遮罩，將物件以外的背景去背（設為黑色）
+        crop_masked = crop * (crop_mask > 0)[:, :, np.newaxis]
+
+        # 3. 確保為 RGB 3 通道
+        if crop_masked.ndim == 2:
+            crop_masked = cv2.cvtColor(crop_masked, cv2.COLOR_GRAY2RGB)
+
+        # 4. 縮放到 DinoV2 期望的 224x224（14 的倍數）
+        crop_resized = cv2.resize(crop_masked, (224, 224), interpolation=cv2.INTER_AREA)
+
+        # 5. 轉換為 PyTorch Tensor，縮放到 [0, 1] 並進行 ImageNet 常態化
+        tensor = torch.from_numpy(crop_resized).permute(2, 0, 1).float() / 255.0
+        normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        tensor = normalize(tensor).unsqueeze(0).to(self.device)
+
+        # 6. 推論取得特徵向量
+        with torch.no_grad():
+            features = self.model(tensor)
+
+        # 7. 轉回 1D float64 numpy array，並做 L2 Normalization
+        feat = features.squeeze(0).cpu().numpy().astype(np.float64)
+        norm = np.linalg.norm(feat)
+        return feat / norm if norm > 0 else feat
 
 
 def build_embedder(use_real_embedding: bool) -> Embedder:
