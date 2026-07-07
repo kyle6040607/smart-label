@@ -10,7 +10,7 @@ import json
 import threading
 from pathlib import Path
 
-from app.models import ImageRecord, Segment, LabelExample
+from app.models import ImageRecord, Segment, LabelExample, User
 
 
 class Repository:
@@ -20,6 +20,7 @@ class Repository:
         self.images: dict[str, ImageRecord] = {}
         self.segments: dict[str, Segment] = {}
         self.examples: dict[str, LabelExample] = {}
+        self.users: dict[str, User] = {}
         self._load()
 
     # ---------- 影像 ----------
@@ -121,6 +122,22 @@ class Repository:
             self._save()
         return len(ids)
 
+    # ---------- 使用者 / 登入 ----------
+    def add_user(self, user: User) -> User:
+        with self._lock:
+            self.users[user.id] = user
+            self._save()
+        return user
+
+    def get_user_by_username(self, username: str) -> User | None:
+        for u in self.users.values():
+            if u.username == username:
+                return u
+        return None
+
+    def list_users(self) -> list[User]:
+        return list(self.users.values())
+
     # ---------- 統計（給準確率曲線 / 省下工時用）----------
     def stats(self) -> dict:
         segs = list(self.segments.values())
@@ -145,6 +162,7 @@ class Repository:
             "images": [i.to_dict() for i in self.images.values()],
             "segments": [s.to_dict() for s in self.segments.values()],
             "examples": [e.to_dict() for e in self.examples.values()],
+            "users": [u.to_dict() for u in self.users.values()],
         }
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.db_file.with_suffix(".tmp")
@@ -156,9 +174,11 @@ class Repository:
             return
         data = json.loads(self.db_file.read_text(encoding="utf-8"))
         for d in data.get("images", []):
-            self.images[d["id"]] = ImageRecord(**{k: v for k, v in d.items() if k in ImageRecord().__dict__})
+            self.images[d["id"]] = ImageRecord(**{k: v for k, v in d.items() if k in ImageRecord.__dataclass_fields__})
         for d in data.get("segments", []):
             d.pop("final_label", None)  # 衍生欄位不還原
-            self.segments[d["id"]] = Segment(**{k: v for k, v in d.items() if k in Segment().__dict__})
+            self.segments[d["id"]] = Segment(**{k: v for k, v in d.items() if k in Segment.__dataclass_fields__})
         for d in data.get("examples", []):
-            self.examples[d["id"]] = LabelExample(**{k: v for k, v in d.items() if k in LabelExample().__dict__})
+            self.examples[d["id"]] = LabelExample(**{k: v for k, v in d.items() if k in LabelExample.__dataclass_fields__})
+        for d in data.get("users", []):
+            self.users[d["id"]] = User(**{k: v for k, v in d.items() if k in User.__dataclass_fields__})

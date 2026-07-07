@@ -19,6 +19,23 @@ MASK_DIR = DATA_DIR / "masks"
 DB_FILE = DATA_DIR / "store.json"
 
 
+def _resolve_secret_key() -> str:
+    """決定 session 簽章用的 SECRET_KEY。
+
+    正式環境（SMART_LABEL_ENV=prod）沒給環境變數就直接拒絕啟動，
+    避免沿用可預測的 dev 預設值而讓攻擊者偽造 session cookie。
+    開發環境才 fallback 到固定 dev key（本機方便、多 worker 也一致）。
+    """
+    key = os.getenv("SECRET_KEY")
+    if key:
+        return key
+    if os.getenv("SMART_LABEL_ENV", "dev").lower() in {"prod", "production"}:
+        raise RuntimeError(
+            "SECRET_KEY 未設定：正式環境必須以環境變數提供 SECRET_KEY"
+        )
+    return "dev-smart-label-change-me"
+
+
 @dataclass
 class Config:
     # --- 檔案存放 ---
@@ -52,6 +69,11 @@ class Config:
     # --- LINE Bot ---
     line_channel_secret: str = os.getenv("LINE_CHANNEL_SECRET", "")
     line_channel_access_token: str = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+    # --- 登入 / session ---
+    # 正式部署請用環境變數覆蓋，勿沿用預設值（見 _resolve_secret_key）。
+    secret_key: str = field(default_factory=_resolve_secret_key)
+    default_admin_user: str = os.getenv("DEFAULT_ADMIN_USER", "sa")
+    default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "sa")
 
     # --- 上傳限制 ---
     max_content_length: int = 32 * 1024 * 1024  # 32 MB

@@ -64,6 +64,19 @@ uv run pytest           # 跑測試
 
 真實作的接點都已在 `core/sam.py` 與 `core/embedding.py` 留好 `TODO` 與安裝指引。
 
+## 部署 / 安全設定
+
+登入 session 與帳號相關的環境變數，正式部署務必覆蓋預設值：
+
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `SMART_LABEL_ENV` | `dev` | 設 `prod` 進入正式模式；此時若未提供 `SECRET_KEY` 會**拒絕啟動** |
+| `SECRET_KEY` | dev 固定值 | session cookie 簽章金鑰。開發用固定 dev key；正式**必須**設不可預測的隨機值，否則有人可偽造 cookie 冒充登入 |
+| `DEFAULT_ADMIN_USER` | `sa` | 首次啟動種入的管理者帳號 |
+| `DEFAULT_ADMIN_PASSWORD` | `sa` | 預設管理者密碼（雜湊後儲存）；正式部署請改掉 |
+
+> 正式環境產生金鑰範例：`python -c "import os; print(os.urandom(32).hex())"`，把結果設成 `SECRET_KEY`。同一部署（多 worker / 多容器）要用**同一把** key，session 才會一致。
+
 ## API 一覽
 
 | 方法 | 路徑 | 用途 |
