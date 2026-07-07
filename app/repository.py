@@ -174,11 +174,11 @@ class Repository:
             return
         data = json.loads(self.db_file.read_text(encoding="utf-8"))
         for d in data.get("images", []):
-            self.images[d["id"]] = ImageRecord(**{k: v for k, v in d.items() if k in ImageRecord().__dict__})
+            self.images[d["id"]] = ImageRecord(**{k: v for k, v in d.items() if k in ImageRecord.__dataclass_fields__})
         for d in data.get("segments", []):
             d.pop("final_label", None)  # 衍生欄位不還原
-            self.segments[d["id"]] = Segment(**{k: v for k, v in d.items() if k in Segment().__dict__})
+            self.segments[d["id"]] = Segment(**{k: v for k, v in d.items() if k in Segment.__dataclass_fields__})
         for d in data.get("examples", []):
-            self.examples[d["id"]] = LabelExample(**{k: v for k, v in d.items() if k in LabelExample().__dict__})
+            self.examples[d["id"]] = LabelExample(**{k: v for k, v in d.items() if k in LabelExample.__dataclass_fields__})
         for d in data.get("users", []):
-            self.users[d["id"]] = User(**{k: v for k, v in d.items() if k in User().__dict__})
+            self.users[d["id"]] = User(**{k: v for k, v in d.items() if k in User.__dataclass_fields__})
