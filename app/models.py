@@ -65,6 +65,24 @@ class Segment:
 
 
 @dataclass
+class User:
+    """系統使用者（登入帳號）。
+
+    密碼永遠只存雜湊值（password_hash），不落地明文。
+    之後接 MySQL / MongoDB 時，這就是對應的 users 資料表 / 集合。
+    """
+
+    id: str = field(default_factory=_new_id)
+    username: str = ""
+    password_hash: str = ""       # werkzeug scrypt/pbkdf2 雜湊，非明文
+    role: str = "user"            # 預留：user / admin
+    created_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class LabelExample:
     """使用者標的種子範例（few-shot 的錨點，提案第 7 頁）。
 
