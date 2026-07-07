@@ -88,29 +88,58 @@ class MockSegmenter:
 
 
 class SamSegmenter:
-    """真正的 SAM（提案第 5 頁）。
+    def __init__(self, checkpoint: str, model_type: str = "vit_h", device: str = "cuda"):
+        import torch
+        from mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 
-    需要安裝 segment-anything 與下載 checkpoint：
-        uv add segment-anything torch torchvision
-        # 下載 sam_vit_h_4b8939.pth 放到 models/
-    這裡先留骨架，第 1 週把 TODO 補完即可啟用（USE_REAL_SAM=1）。
-    """
+        # 檢查 GPU 是否可用，若指定 cuda 但不可用，則降級為 cpu
+        if torch.cuda.is_available():
+            self.device = "cuda"
+            print("使用 GPU 訓練")
+        else:
+            self.device = "cpu"
+            print("GPU 不可用，改用 CPU")
 
-    def __init__(self, checkpoint: str, model_type: str = "vit_h", device: str = "cpu"):
-        # TODO: 載入 SAM
-        # from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
-        # sam = sam_model_registry[model_type](checkpoint=checkpoint).to(device)
-        # self.auto = SamAutomaticMaskGenerator(sam)
-        # self.predictor = SamPredictor(sam)
-        raise NotImplementedError(
-            "SamSegmenter 尚未接上——先用 MockSegmenter，第 1 週補完模型載入。"
+        # 如果載入的是 MobileSAM 權重，則模型類型應修正為 vit_t
+        if "mobile_sam" in checkpoint.lower() and model_type == "vit_h":
+            model_type = "vit_t"
+
+        print(f"--- MobileSAM 初始化中 ---")
+        print(f"指定架構: {model_type}")
+        print(f"配置設備: {self.device}")
+
+        self.sam = sam_model_registry[model_type](checkpoint=checkpoint)
+        self.sam.to(device=self.device)
+        self.sam.eval()
+
+        self.auto = SamAutomaticMaskGenerator(self.sam)
+        self.predictor = SamPredictor(self.sam)
+
+        print(f"MobileSAM 載入成功，已就緒！")
+
+    def segment(self, image: np.ndarray) -> list[MaskDict]:
+        raw_masks = self.auto.generate(image)
+        masks: list[MaskDict] = []
+        for rm in raw_masks:
+            mask = rm["segmentation"].astype(np.uint8)
+            masks.append(_to_mask_dict(mask))
+        return masks
+
+    def segment_at(self, image: np.ndarray, point: tuple[int, int]) -> MaskDict:
+        self.predictor.set_image(image)
+        input_point = np.array([point])
+        input_label = np.array([1])
+
+        masks, scores, logits = self.predictor.predict(
+            point_coords=input_point,
+            point_labels=input_label,
+            multimask_output=True,
         )
 
-    def segment(self, image: np.ndarray) -> list[MaskDict]:  # pragma: no cover
-        raise NotImplementedError
-
-    def segment_at(self, image: np.ndarray, point: tuple[int, int]) -> MaskDict:  # pragma: no cover
-        raise NotImplementedError
+        # 挑選分數最高的遮罩
+        best_idx = np.argmax(scores)
+        best_mask = masks[best_idx].astype(np.uint8)
+        return _to_mask_dict(best_mask)
 
 
 def build_segmenter(
