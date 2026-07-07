@@ -109,7 +109,14 @@ class MockSegmenter:
 
 
 class SamSegmenter:
-    def __init__(self, checkpoint: str, model_type: str = "vit_h", device: str = "cuda"):
+    def __init__(
+        self,
+        checkpoint: str,
+        model_type: str = "vit_h",
+        device: str = "cuda",
+        points_per_side: int = 32,
+        min_mask_region_area: int = 100,
+    ):
         import torch
         from mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 
@@ -133,7 +140,11 @@ class SamSegmenter:
         self.sam.to(device=self.device)
         self.sam.eval()
 
-        self.auto = SamAutomaticMaskGenerator(self.sam)
+        self.auto = SamAutomaticMaskGenerator(
+            self.sam,
+            points_per_side=points_per_side,
+            min_mask_region_area=min_mask_region_area,
+        )
         self.predictor = SamPredictor(self.sam)
 
         print(f"MobileSAM 載入成功，已就緒！")
@@ -205,7 +216,13 @@ def build_segmenter(
     min_area_ratio: float = 0.004,
     flood_tol: int = 12,
     checkpoint: str = "models/sam_vit_h_4b8939.pth",
+    points_per_side: int = 32,
+    min_mask_region_area: int = 100,
 ) -> Segmenter:
     if use_real_sam:
-        return SamSegmenter(checkpoint=checkpoint)
+        return SamSegmenter(
+            checkpoint=checkpoint,
+            points_per_side=points_per_side,
+            min_mask_region_area=min_mask_region_area,
+        )
     return MockSegmenter(max_masks, min_area_ratio, flood_tol)
