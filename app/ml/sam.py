@@ -46,14 +46,20 @@ def _resize_if_needed(image: np.ndarray, max_side: int = 1024) -> tuple[np.ndarr
 
     回傳: (處理後的影像, 縮放比例, 是否進行了縮放, 原始高度, 原始寬度)
     """
-    orig_h, orig_w = image.shape[:2]
-    need_resize = max(orig_h, orig_w) > max_side
-    if need_resize:
-        scale = max_side / max(orig_h, orig_w)
-        new_w, new_h = int(orig_w * scale), int(orig_h * scale)
-        resized_img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        return resized_img, scale, True, orig_h, orig_w
-    return image, 1.0, False, orig_h, orig_w
+    try:
+        orig_h, orig_w = image.shape[:2]
+        need_resize = max(orig_h, orig_w) > max_side
+        if need_resize:
+            scale = max_side / max(orig_h, orig_w)
+            new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+            # 防範怪圖導致寬高為 0
+            new_w = max(1, new_w)
+            new_h = max(1, new_h)
+            resized_img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            return resized_img, scale, True, orig_h, orig_w
+        return image, 1.0, False, orig_h, orig_w
+    except Exception as e:
+        raise ValueError(f"影像等比例縮放失敗 ({e})，已略過此影像。")
 
 
 class MockSegmenter:
@@ -133,7 +139,12 @@ class SamSegmenter:
         print(f"MobileSAM 載入成功，已就緒！")
 
     def segment(self, image: np.ndarray) -> list[MaskDict]:
-        infer_image, _, need_resize, orig_h, orig_w = _resize_if_needed(image)
+        try:
+            infer_image, _, need_resize, orig_h, orig_w = _resize_if_needed(image)
+        except ValueError as e:
+            print(f"警告：{e}")
+            return []  # 發生錯誤，略過此張圖，直接回傳空遮罩列表
+
         raw_masks = self.auto.generate(infer_image)
         masks: list[MaskDict] = []
         for rm in raw_masks:
@@ -152,7 +163,13 @@ class SamSegmenter:
         orig_h, orig_w = image.shape[:2]
         x, y = point
 
-        infer_image, scale, need_resize, _, _ = _resize_if_needed(image)
+        try:
+            infer_image, scale, need_resize, _, _ = _resize_if_needed(image)
+        except ValueError as e:
+            print(f"警告：{e}")
+            # 發生錯誤，略過此張圖，直接回傳空遮罩
+            return _to_mask_dict(np.zeros((orig_h, orig_w), dtype=np.uint8))
+
         if need_resize:
             x, y = int(x * scale), int(y * scale)
 
