@@ -31,6 +31,8 @@ class Pipeline:
             min_area_ratio=config.sam_min_area_ratio,
             flood_tol=config.sam_flood_tol,
             checkpoint=config.sam_checkpoint,
+            points_per_side=config.sam_points_per_side,
+            min_mask_region_area=config.sam_min_mask_region_area,
         )
         self.embedder = build_embedder(config.use_real_embedding)
         self.classifier = FewShotClassifier(

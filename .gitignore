@@ -61,3 +61,6 @@ models/mobile_sam.pt
 *.pptx
 *.ppt
 *.pdf
+
+# DinoV2 / PyTorch Hub cache (if local)
+.cache/

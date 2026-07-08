@@ -59,6 +59,10 @@ class Config:
     knn_k: int = int(os.getenv("KNN_K", "5"))
     softmax_temperature: float = float(os.getenv("SOFTMAX_TEMPERATURE", "0.1"))
 
+    # --- 真正的 SAM 自動分割可調旋鈕 ---
+    sam_points_per_side: int = int(os.getenv("SAM_POINTS_PER_SIDE", "32"))
+    sam_min_mask_region_area: int = int(os.getenv("SAM_MIN_MASK_REGION_AREA", "100"))
+
     # --- mock 分割器的可調旋鈕（換上真 SAM 後失效）---
     sam_max_masks: int = int(os.getenv("SAM_MAX_MASKS", "12"))
     sam_min_area_ratio: float = float(os.getenv("SAM_MIN_AREA_RATIO", "0.004"))
