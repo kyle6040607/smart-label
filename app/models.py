@@ -74,9 +74,14 @@ class User:
 
     id: str = field(default_factory=_new_id)
     username: str = ""
-    password_hash: str = ""       # werkzeug scrypt/pbkdf2 雜湊，非明文
+    password_hash: str = ""       # werkzeug scrypt/pbkdf2 雜湊，非明文；LINE-only 帳號留空
     role: str = "user"            # 預留：user / admin
     created_at: float = field(default_factory=time.time)
+
+    # --- LINE Login 綁定（提案：LINE 登入 / 帳號綁定）---
+    line_user_id: str | None = None  # LINE 的使用者唯一識別（id_token 的 sub）
+    display_name: str = ""           # LINE 顯示名稱
+    avatar_url: str = ""             # LINE 大頭貼
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

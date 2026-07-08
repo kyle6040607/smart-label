@@ -5,7 +5,7 @@ create_app() 建立 app、初始化 Repository 與 Pipeline，註冊 API bluepri
 """
 from __future__ import annotations
 
-from flask import Flask, render_template
+from flask import Flask, render_template, session
 from werkzeug.security import generate_password_hash
 
 from app.config import Config, config as default_config
@@ -61,7 +61,12 @@ def create_app(config: Config | None = None) -> Flask:
     @app.get("/")
     @login_required
     def index():
-        return render_template("index.html")
+        user = app.repo.get_user(session.get("user_id"))  # type: ignore[attr-defined]
+        return render_template(
+            "index.html",
+            display_name=session.get("username", ""),
+            line_bound=bool(user and user.line_user_id),
+        )
 
     @app.get("/healthz")
     def healthz():

@@ -63,6 +63,38 @@
       color: var(--danger);
       font-size: 13px;
     }
+    .login-divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 20px 0 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .login-divider::before,
+    .login-divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: #28323f;
+    }
+    .line-login-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      margin-top: 12px;
+      padding: 11px;
+      background: #06C755;
+      color: #fff;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .line-login-btn:hover { filter: brightness(1.05); }
+    .line-login-btn svg { width: 20px; height: 20px; }
   </style>
 </head>
 <body>
@@ -87,6 +119,16 @@
 
       <button type="submit">登入</button>
     </form>
+
+    <div style="width:100%;max-width:360px;">
+      <div class="login-divider"><span>或</span></div>
+      <a class="line-login-btn" href="{{ url_for('auth.line_start') }}">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 2C6.48 2 2 5.69 2 10.23c0 4.07 3.55 7.48 8.35 8.12.32.07.77.21.88.49.1.25.06.64.03.9l-.14.85c-.04.25-.2.98.86.53s5.7-3.36 7.78-5.75C21.28 13.68 22 12.03 22 10.23 22 5.69 17.52 2 12 2z"/>
+        </svg>
+        使用 LINE 登入
+      </a>
+    </div>
   </div>
 </body>
 </html>
