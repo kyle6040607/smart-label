@@ -8,8 +8,19 @@
 </head>
 <body>
   <header>
-    <h1>智慧分割標記助手</h1>
-    <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
+    <div>
+      <h1>智慧分割標記助手</h1>
+      <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
+    </div>
+    <div class="header-actions">
+      {% if display_name %}<span class="hi">{{ display_name }}</span>{% endif %}
+      {% if line_bound %}
+        <span class="line-badge">已綁定 LINE</span>
+      {% else %}
+        <a class="btn-link line" href="{{ url_for('auth.line_start') }}">綁定 LINE</a>
+      {% endif %}
+      <a class="btn-link" href="{{ url_for('auth.logout') }}">登出</a>
+    </div>
   </header>
 
   <main>

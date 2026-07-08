@@ -129,11 +129,26 @@ class Repository:
             self._save()
         return user
 
+    def get_user(self, user_id: str) -> User | None:
+        return self.users.get(user_id)
+
     def get_user_by_username(self, username: str) -> User | None:
         for u in self.users.values():
             if u.username == username:
                 return u
         return None
+
+    def get_user_by_line_id(self, line_user_id: str) -> User | None:
+        for u in self.users.values():
+            if u.line_user_id and u.line_user_id == line_user_id:
+                return u
+        return None
+
+    def update_user(self, user: User) -> User:
+        with self._lock:
+            self.users[user.id] = user
+            self._save()
+        return user
 
     def list_users(self) -> list[User]:
         return list(self.users.values())

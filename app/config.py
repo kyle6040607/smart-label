@@ -73,9 +73,15 @@ class Config:
     use_real_sam: bool = os.getenv("USE_REAL_SAM", "0") == "1"
     use_real_embedding: bool = os.getenv("USE_REAL_EMBEDDING", "0") == "1"
 
-    # --- LINE Bot ---
+    # --- LINE Bot（Messaging API channel）---
     line_channel_secret: str = os.getenv("LINE_CHANNEL_SECRET", "")
     line_channel_access_token: str = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+
+    # --- LINE Login（登入用，是另一個獨立的 LINE Login channel）---
+    line_login_channel_id: str = os.getenv("LINE_LOGIN_CHANNEL_ID", "")
+    line_login_channel_secret: str = os.getenv("LINE_LOGIN_CHANNEL_SECRET", "")
+    # 留空則自動用 url_for 依當前請求組出 callback；反向代理 / https 不一致時再用環境變數覆蓋
+    line_login_redirect_uri: str = os.getenv("LINE_LOGIN_REDIRECT_URI", "")
     # --- 登入 / session ---
     # 正式部署請用環境變數覆蓋，勿沿用預設值（見 _resolve_secret_key）。
     secret_key: str = field(default_factory=_resolve_secret_key)
