@@ -22,10 +22,17 @@ services:
     restart: unless-stopped
     command: --default-authentication-plugin=mysql_native_password
     environment:
+<<<<<<< Updated upstream
       MYSQL_ROOT_PASSWORD: sa
       MYSQL_DATABASE: smart_label_db
       MYSQL_USER: sa
       MYSQL_PASSWORD: sa
+=======
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+>>>>>>> Stashed changes
     volumes:
       - mysql_data:/var/lib/mysql
       - ./MySQL/init.sql:/docker-entrypoint-initdb.d/init.sql
