@@ -55,16 +55,16 @@ def run_sam_comparison():
     print("-" * 70)
 
     # 1. 準備貓咪圖片目錄
-    cats_dir = Path("data/benchmark_cats")
+    cats_dir = PROJECT_ROOT / "data" / "benchmark_cats"
     cats_dir.mkdir(parents=True, exist_ok=True)
 
     # 尋找資料夾下的貓圖
-    image_extensions = ("*.png", "*.jpg", "*.jpeg", "*.BMP", "*.PNG", "*.JPG")
-    image_paths = []
-    for ext in image_extensions:
-        image_paths.extend(cats_dir.glob(ext))
-    # 去除 Windows 系統下因副檔名大小寫不分（Case-insensitive）造成的重複匹配並排序
-    image_paths = sorted(list(set(image_paths)))
+    # 支援的影像副檔名（統一以小寫比對，避免大小寫敏感檔案系統漏抓 .bmp/.JPEG 等）
+    allowed_ext = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+    image_paths = sorted(
+        p for p in cats_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in allowed_ext
+    )
 
     # 如果資料夾為空，自動產生 3 張模擬貓圖（畫有貓咪大小輪廓的測試圖）
     if not image_paths:
@@ -93,7 +93,7 @@ def run_sam_comparison():
             loaded_images.append(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
 
     if not loaded_images:
-        print("❌ 錯誤：無法讀取 any 測試影像！")
+        print("❌ 錯誤：無法讀取任何測試影像！")
         return
 
     
