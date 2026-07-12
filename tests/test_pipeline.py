@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 import cv2
+import pytest
 
 from app.config import Config
 from app.services.pipeline import Pipeline
@@ -71,3 +72,22 @@ def test_active_learning_loop(tmp_path):
     assert again.predicted_label is None and again.probs == {}
     # 刪不存在的類別 → 0
     assert pipe.delete_label("nope") == 0
+
+
+def test_segment_text_contract_rejects_invalid_prompt(tmp_path):
+    pipe, _, _ = _pipeline(tmp_path)
+    image = ImageRecord(filename="contract.png", path="unused")
+
+    with pytest.raises(ValueError, match="prompt 不可為空"):
+        pipe.segment_text(image, "   ")
+
+    with pytest.raises(ValueError, match="prompt 不可超過 200 個字元"):
+        pipe.segment_text(image, "a" * 201)
+
+
+def test_segment_text_contract_reports_pending_implementation(tmp_path):
+    pipe, _, _ = _pipeline(tmp_path)
+    image = ImageRecord(filename="contract.png", path="unused")
+
+    with pytest.raises(NotImplementedError, match="自然語言分割尚未實作"):
+        pipe.segment_text(image, "cat")

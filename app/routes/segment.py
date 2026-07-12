@@ -33,6 +33,26 @@ def segment_point(image_id: str):
     return jsonify(seg.to_dict()), 201
 
 
+@bp.post("/images/<image_id>/segment_text")
+def segment_text(image_id: str):
+    """自然語言分割。body: {"prompt": "cat"}，回傳零到多個 Segment。"""
+    repo, pipeline = get_repo(), get_pipeline()
+    img = repo.get_image(image_id)
+    if not img:
+        abort(404, "找不到圖片")
+
+    data = request.get_json(silent=True) or {}
+    prompt = str(data.get("prompt", "")).strip()
+    try:
+        segments = pipeline.segment_text(img, prompt)
+    except ValueError as exc:
+        abort(400, str(exc))
+    except NotImplementedError as exc:
+        abort(503, str(exc))
+
+    return jsonify([seg.to_dict() for seg in segments]), 201
+
+
 @bp.post("/images/<image_id>/segment_polygon")
 def segment_polygon(image_id: str):
     """手動描邊：使用者沿邊界畫出多邊形。body: {"points": [[x,y], ...]}"""
