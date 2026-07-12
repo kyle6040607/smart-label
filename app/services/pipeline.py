@@ -76,6 +76,26 @@ class Pipeline:
         self.repo.add_segment(seg)
         return seg
 
+    # ---------- 自然語言：用文字找物件並切出遮罩（Week 2）----------
+    def segment_text(self, image: ImageRecord, prompt: str) -> list[Segment]:
+        """依文字提示分割圖片中的物件。
+
+        - prompt 會先移除前後空白，不可為空，最多 200 個字元。
+        - 回傳零到多個已完成遮罩存檔、分類與 Repository 寫入的 Segment。
+        - 找不到符合物件時回傳空列表，不視為錯誤。
+        - prompt 只是搜尋條件，不直接作為 human_label。
+
+        Grounding DINO + MobileSAM 的實作由 Week 2 分割模組補入；在完成前，
+        合法請求明確回報尚未實作，讓前端與 LINE 可以先依固定契約串接。
+        """
+        prompt = prompt.strip()
+        if not prompt:
+            raise ValueError("prompt 不可為空")
+        if len(prompt) > 200:
+            raise ValueError("prompt 不可超過 200 個字元")
+
+        raise NotImplementedError("自然語言分割尚未實作")
+
     # ---------- 手動描邊：使用者沿物件邊界畫出多邊形 ----------
     def segment_polygon(self, image: ImageRecord, points: list[tuple[int, int]]) -> Segment:
         """把使用者手繪的邊界點轉成精準遮罩。
