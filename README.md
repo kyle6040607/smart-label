@@ -82,7 +82,7 @@ curl -L -o models/mobile_sam.pt \
 > Windows PowerShell：`curl.exe -L -o models\mobile_sam.pt https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt`
 > 或手動到 <https://github.com/ChaoningZhang/MobileSAM/tree/master/weights> 下載 `mobile_sam.pt` 放進 `models/`。
 
-預設路徑為 `models/mobile_sam.pt`（由環境變數 `SAM_CHECKPOINT` 控制，放別處就覆蓋它）。放好後啟用真 SAM：
+預設路徑為 `models/mobile_sam.pt`（由環境變數 `SAM_CHECKPOINT` 控制，放別處就覆蓋它），權重架構由 `SAM_MODEL_TYPE` 明確指定，MobileSAM 應設為 `vit_t`。放好後啟用真 SAM：
 
 ```bash
 USE_REAL_SAM=1 uv run python main.py

@@ -68,6 +68,8 @@ class Config:
     sam_min_area_ratio: float = float(os.getenv("SAM_MIN_AREA_RATIO", "0.004"))
     sam_flood_tol: int = int(os.getenv("SAM_FLOOD_TOL", "12"))  # 單點分割的容差，越大圈越多
     sam_checkpoint: str = os.getenv("SAM_CHECKPOINT", "models/mobile_sam.pt")
+    # 權重架構必須明確指定，不從 checkpoint 檔名推測。
+    sam_model_type: str = os.getenv("SAM_MODEL_TYPE", "vit_t")
 
     # --- 後端模型開關：mock 先跑通流程，之後抽換真模型 ---
     use_real_sam: bool = os.getenv("USE_REAL_SAM", "0") == "1"
