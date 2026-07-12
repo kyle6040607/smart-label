@@ -95,8 +95,44 @@ button.on { background: #ffd93d; color: #1a2230; font-weight: 600; }
 }
 .thumb:hover .thumb-del { opacity: 1; }
 
-.canvas-wrap { overflow: auto; max-height: 70vh; border: 1px solid #28323f; border-radius: 6px; }
+.canvas-wrap {
+  position: relative;
+  overflow: auto;
+  max-height: 70vh;
+  min-height: 80px;
+  border: 1px solid #28323f;
+  border-radius: 6px;
+}
 canvas { display: block; cursor: crosshair; }
+.canvas-wrap.is-loading canvas { pointer-events: none; }
+.canvas-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 100%;
+  min-height: 100%;
+  background: rgb(15 20 25 / 72%);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.canvas-loading[hidden] { display: none; }
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgb(255 255 255 / 28%);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 1.6s; }
+}
 
 .stats { font-size: 13px; line-height: 1.8; margin-bottom: 12px; }
 .stats b { color: var(--ok); }

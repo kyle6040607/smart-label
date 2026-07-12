@@ -2,11 +2,32 @@
 // 流程：上傳 → 選圖 → 自動/單點分割 → 標種子 → 審核紅色低信心片段 → 看統計
 "use strict";
 
-const state = { currentImage: null, drawMode: false, drawing: false, points: [] };
+const state = {
+  currentImage: null,
+  drawMode: false,
+  drawing: false,
+  points: [],
+  segmenting: false,
+};
 const $ = (id) => document.getElementById(id);
 
 const canvas = $("canvas");
 const ctx = canvas.getContext("2d");
+
+function setSegmentationLoading(active, message = "分割中…") {
+  state.segmenting = active;
+  $("segmentLoadingText").textContent = message;
+  $("segmentLoading").hidden = !active;
+  canvas.closest(".canvas-wrap").classList.toggle("is-loading", active);
+  canvas.setAttribute("aria-busy", String(active));
+  $("autoSegBtn").disabled = active || !state.currentImage;
+  $("drawBtn").disabled = active || !state.currentImage;
+}
+
+async function responseError(res, fallback) {
+  const detail = await res.text();
+  return new Error(detail ? `${fallback}：${detail}` : fallback);
+}
 
 // 把滑鼠座標換算成 canvas（原圖）座標
 function toImageXY(e) {
@@ -68,6 +89,7 @@ async function deleteImage(im) {
 
 // ---------- 選圖並畫到 canvas ----------
 function selectImage(im, el) {
+  if (state.segmenting) return;
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
   el.classList.add("active");
@@ -85,11 +107,21 @@ function selectImage(im, el) {
 
 // ---------- 自動分割整張 ----------
 $("autoSegBtn").onclick = async () => {
-  if (!state.currentImage) return;
-  const res = await fetch(`/api/images/${state.currentImage.id}/segment`, { method: "POST" });
-  const segs = await res.json();
-  await redraw(segs);
-  await refreshSidebar();
+  if (!state.currentImage || state.segmenting) return;
+  const imageId = state.currentImage.id;
+  setSegmentationLoading(true, "自動分割中…");
+  try {
+    const res = await fetch(`/api/images/${imageId}/segment`, { method: "POST" });
+    if (!res.ok) throw await responseError(res, "自動分割失敗");
+    const segs = await res.json();
+    await redraw(segs);
+    await refreshSidebar();
+  } catch (error) {
+    console.error(error);
+    alert(error instanceof Error ? error.message : "自動分割失敗");
+  } finally {
+    setSegmentationLoading(false);
+  }
 };
 
 // ---------- 模式切換：手動描邊 ----------
@@ -104,18 +136,30 @@ $("drawBtn").onclick = () => {
 
 // ---------- 單點分割（一般模式：點 canvas）----------
 canvas.onclick = async (e) => {
-  if (!state.currentImage || state.drawMode) return;
+  if (!state.currentImage || state.drawMode || state.segmenting) return;
   const { x, y } = toImageXY(e);
-  const res = await fetch(`/api/images/${state.currentImage.id}/segment_point`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ x, y }),
-  });
-  const seg = await res.json();
-  const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
-  await redraw(all);
-  await refreshSidebar();
-  promptLabel(seg);
+  const imageId = state.currentImage.id;
+  setSegmentationLoading(true, "單點分割中…");
+  try {
+    const res = await fetch(`/api/images/${imageId}/segment_point`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x, y }),
+    });
+    if (!res.ok) throw await responseError(res, "單點分割失敗");
+    const seg = await res.json();
+    const listRes = await fetch(`/api/images/${imageId}/segments`);
+    if (!listRes.ok) throw await responseError(listRes, "讀取分割結果失敗");
+    const all = await listRes.json();
+    await redraw(all);
+    await refreshSidebar();
+    promptLabel(seg);
+  } catch (error) {
+    console.error(error);
+    alert(error instanceof Error ? error.message : "單點分割失敗");
+  } finally {
+    setSegmentationLoading(false);
+  }
 };
 
 // ---------- 手動描邊（draw 模式：按住拖曳描邊界）----------

@@ -1,5 +1,4 @@
 """啟動進入點。
-
     uv run python main.py        # 開發伺服器
     # 或部署時用 gunicorn: gunicorn "app:create_app()"
 """

@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第四週開發計畫 · Smart Label Platform</title>
+<style>
+  :root{
+    --bg:#f3f6f6; --surface:#ffffff; --surface-2:#eaefef; --surface-3:#e0e7e6;
+    --ink:#15201f; --ink-2:#485956; --ink-3:#7a8987; --line:#d8e0df;
+    --accent:#0d7c8b; --accent-ink:#095c68; --accent-soft:#dceff1;
+    --done:#2c8a58; --done-soft:#dceee4;
+    --todo:#b0761a; --todo-soft:#f4e9d2;
+    --missing:#c23a52; --missing-soft:#f6dee2;
+    --font-sans:"PingFang TC","Microsoft JhengHei","Noto Sans TC","Segoe UI",system-ui,sans-serif;
+    --font-mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"Noto Sans Mono",monospace;
+    --maxw:1040px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1416; --surface:#151d1f; --surface-2:#1c2628; --surface-3:#243032;
+      --ink:#e7edec; --ink-2:#a4b2b0; --ink-3:#74817f; --line:#273234;
+      --accent:#34b2c0; --accent-ink:#7fd6df; --accent-soft:#123138;
+      --done:#48b579; --done-soft:#12291e;
+      --todo:#d59a3d; --todo-soft:#2c2413;
+      --missing:#e26a80; --missing-soft:#2c1418;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f3f6f6; --surface:#ffffff; --surface-2:#eaefef; --surface-3:#e0e7e6;
+    --ink:#15201f; --ink-2:#485956; --ink-3:#7a8987; --line:#d8e0df;
+    --accent:#0d7c8b; --accent-ink:#095c68; --accent-soft:#dceff1;
+    --done:#2c8a58; --done-soft:#dceee4; --todo:#b0761a; --todo-soft:#f4e9d2;
+    --missing:#c23a52; --missing-soft:#f6dee2;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1416; --surface:#151d1f; --surface-2:#1c2628; --surface-3:#243032;
+    --ink:#e7edec; --ink-2:#a4b2b0; --ink-3:#74817f; --line:#273234;
+    --accent:#34b2c0; --accent-ink:#7fd6df; --accent-soft:#123138;
+    --done:#48b579; --done-soft:#12291e; --todo:#d59a3d; --todo-soft:#2c2413;
+    --missing:#e26a80; --missing-soft:#2c1418;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);
+    font-size:17px;line-height:1.65;-webkit-font-smoothing:antialiased;letter-spacing:.01em;
+    overflow-wrap:break-word}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  code,.mono{font-family:var(--font-mono);font-size:.86em;letter-spacing:0}
+  .file{font-family:var(--font-mono);font-size:.82em;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--accent-ink);white-space:nowrap}
+
+  header.hero{border-bottom:1px solid var(--line);background:
+    linear-gradient(180deg,var(--surface) 0%,var(--bg) 100%)}
+  .hero-inner{max-width:var(--maxw);margin:0 auto;padding:46px 22px 34px}
+  .eyebrow{font-size:.74rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent-ink);font-weight:700;margin:0 0 14px}
+  h1{font-size:clamp(1.9rem,5vw,2.9rem);line-height:1.1;margin:0 0 12px;
+    font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+  .lede{font-size:1.06rem;color:var(--ink-2);max-width:60ch;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;margin-top:22px}
+  .meta .tag{font-size:.78rem;background:var(--surface-2);border:1px solid var(--line);
+    padding:4px 11px;border-radius:100px;color:var(--ink-2)}
+  .meta .tag b{color:var(--ink);font-weight:700}
+
+  section{padding:40px 0}
+  section+section{border-top:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:12px;margin:0 0 6px}
+  .sec-num{font-family:var(--font-mono);font-size:.8rem;color:var(--accent);
+    font-weight:700;flex:none}
+  h2{font-size:1.5rem;margin:0;font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+  .sec-sub{color:var(--ink-2);margin:.35rem 0 26px;max-width:64ch}
+
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:.76rem;font-weight:700;
+    padding:2px 9px;border-radius:6px;white-space:nowrap;letter-spacing:.01em}
+  .chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+  .chip.done{color:var(--done);background:var(--done-soft)}
+  .chip.stub{color:var(--todo);background:var(--todo-soft)}
+  .chip.missing{color:var(--missing);background:var(--missing-soft)}
+
+  .scroll{overflow-x:auto}
+  table.status{width:100%;border-collapse:collapse;font-size:.92rem;min-width:520px}
+  table.status th{text-align:left;font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:700;padding:0 12px 10px;border-bottom:1px solid var(--line)}
+  table.status td{padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
+  table.status tr:last-child td{border-bottom:none}
+  table.status td.mod{font-weight:700;color:var(--ink)}
+
+  .goal{background:var(--accent-soft);border:1px solid var(--accent);border-radius:14px;
+    padding:22px 24px;display:flex;gap:16px;align-items:flex-start}
+  .goal .mark{font-size:1.5rem;line-height:1;flex:none;margin-top:2px}
+  .goal h3{margin:0 0 6px;font-size:1.12rem;color:var(--accent-ink)}
+  .goal p{margin:0;color:var(--ink);font-size:.97rem}
+  .goal .arrow{font-family:var(--font-mono);color:var(--accent-ink);font-size:.86rem;
+    margin-top:10px;display:block}
+  .goal ul{margin:10px 0 0;padding-left:20px;color:var(--ink);font-size:.95rem}
+  .goal ul li{margin:4px 0}
+
+  .gantt-wrap{overflow-x:auto;padding-bottom:6px}
+  .gantt{display:grid;grid-template-columns:120px repeat(5,minmax(132px,1fr));
+    grid-auto-rows:auto;gap:9px;min-width:820px;align-items:stretch}
+  .g-daylab{font-family:var(--font-mono);font-size:.82rem;color:var(--ink-3);
+    text-align:center;font-weight:700;padding-bottom:2px}
+  .g-daylab small{display:block;font-size:.7rem;font-weight:600;opacity:.8}
+  .g-name{font-weight:800;font-size:1rem;display:flex;flex-direction:column;gap:1px}
+  .g-name small{font-weight:600;font-size:.74rem;color:var(--ink-3);letter-spacing:.02em}
+  .bar{border-radius:8px;padding:10px 13px;font-size:.9rem;font-weight:700;line-height:1.35;
+    min-height:44px;display:flex;flex-direction:column;justify-content:center;border:1px solid transparent;
+    overflow-wrap:break-word;white-space:normal}
+  .bar small{display:block;font-weight:600;font-size:.74rem;opacity:.85;margin-top:3px;line-height:1.3}
+  .bar.crit{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .bar.soft{background:var(--surface-2);color:var(--ink);border-color:var(--line)}
+  .bar.indep{background:var(--done-soft);color:var(--done);border-color:var(--done)}
+  .g-track{grid-column:2 / -1;height:1px;background:var(--line);margin:2px 0}
+  .critnote{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:.84rem;color:var(--ink-2)}
+  .critnote .dot{width:12px;height:12px;border-radius:3px;background:var(--accent);flex:none}
+
+  .people{display:grid;gap:18px}
+  .person{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .p-head{display:flex;align-items:center;gap:13px;padding:16px 20px;background:var(--surface-2);
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .p-avatar{width:40px;height:40px;border-radius:10px;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.05rem;flex:none}
+  .person.lead .p-avatar{background:var(--accent-ink)}
+  .p-id{display:flex;flex-direction:column;gap:1px;margin-right:auto}
+  .p-id .nm{font-weight:800;font-size:1.05rem}
+  .p-id .role{font-size:.78rem;color:var(--ink-2)}
+  .p-when{font-family:var(--font-mono);font-size:.72rem;color:var(--accent-ink);
+    background:var(--accent-soft);padding:3px 9px;border-radius:6px;font-weight:700}
+  .p-body{padding:16px 20px 20px}
+  .p-goal{font-size:.9rem;color:var(--ink-2);margin:0 0 14px;padding-left:12px;
+    border-left:3px solid var(--accent)}
+  .p-step{font-size:.78rem;font-weight:800;letter-spacing:.04em;color:var(--accent-ink);
+    margin:16px 0 9px;text-transform:none}
+  .p-step:first-of-type{margin-top:4px}
+  ul.tasks{list-style:none;margin:0;padding:0;display:grid;gap:9px}
+  ul.tasks li{display:block;position:relative;padding-left:25px;font-size:.92rem}
+  ul.tasks li::before{content:"";position:absolute;left:0;top:6px;width:15px;height:15px;
+    border:2px solid var(--ink-3);border-radius:4px;box-sizing:border-box}
+  ul.tasks li.star::before{border-color:var(--accent);background:var(--accent-soft)}
+  ul.tasks li.check::before{border-color:var(--done);background:var(--done);
+    box-shadow:inset 0 0 0 2px var(--surface)}
+
+  .concepts{display:grid;gap:12px}
+  details.concept{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    overflow:hidden}
+  details.concept summary{cursor:pointer;padding:16px 20px;font-weight:800;font-size:1.02rem;
+    list-style:none;display:flex;align-items:center;gap:11px}
+  details.concept summary::-webkit-details-marker{display:none}
+  details.concept summary .plus{font-family:var(--font-mono);color:var(--accent);font-weight:700;
+    transition:transform .2s;flex:none}
+  details.concept[open] summary .plus{transform:rotate(45deg)}
+  details.concept summary .q{font-size:.72rem;color:var(--ink-3);font-weight:700;
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;flex:none}
+  .c-body{padding:2px 20px 20px;color:var(--ink-2);font-size:.94rem}
+  .c-body p{margin:0 0 11px}
+  .c-body strong{color:var(--ink)}
+  .c-body table{width:100%;border-collapse:collapse;font-size:.86rem;margin:6px 0 4px}
+  .c-body table td,.c-body table th{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left}
+  .c-body table th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)}
+  .c-body .hl{background:var(--accent-soft);color:var(--accent-ink);font-weight:700}
+  .c-body .flow{font-family:var(--font-mono);font-size:.8rem;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:8px;padding:12px 14px;color:var(--ink);
+    overflow-x:auto;white-space:nowrap;line-height:1.8}
+
+  .tier{border-radius:14px;padding:18px 22px;margin-bottom:13px;border:1px solid var(--line)}
+  .tier.must{background:var(--accent-soft);border-color:var(--accent)}
+  .tier.bonus{background:var(--surface)}
+  .tier h3{margin:0;font-size:1.05rem;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .tier .lab{font-size:.7rem;font-weight:800;letter-spacing:.04em;padding:2px 9px;border-radius:6px;flex:none}
+  .tier.must .lab{background:var(--accent);color:#fff}
+  .tier.bonus .lab{background:var(--todo-soft);color:var(--todo)}
+  .tier p{margin:8px 0 0;font-size:.94rem;color:var(--ink-2)}
+  .tier p b{color:var(--ink)}
+  .tier .who{font-family:var(--font-mono);font-size:.76rem;color:var(--accent-ink);margin-top:8px;display:block}
+  .runbook{counter-reset:step;display:grid;gap:11px;margin:18px 0 0;padding:0;list-style:none}
+  .runbook li{position:relative;padding-left:37px;font-size:.95rem;color:var(--ink)}
+  .runbook li::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:0;
+    width:25px;height:25px;border-radius:50%;background:var(--accent);color:#fff;
+    font-size:.82rem;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .runbook li.plus::before{content:"+";background:var(--todo)}
+  .runbook li small{display:block;color:var(--ink-3);font-size:.8rem;margin-top:1px}
+
+  footer{background:var(--surface);border-top:1px solid var(--line);padding:34px 0 44px}
+  .verify{display:flex;gap:16px;align-items:flex-start;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:14px;padding:22px 24px}
+  .verify .mark{font-size:1.4rem;flex:none}
+  .verify h3{margin:0 0 6px;font-size:1.1rem}
+  .verify p{margin:0 0 10px;color:var(--ink-2);font-size:.95rem}
+  .verify ol{margin:0;padding-left:20px;color:var(--ink-2);font-size:.93rem}
+  .verify ol li{margin:5px 0}
+  .verify ol li b{color:var(--ink)}
+  .foot-note{text-align:center;color:var(--ink-3);font-size:.8rem;margin-top:24px}
+
+  @media(max-width:560px){
+    ul.tasks li{font-size:.88rem}
+    .p-head{gap:10px}
+  }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">Smart Label Platform · 開發排程</p>
+    <h1>第四週開發計畫：上線與發表</h1>
+    <p class="lede">功能到 Week 3 為止全部凍結。這一週只做三件事：把系統<b>放上雲端</b>（GCP + 正式 LINE 入口）、
+      把三組<b>成果數據</b>整理成發表素材、把 demo <b>演練到閉著眼睛都能走完</b>。
+      本週的鐵律：<b>不加新功能，只修會壞 demo 的 bug。</b></p>
+    <div class="meta">
+      <span class="tag">團隊 · <b>佳凱 / 峻維 / 文凱 / 君璇</b></span>
+      <span class="tag">週期 · <b>7/27（一）→ 8/02（日）發表準備完成</b></span>
+      <span class="tag">三個交付物 · <b>線上網址 ｜ 成果數據包 ｜ 演練過的 demo</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 1 現況盤點 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>現況盤點：Week 3 結束時的預期狀態</h2></div>
+    <p class="sec-sub">功能面應該已經齊了。剩下的全是「讓它見得了人」的工作——照這張表對現況，缺的先補。</p>
+    <div class="scroll">
+      <table class="status">
+        <thead><tr><th>項目</th><th>來源</th><th>狀態</th></tr></thead>
+        <tbody>
+          <tr><td class="mod">素人閉環（打字 → 遮罩，網頁 + LINE）</td><td>Week 2–3</td><td><span class="chip done">完成 · LINE 尚走 ngrok 測試網址</span></td></tr>
+          <tr><td class="mod">工程師模式（種子 / 審核 / 參數 / Dashboard）</td><td>Week 2–3</td><td><span class="chip done">完成 · 含即時回訓與圖表</span></td></tr>
+          <tr><td class="mod">MySQL 儲存 + 影像歸屬使用者</td><td>Week 3</td><td><span class="chip done">完成 · docker-compose 預設</span></td></tr>
+          <tr><td class="mod">主動學習曲線（省工時證據）</td><td>Week 3</td><td><span class="chip done">CSV + 曲線圖已產出</span></td></tr>
+          <tr><td class="mod">SAM benchmark 對比表</td><td>Week 1–3</td><td><span class="chip done">Mock vs 真 · 調參前後都有</span></td></tr>
+          <tr><td class="mod">YOLO 一鍵訓練 + 首次訓練曲線</td><td>Week 3</td><td><span class="chip stub">腳本有了 · 本週跑正式版出 mAP</span></td></tr>
+          <tr><td class="mod">GCP 部署（公開網址 + HTTPS）</td><td>—</td><td><span class="chip missing">本週主線 · 君璇</span></td></tr>
+          <tr><td class="mod">LINE webhook 正式網址</td><td>—</td><td><span class="chip missing">等部署完成後切換</span></td></tr>
+          <tr><td class="mod">正式環境安全設定（SECRET_KEY / 密碼）</td><td>—</td><td><span class="chip missing">本週要做 · 佳凱</span></td></tr>
+          <tr><td class="mod">期末簡報 + demo 演練</td><td>—</td><td><span class="chip missing">本週要做 · 全員</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 2 本週目標 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>本週目標：三個交付物，一個都不能少</h2></div>
+    <p class="sec-sub">評審看的不是程式碼，是<strong>網址、數據、和一場不出包的 demo</strong>。三個交付物各有負責人，互不阻塞。</p>
+    <div class="goal">
+      <span class="mark">🚀</span>
+      <div>
+        <h3>公開網址 + 成果數據包 + 演練過的 demo</h3>
+        <ul>
+          <li><b>線上網址：</b>GCP 上跑起來（Docker + MySQL + HTTPS），手機打開就能用素人模式；LINE Bot 切到正式 webhook，加好友傳圖就能玩。</li>
+          <li><b>成果數據包（三組）：</b>① SAM benchmark（Mock vs 真、提速前後）② 主動學習曲線（標 N 個省 X% 工時）③ YOLO 訓練成果（mAP + 預測範例圖）。全部整理成簡報可直接貼的圖表。</li>
+          <li><b>演練過的 demo：</b>固定劇本、固定測試圖、至少完整走兩次；雲端掛掉有本機備援、本機掛掉有錄影備援——<strong>三層保險</strong>。</li>
+        </ul>
+        <span class="arrow">評審手機掃 QR code → 素人模式打「cat」→ 遮罩出現 → 簡報翻到三張數據圖 → 結束</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 先後順序 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>先後順序：部署先行，演練壓軸</h2></div>
+    <p class="sec-sub">關鍵路徑是<strong>君璇的 GCP 部署</strong>——LINE 正式網址、QR code、全隊演練都在等公開網址。
+      其他人前半週各自獨立產素材。橫條顏色＝
+      <span class="chip crit" style="background:var(--accent);color:#fff">關鍵路徑</span>
+      <span class="chip indep">獨立可並行</span>
+      <span class="chip soft" style="background:var(--surface-2);color:var(--ink);border:1px solid var(--line)">依賴 / 整合</span></p>
+    <div class="gantt-wrap">
+      <div class="gantt">
+        <div></div>
+        <div class="g-daylab">7/27<small>一</small></div>
+        <div class="g-daylab">7/28<small>二</small></div>
+        <div class="g-daylab">7/29<small>三</small></div>
+        <div class="g-daylab">7/30<small>四</small></div>
+        <div class="g-daylab">7/31<small>五</small></div>
+        <div class="g-track" style="grid-column:2 / -1"></div>
+
+        <!-- 君璇 -->
+        <div class="g-name">君璇<small>部署</small></div>
+        <div class="bar crit" style="grid-column:2 / 5">GCP 部署：VM + Docker + MySQL + HTTPS<small>7/29 要有公開網址</small></div>
+        <div class="bar soft" style="grid-column:5 / 7">LINE webhook 切正式 + 穩定性观察<small>等網址</small></div>
+
+        <!-- 峻維 -->
+        <div class="g-name">峻維<small>成果數據</small></div>
+        <div class="bar indep" style="grid-column:2 / 5">YOLO 正式訓練 → mAP + 預測圖<small>Colab GPU · 獨立</small></div>
+        <div class="bar indep" style="grid-column:5 / 7">三組數據彙整成簡報表<small>benchmark/曲線/mAP</small></div>
+
+        <!-- 文凱 -->
+        <div class="g-name">文凱<small>簡報 + 備援</small></div>
+        <div class="bar indep" style="grid-column:2 / 4">錄 demo 備援影片 + 截圖素材<small>本機環境就能錄</small></div>
+        <div class="bar soft" style="grid-column:4 / 7">簡報整合 + 主持演練<small>收峻維數據、君璇網址</small></div>
+
+        <!-- 佳凱 -->
+        <div class="g-name">佳凱<small>硬化 + 總驗收</small></div>
+        <div class="bar indep" style="grid-column:2 / 4">prod 安全硬化 + 備份<small>SECRET_KEY / 密碼 / dump</small></div>
+        <div class="bar crit" style="grid-column:4 / 7">總驗收 + 備案演練<small>三層保險逐一測試</small></div>
+      </div>
+    </div>
+    <div class="critnote"><span class="dot"></span>
+      <span><strong>兩個死線</strong>：君璇 <strong>7/29 要交出公開網址</strong>（LINE 正式化、QR code、演練都在等它；卡住就立刻降級成「ngrok 網址 demo + 影片備援」，別耗到週五）；
+      全隊 <strong>7/31 第一次完整演練</strong>，<strong>8/01–02 週末</strong>第二次演練＋修出包的地方。功能凍結：本週合的 PR 只准修 bug 和調文案。</span></div>
+  </section>
+
+  <!-- 4 每人任務 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>每個人的細項任務</h2></div>
+    <p class="sec-sub">□ 是待辦；<span style="color:var(--accent);font-weight:700">綠框</span>是本週關鍵動作；<span style="color:var(--done);font-weight:700">■</span> 是先前已完成、本週接續的基礎。</p>
+    <div class="people">
+
+      <!-- 君璇 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">璇</div>
+          <div class="p-id"><span class="nm">君璇</span><span class="role">部署工程師 · 本週主角</span></div>
+          <span class="p-when">7/27 → 7/31 · 7/29 交網址</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">四週鋪墊（Dockerfile、compose、LINE、GCP 帳號）都是為了這一刻：把系統放上網。
+            <strong>先求通、再求快</strong>——先用最簡單的路徑上線，優化留給有餘裕的時候。</p>
+
+          <p class="p-step">① 上雲（7/27 → 7/29，關鍵路徑）</p>
+          <ul class="tasks">
+            <li class="check">已備：Dockerfile、docker-compose（含 MySQL）、GCP 帳號與專案</li>
+            <li class="star">開一台 <strong>Compute Engine VM</strong>（e2-standard-4 級即可，CPU 推論；用峻維的 CPU 耗時表估規格）→ <code>docker compose up -d</code> 整組帶起來</li>
+            <li class="star">HTTPS：LINE webhook 強制要求。最省事的路徑是 Caddy / nginx + Let's Encrypt 反向代理，搭一個免費子網域（如 DuckDNS）；別為了網域卡兩天</li>
+            <li>環境變數用 prod 值（跟佳凱拿 <code>SECRET_KEY</code>、DB 密碼）；上傳目錄掛 volume，重開容器資料不掉</li>
+            <li>雲端跑的是 CPU：真模型參數用峻維調過的提速組（縮圖 + 少點），先實測素人流程單張耗時，超過 15 秒就再降參數——<strong>雲端 demo 以素人流程（框提示，天生快）為主</strong></li>
+          </ul>
+
+          <p class="p-step">② LINE 正式化 + 穩定性（7/30 → 7/31）</p>
+          <ul class="tasks">
+            <li class="star">LINE Developers 後台把 webhook 從 ngrok 切到正式網址，完整走一次「加好友 → 選單上傳 → 打 cat → 收結果圖」</li>
+            <li>產 QR code（網站 + LINE 加好友各一張）給文凱放簡報</li>
+            <li>觀察兩天穩定性：記憶體夠不夠（真模型 + MySQL 同機）、掛了會不會自動重啟（compose <code>restart: unless-stopped</code>）</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 峻維 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">維</div>
+          <div class="p-id"><span class="nm">峻維</span><span class="role">成果數據</span></div>
+          <span class="p-when">7/27 → 7/31 · 全程獨立</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">你手上有全專題最硬的素材：benchmark、耗時表、訓練腳本。本週把它們變成<strong>評審一眼看懂的三張圖表</strong>，並跑出最終的 YOLO 成果數據。</p>
+
+          <p class="p-step">① YOLO 正式訓練（7/27 → 7/29）</p>
+          <ul class="tasks">
+            <li class="check">已備：<span class="file">scripts/train_yolo.py</span>、Week 3 首次訓練曲線</li>
+            <li class="star">用平台累積的<strong>全部</strong>標註資料跑正式訓練（Colab GPU、epochs 拉高），記錄 <strong>mAP50 / mAP50-95</strong>，輸出 4–6 張預測範例圖（成功案例為主，留一張失敗案例誠實討論）</li>
+            <li>對照組（有餘力）：同資料量下「純手標」需要的時間估算 vs 平台實際花的時間——給省工時主張再添一筆</li>
+          </ul>
+
+          <p class="p-step">② 三組數據彙整（7/30 → 7/31）</p>
+          <ul class="tasks">
+            <li class="star">整理成三張簡報級圖表：① SAM benchmark（Mock vs 真、提速前後）② 主動學習曲線（文凱 Week 3 已畫，補上結論句「標 N 個省 X%」）③ YOLO 成果（mAP + 範例圖）</li>
+            <li>每張圖配一句「一句話結論」交給文凱——評審記得住的是句子，不是表格</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 文凱 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">文</div>
+          <div class="p-id"><span class="nm">文凱</span><span class="role">簡報 + demo 導演</span></div>
+          <span class="p-when">7/27 → 8/02</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">demo 出不出彩你說了算。先把<strong>備援影片</strong>錄好（心就安了一半），再整合簡報、當演練的導演。</p>
+
+          <p class="p-step">① 備援素材（7/27 → 7/28，獨立）</p>
+          <ul class="tasks">
+            <li class="star">在本機環境把完整 demo 流程<strong>錄成影片</strong>（素人打字切割 → 工程師審核 → Dashboard → 匯出）——網路全掛時就播這個，這是第三層保險</li>
+            <li>截高解析圖：素人 / 工程師兩模式對比、LINE 對話、Dashboard——簡報和書面報告都用得上</li>
+          </ul>
+
+          <p class="p-step">② 簡報 + 演練（7/29 → 8/02）</p>
+          <ul class="tasks">
+            <li class="star">簡報整合：問題（標註太貴）→ 解法（人機協作 + 主動學習）→ demo → 三組數據 → 架構一頁（Mock/真模型抽換、四模組分工）→ QR code 收尾</li>
+            <li class="star">主持兩次全隊演練（7/31、8/01–02）：計時、記錄每次出包點、修掉；demo 用的測試圖固定下來，別現場即興</li>
+            <li>準備 Q&A 清單：為何選 MobileSAM、準確率曲線怎麼量的、跟 Roboflow/CVAT 差在哪——先寫好答案</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 佳凱 -->
+      <div class="person lead">
+        <div class="p-head">
+          <div class="p-avatar">凱</div>
+          <div class="p-id"><span class="nm">佳凱</span><span class="role">架構師 · 硬化 + 總驗收</span></div>
+          <span class="p-when">7/27 → 8/02</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">最後一週你的工作是<strong>確保不出事</strong>：正式環境安全設定、資料備份、三層保險逐一驗證，以及當全隊的最終驗收人。</p>
+
+          <p class="p-step">① prod 硬化 + 備份（7/27 → 7/28）</p>
+          <ul class="tasks">
+            <li class="check">已備：<code>SMART_LABEL_ENV=prod</code> 會強制要求 <code>SECRET_KEY</code> 的機制 Week 1 已寫好</li>
+            <li class="star">產隨機 <code>SECRET_KEY</code>、改掉 <code>sa/sa</code> 預設管理帳密、DB 密碼換強密碼——交給君璇部署用（用私訊傳，別進 git）</li>
+            <li class="star">MySQL 備份：<code>mysqldump</code> 排程（cron 每日一次即可），demo 前一天手動備一份；上傳圖片目錄同步備份</li>
+            <li>上線前掃一輪：<code>.env</code> 沒進 git、debug 關閉、上傳大小限制生效</li>
+          </ul>
+
+          <p class="p-step">② 總驗收 + 備案（7/29 → 8/02）</p>
+          <ul class="tasks">
+            <li class="star">三層保險逐一實測：① 雲端網址（主）② 本機 docker-compose（雲掛用，demo 前一晚在發表要用的那台筆電上起好）③ 文凱的影片（全掛用）——每一層都真的走過一遍才算數</li>
+            <li class="star">最終驗收清單跑兩輪：素人網頁流 / LINE 流 / 工程師流 / 匯出 / Dashboard，任何 bug 開 issue 當天修</li>
+            <li>README 與文件收尾：部署步驟、架構圖、四週進度文件（docs/week1–4.html）連結齊全——這是書面評分的一部分</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 5 發表日runbook -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>發表日 runbook：當天怎麼演</h2></div>
+    <p class="sec-sub">demo 只有幾分鐘，講的是一個故事：「標註很貴 → 我們讓素人打一句話就能標 → 數據證明省工時 → 標的資料真能訓練模型」。</p>
+
+    <div class="tier must">
+      <h3><span class="lab">主線</span>線上素人流 + 三張數據圖</h3>
+      <p><b>手機掃 QR code 開網站 → 素人模式上傳貓圖、打「cat」→ 遮罩出現</b>（全場最有感的一刻）→ 切工程師模式秀審核與 Dashboard → 簡報翻三張數據圖收尾。全程用固定測試圖，演練時走過的那幾張。</p>
+      <span class="who">主講建議 · 佳凱開場架構 → 文凱操作 demo → 峻維講數據 → 君璇講部署與 LINE</span>
+    </div>
+    <div class="tier bonus">
+      <h3><span class="lab">加分</span>現場 LINE 互動</h3>
+      <p>請評審<b>自己</b>加 LINE 好友、從選單上傳自己拍的照片試——互動感最強，但變數也最大（現場網路、沒見過的圖）。放在主線之後、時間有餘才做；出狀況就笑著切回簡報。</p>
+      <span class="who">風險最高、驚喜也最高 · 由君璇待命盯後台 log</span>
+    </div>
+
+    <ol class="runbook">
+      <li><b>開場 90 秒</b>：標註一張圖要多少人工？我們的答案是「打一句話」<small>問題→解法，別先講技術</small></li>
+      <li><b>Live demo</b>：QR code → 素人打「cat」→ 遮罩 → 工程師模式審核 → Dashboard 曲線<small>主線，演練過的固定劇本</small></li>
+      <li><b>數據三連發</b>：benchmark 表 → 省工時曲線 → YOLO mAP + 預測圖<small>每張一句話結論</small></li>
+      <li><b>架構一頁</b>：四個模組、Mock/真模型一鍵抽換、四週怎麼分工<small>展現工程素養的一頁</small></li>
+      <li class="plus"><b>（加分）</b>評審現場 LINE 傳圖互動<small>時間有餘才開，出包就切回簡報</small></li>
+    </ol>
+  </section>
+
+  <!-- 6 名詞小百科 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>名詞小百科（講給組員與評審聽）</h2></div>
+    <div class="concepts">
+
+      <details class="concept" open>
+        <summary><span class="plus">＋</span>雲端沒有 GPU，模型跑得動嗎？<span class="q">部署現實</span></summary>
+        <div class="c-body">
+          <p>跑得動，但要<strong>選對路徑</strong>。GPU 雲主機貴（時租數十倍於 CPU 機），學生專題沒必要。我們的對策有三層：</p>
+          <p>① <strong>素人流程天生快</strong>——Grounding DINO 出框、SAM 吃框提示，只算一兩個點，CPU 上幾秒可接受；最慢的「整張自動分割」是工程師功能，demo 不靠它。
+             ② Week 3 的<strong>提速調參</strong>（縮圖、減提示點）就是為 CPU 部署準備的。
+             ③ 重訓練（YOLO）本來就不在伺服器上跑，在 Colab 的免費 GPU 跑完把結果帶回來。</p>
+          <div class="flow">雲端 CPU：素人打字流（秒級）✅　整張自動分割（慢，demo 不用）⚠️　YOLO 訓練（丟 Colab GPU）✅</div>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>mAP 是什麼？多少算好？<span class="q">成果指標</span></summary>
+        <div class="c-body">
+          <p><strong>mAP（mean Average Precision）</strong>是物件偵測/分割的標準成績單：模型框（切）得準不準、找得全不全，綜合成 0～1 的分數。<code>mAP50</code> 是「跟正解重疊過半就算對」的寬鬆版，<code>mAP50-95</code> 是嚴格版。</p>
+          <p>我們的重點<strong>不是把 mAP 衝到頂</strong>（資料量小、類別少），而是講這個故事：<span class="hl">用本平台「幾乎不用人工」標出的資料，訓練出的模型達到 X mAP</span>——證明整條「標註 → 資料集 → 模型」生產線是真的。誠實秀一張失敗案例並解釋原因，比灌水數字更加分。</p>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>為什麼要三層保險？<span class="q">demo 風險</span></summary>
+        <div class="c-body">
+          <p>發表現場的定律：<strong>會壞的都挑那天壞</strong>——教室 Wi-Fi 慢、雲端剛好重啟、LINE API 抽風。所以逐層降級，每一層事先真的演練過：</p>
+          <table>
+            <tr><th>層</th><th>方案</th><th>啟用時機</th></tr>
+            <tr><td class="hl">1</td><td>雲端公開網址（主）</td><td>預設</td></tr>
+            <tr><td>2</td><td>發表筆電上的本機 docker-compose</td><td>雲端或網路掛</td></tr>
+            <tr><td>3</td><td>預錄 demo 影片</td><td>連本機都出狀況</td></tr>
+          </table>
+          <p>關鍵是<strong>切換要果斷</strong>：現場卡超過 20 秒就降一層，別讓評審看你重整頁面三次。</p>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="verify">
+      <span class="mark">✅</span>
+      <div>
+        <h3>8/02 驗收標準（發表準備完成）</h3>
+        <ol>
+          <li><b>上線：</b>公開 HTTPS 網址手機可用（素人流程）；LINE 加好友、選單上傳、打字收得到結果圖；重開機自動復活、資料不掉。</li>
+          <li><b>安全：</b>prod SECRET_KEY / 管理密碼 / DB 密碼全部換掉，MySQL 每日備份在跑。</li>
+          <li><b>數據包：</b>三張簡報級圖表（benchmark / 省工時曲線 / YOLO mAP＋範例圖），各配一句話結論。</li>
+          <li><b>demo：</b>完整演練至少兩次、計時達標；三層保險每層都實測過；Q&amp;A 清單備妥。</li>
+          <li><b>文件：</b>README 部署步驟可照做、docs/week1–4 進度文件齊全——書面評分直接交得出去。</li>
+        </ol>
+      </div>
+    </div>
+    <p class="foot-note">Smart Label Platform · Week 4 開發計畫(7/27–8/02)· 佳凱 / 峻維 / 文凱 / 君璇</p>
+  </div>
+</footer>
+
+</body>
+</html>
