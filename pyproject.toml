@@ -29,8 +29,15 @@ filterwarnings = [
 
 [tool.uv.sources]
 mobile-sam = { git = "https://github.com/ChaoningZhang/MobileSAM.git" }
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
 ]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
