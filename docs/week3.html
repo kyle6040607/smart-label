@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第三週開發計畫 · Smart Label Platform</title>
+<style>
+  :root{
+    --bg:#f3f6f6; --surface:#ffffff; --surface-2:#eaefef; --surface-3:#e0e7e6;
+    --ink:#15201f; --ink-2:#485956; --ink-3:#7a8987; --line:#d8e0df;
+    --accent:#0d7c8b; --accent-ink:#095c68; --accent-soft:#dceff1;
+    --done:#2c8a58; --done-soft:#dceee4;
+    --todo:#b0761a; --todo-soft:#f4e9d2;
+    --missing:#c23a52; --missing-soft:#f6dee2;
+    --font-sans:"PingFang TC","Microsoft JhengHei","Noto Sans TC","Segoe UI",system-ui,sans-serif;
+    --font-mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"Noto Sans Mono",monospace;
+    --maxw:1040px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1416; --surface:#151d1f; --surface-2:#1c2628; --surface-3:#243032;
+      --ink:#e7edec; --ink-2:#a4b2b0; --ink-3:#74817f; --line:#273234;
+      --accent:#34b2c0; --accent-ink:#7fd6df; --accent-soft:#123138;
+      --done:#48b579; --done-soft:#12291e;
+      --todo:#d59a3d; --todo-soft:#2c2413;
+      --missing:#e26a80; --missing-soft:#2c1418;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f3f6f6; --surface:#ffffff; --surface-2:#eaefef; --surface-3:#e0e7e6;
+    --ink:#15201f; --ink-2:#485956; --ink-3:#7a8987; --line:#d8e0df;
+    --accent:#0d7c8b; --accent-ink:#095c68; --accent-soft:#dceff1;
+    --done:#2c8a58; --done-soft:#dceee4; --todo:#b0761a; --todo-soft:#f4e9d2;
+    --missing:#c23a52; --missing-soft:#f6dee2;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1416; --surface:#151d1f; --surface-2:#1c2628; --surface-3:#243032;
+    --ink:#e7edec; --ink-2:#a4b2b0; --ink-3:#74817f; --line:#273234;
+    --accent:#34b2c0; --accent-ink:#7fd6df; --accent-soft:#123138;
+    --done:#48b579; --done-soft:#12291e; --todo:#d59a3d; --todo-soft:#2c2413;
+    --missing:#e26a80; --missing-soft:#2c1418;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);
+    font-size:17px;line-height:1.65;-webkit-font-smoothing:antialiased;letter-spacing:.01em;
+    overflow-wrap:break-word}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  code,.mono{font-family:var(--font-mono);font-size:.86em;letter-spacing:0}
+  .file{font-family:var(--font-mono);font-size:.82em;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--accent-ink);white-space:nowrap}
+
+  header.hero{border-bottom:1px solid var(--line);background:
+    linear-gradient(180deg,var(--surface) 0%,var(--bg) 100%)}
+  .hero-inner{max-width:var(--maxw);margin:0 auto;padding:46px 22px 34px}
+  .eyebrow{font-size:.74rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent-ink);font-weight:700;margin:0 0 14px}
+  h1{font-size:clamp(1.9rem,5vw,2.9rem);line-height:1.1;margin:0 0 12px;
+    font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+  .lede{font-size:1.06rem;color:var(--ink-2);max-width:60ch;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;margin-top:22px}
+  .meta .tag{font-size:.78rem;background:var(--surface-2);border:1px solid var(--line);
+    padding:4px 11px;border-radius:100px;color:var(--ink-2)}
+  .meta .tag b{color:var(--ink);font-weight:700}
+
+  section{padding:40px 0}
+  section+section{border-top:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:12px;margin:0 0 6px}
+  .sec-num{font-family:var(--font-mono);font-size:.8rem;color:var(--accent);
+    font-weight:700;flex:none}
+  h2{font-size:1.5rem;margin:0;font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+  .sec-sub{color:var(--ink-2);margin:.35rem 0 26px;max-width:64ch}
+
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:.76rem;font-weight:700;
+    padding:2px 9px;border-radius:6px;white-space:nowrap;letter-spacing:.01em}
+  .chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+  .chip.done{color:var(--done);background:var(--done-soft)}
+  .chip.stub{color:var(--todo);background:var(--todo-soft)}
+  .chip.missing{color:var(--missing);background:var(--missing-soft)}
+
+  .scroll{overflow-x:auto}
+  table.status{width:100%;border-collapse:collapse;font-size:.92rem;min-width:520px}
+  table.status th{text-align:left;font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:700;padding:0 12px 10px;border-bottom:1px solid var(--line)}
+  table.status td{padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
+  table.status tr:last-child td{border-bottom:none}
+  table.status td.mod{font-weight:700;color:var(--ink)}
+
+  .goal{background:var(--accent-soft);border:1px solid var(--accent);border-radius:14px;
+    padding:22px 24px;display:flex;gap:16px;align-items:flex-start}
+  .goal .mark{font-size:1.5rem;line-height:1;flex:none;margin-top:2px}
+  .goal h3{margin:0 0 6px;font-size:1.12rem;color:var(--accent-ink)}
+  .goal p{margin:0;color:var(--ink);font-size:.97rem}
+  .goal .arrow{font-family:var(--font-mono);color:var(--accent-ink);font-size:.86rem;
+    margin-top:10px;display:block}
+  .goal ul{margin:10px 0 0;padding-left:20px;color:var(--ink);font-size:.95rem}
+  .goal ul li{margin:4px 0}
+
+  .gantt-wrap{overflow-x:auto;padding-bottom:6px}
+  .gantt{display:grid;grid-template-columns:120px repeat(5,minmax(132px,1fr));
+    grid-auto-rows:auto;gap:9px;min-width:820px;align-items:stretch}
+  .g-daylab{font-family:var(--font-mono);font-size:.82rem;color:var(--ink-3);
+    text-align:center;font-weight:700;padding-bottom:2px}
+  .g-daylab small{display:block;font-size:.7rem;font-weight:600;opacity:.8}
+  .g-name{font-weight:800;font-size:1rem;display:flex;flex-direction:column;gap:1px}
+  .g-name small{font-weight:600;font-size:.74rem;color:var(--ink-3);letter-spacing:.02em}
+  .bar{border-radius:8px;padding:10px 13px;font-size:.9rem;font-weight:700;line-height:1.35;
+    min-height:44px;display:flex;flex-direction:column;justify-content:center;border:1px solid transparent;
+    overflow-wrap:break-word;white-space:normal}
+  .bar small{display:block;font-weight:600;font-size:.74rem;opacity:.85;margin-top:3px;line-height:1.3}
+  .bar.crit{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .bar.soft{background:var(--surface-2);color:var(--ink);border-color:var(--line)}
+  .bar.indep{background:var(--done-soft);color:var(--done);border-color:var(--done)}
+  .g-track{grid-column:2 / -1;height:1px;background:var(--line);margin:2px 0}
+  .critnote{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:.84rem;color:var(--ink-2)}
+  .critnote .dot{width:12px;height:12px;border-radius:3px;background:var(--accent);flex:none}
+
+  .people{display:grid;gap:18px}
+  .person{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .p-head{display:flex;align-items:center;gap:13px;padding:16px 20px;background:var(--surface-2);
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .p-avatar{width:40px;height:40px;border-radius:10px;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.05rem;flex:none}
+  .person.lead .p-avatar{background:var(--accent-ink)}
+  .p-id{display:flex;flex-direction:column;gap:1px;margin-right:auto}
+  .p-id .nm{font-weight:800;font-size:1.05rem}
+  .p-id .role{font-size:.78rem;color:var(--ink-2)}
+  .p-when{font-family:var(--font-mono);font-size:.72rem;color:var(--accent-ink);
+    background:var(--accent-soft);padding:3px 9px;border-radius:6px;font-weight:700}
+  .p-body{padding:16px 20px 20px}
+  .p-goal{font-size:.9rem;color:var(--ink-2);margin:0 0 14px;padding-left:12px;
+    border-left:3px solid var(--accent)}
+  .p-step{font-size:.78rem;font-weight:800;letter-spacing:.04em;color:var(--accent-ink);
+    margin:16px 0 9px;text-transform:none}
+  .p-step:first-of-type{margin-top:4px}
+  ul.tasks{list-style:none;margin:0;padding:0;display:grid;gap:9px}
+  ul.tasks li{display:block;position:relative;padding-left:25px;font-size:.92rem}
+  ul.tasks li::before{content:"";position:absolute;left:0;top:6px;width:15px;height:15px;
+    border:2px solid var(--ink-3);border-radius:4px;box-sizing:border-box}
+  ul.tasks li.star::before{border-color:var(--accent);background:var(--accent-soft)}
+  ul.tasks li.check::before{border-color:var(--done);background:var(--done);
+    box-shadow:inset 0 0 0 2px var(--surface)}
+
+  .concepts{display:grid;gap:12px}
+  details.concept{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    overflow:hidden}
+  details.concept summary{cursor:pointer;padding:16px 20px;font-weight:800;font-size:1.02rem;
+    list-style:none;display:flex;align-items:center;gap:11px}
+  details.concept summary::-webkit-details-marker{display:none}
+  details.concept summary .plus{font-family:var(--font-mono);color:var(--accent);font-weight:700;
+    transition:transform .2s;flex:none}
+  details.concept[open] summary .plus{transform:rotate(45deg)}
+  details.concept summary .q{font-size:.72rem;color:var(--ink-3);font-weight:700;
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;flex:none}
+  .c-body{padding:2px 20px 20px;color:var(--ink-2);font-size:.94rem}
+  .c-body p{margin:0 0 11px}
+  .c-body strong{color:var(--ink)}
+  .c-body table{width:100%;border-collapse:collapse;font-size:.86rem;margin:6px 0 4px}
+  .c-body table td,.c-body table th{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left}
+  .c-body table th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)}
+  .c-body .hl{background:var(--accent-soft);color:var(--accent-ink);font-weight:700}
+  .c-body .flow{font-family:var(--font-mono);font-size:.8rem;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:8px;padding:12px 14px;color:var(--ink);
+    overflow-x:auto;white-space:nowrap;line-height:1.8}
+
+  footer{background:var(--surface);border-top:1px solid var(--line);padding:34px 0 44px}
+  .verify{display:flex;gap:16px;align-items:flex-start;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:14px;padding:22px 24px}
+  .verify .mark{font-size:1.4rem;flex:none}
+  .verify h3{margin:0 0 6px;font-size:1.1rem}
+  .verify p{margin:0 0 10px;color:var(--ink-2);font-size:.95rem}
+  .verify ol{margin:0;padding-left:20px;color:var(--ink-2);font-size:.93rem}
+  .verify ol li{margin:5px 0}
+  .verify ol li b{color:var(--ink)}
+  .foot-note{text-align:center;color:var(--ink-3);font-size:.8rem;margin-top:24px}
+
+  @media(max-width:560px){
+    ul.tasks li{font-size:.88rem}
+    .p-head{gap:10px}
+  }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">Smart Label Platform · 開發排程</p>
+    <h1>第三週開發計畫：讓數據說話</h1>
+    <p class="lede">Week 2 打通了素人閉環的 MVP。這一週做兩件事：把「省下工時」從口號變成<b>可放進簡報的數據</b>
+      （準確率曲線＋Dashboard），同時把 Week 2 刻意分階段的基建<b>收尾</b>——MySQL 全面切換、LINE 回圖、
+      效能衝刺（SAM 提速＋特徵快取）、YOLO 一鍵訓練。Week 4 只留部署和發表。</p>
+    <div class="meta">
+      <span class="tag">團隊 · <b>佳凱 / 峻維 / 文凱 / 君璇</b></span>
+      <span class="tag">週期 · <b>7/20（一）→ 7/26（日）驗收</b></span>
+      <span class="tag">兩條主線 · <b>數據化 ｜ 基建收尾</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 1 現況盤點 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>現況盤點：Week 2 結束時的預期狀態</h2></div>
+    <p class="sec-sub">下表以 Week 2 驗收標準為基準。<strong>開工第一件事就是照這張表對現況</strong>——
+      Week 2 沒完成的項目優先補完，再做本週新工作。</p>
+    <div class="scroll">
+      <table class="status">
+        <thead><tr><th>模組</th><th>檔案</th><th>狀態</th></tr></thead>
+        <tbody>
+          <tr><td class="mod">自然語言分割（Grounding DINO + SAM）</td><td><span class="file">app/ml/grounding.py</span></td><td><span class="chip done">Week 2 完成 · segment_text 可用</span></td></tr>
+          <tr><td class="mod">前端雙模式（素人 / 工程師）</td><td><span class="file">app/templates + static/js</span></td><td><span class="chip done">Week 2 完成 · 後端權限 gate</span></td></tr>
+          <tr><td class="mod">MySQL 遷移</td><td><span class="file">app/repository.py</span></td><td><span class="chip stub">Week 2 通了 images/segments 一條路 · 本週全面切換</span></td></tr>
+          <tr><td class="mod">LINE Bot</td><td><span class="file">app/routes/line_bot.py</span></td><td><span class="chip stub">選單導流上傳＋打字觸發已通 · 回結果圖是本週事</span></td></tr>
+          <tr><td class="mod">SAM 自動分割速度</td><td><span class="file">app/ml/sam.py</span></td><td><span class="chip missing">單張 17.5s（benchmark 實測）· 本週壓到 ≤5s</span></td></tr>
+          <tr><td class="mod">特徵快取（主動學習即時化）</td><td><span class="file">app/services/pipeline.py</span></td><td><span class="chip missing">沒有 · 每標一個種子就全部重跑 DINOv2</span></td></tr>
+          <tr><td class="mod">Dashboard / 統計圖表</td><td><span class="file">app/templates/index.html</span></td><td><span class="chip missing">stats 只有純文字 · 本週畫成圖</span></td></tr>
+          <tr><td class="mod">準確率 / 省工時實驗數據</td><td><span class="file">—</span></td><td><span class="chip missing">還沒有 · 簡報的核心證據</span></td></tr>
+          <tr><td class="mod">YOLOv8 一鍵訓練</td><td><span class="file">—</span></td><td><span class="chip missing">Week 2 移過來的 · 本週做</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 2 本週目標 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>本週目標：拿得出證據，撐得住上線</h2></div>
+    <p class="sec-sub">期末發表要回答兩個問題：「這系統<strong>真的省工時嗎</strong>？」和「標出來的資料<strong>真的能訓練模型嗎</strong>？」
+      本週就是把這兩個答案做出來，順便把 Week 4 部署前的最後基建收掉。</p>
+    <div class="goal">
+      <span class="mark">📊</span>
+      <div>
+        <h3>一條曲線、一個儀表板、一次真訓練，加上基建全部收尾</h3>
+        <ul>
+          <li><b>主動學習實驗：</b>固定一批照片，種子從 0 個標到 N 個，記錄每一步的準確率與自動接受比例——畫成「<strong>標越少、省越多</strong>」的曲線，這是簡報的核心證據。</li>
+          <li><b>Dashboard：</b>stats 面板從純文字升級成圖表（省工時比例、類別分布、審核進度、模型耗時對比）。</li>
+          <li><b>效能衝刺：</b>SAM 自動分割 17.5s → <strong>≤5s</strong>；標一個種子後全部片段<strong>即時</strong>更新（特徵快取）。demo 的體感全靠這兩項。</li>
+          <li><b>基建收尾：</b>MySQL 成為預設儲存（重啟不掉資料）；LINE 傳圖打字 → <strong>回切割結果圖</strong>；YOLO 一鍵訓練腳本跑出第一版訓練曲線。</li>
+        </ul>
+        <span class="arrow">標 5 個種子 → 系統標完其餘 → 曲線證明省 70% 工時 → 匯出 → YOLO 訓練有 mAP</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 先後順序 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>先後順序：效能先行，數據壓軸</h2></div>
+    <p class="sec-sub">關鍵路徑是<strong>峻維的效能衝刺</strong>——特徵快取沒進，佳凱的主動學習實驗會慢到跑不完（每標一個種子等幾十秒 × 上百次）；
+      SAM 沒提速，實驗跑一批圖要半小時。橫條顏色＝
+      <span class="chip crit" style="background:var(--accent);color:#fff">關鍵路徑</span>
+      <span class="chip indep">獨立可並行</span>
+      <span class="chip soft" style="background:var(--surface-2);color:var(--ink);border:1px solid var(--line)">依賴 / 整合</span></p>
+    <div class="gantt-wrap">
+      <div class="gantt">
+        <div></div>
+        <div class="g-daylab">7/20<small>一</small></div>
+        <div class="g-daylab">7/21<small>二</small></div>
+        <div class="g-daylab">7/22<small>三</small></div>
+        <div class="g-daylab">7/23<small>四</small></div>
+        <div class="g-daylab">7/24<small>五</small></div>
+        <div class="g-track" style="grid-column:2 / -1"></div>
+
+        <!-- 佳凱 -->
+        <div class="g-name">佳凱<small>架構師 + 實驗</small></div>
+        <div class="bar indep" style="grid-column:2 / 5">MySQL 全面切換 + 搬遷腳本<small>examples / users 補完</small></div>
+        <div class="bar soft" style="grid-column:5 / 7">主動學習實驗跑數據<small>等峻維快取 PR</small></div>
+
+        <!-- 峻維 -->
+        <div class="g-name">峻維<small>效能衝刺</small></div>
+        <div class="bar crit" style="grid-column:2 / 5">SAM 提速 ≤5s + 特徵快取 → 7/22 發 PR<small>實驗與 demo 體感都等這個</small></div>
+        <div class="bar indep" style="grid-column:5 / 7">全模型耗時基準表<small>SAM/DINO/Grounding 各量一次</small></div>
+
+        <!-- 文凱 -->
+        <div class="g-name">文凱<small>Dashboard</small></div>
+        <div class="bar indep" style="grid-column:2 / 5">stats 圖表化 + 審核介面打磨<small>獨立可先做</small></div>
+        <div class="bar soft" style="grid-column:5 / 7">接實驗 CSV 畫準確率曲線<small>等佳凱數據</small></div>
+
+        <!-- 君璇 -->
+        <div class="g-name">君璇<small>LINE + 訓練</small></div>
+        <div class="bar indep" style="grid-column:2 / 4">LINE 回結果圖完成<small>Week 2 進階項收尾</small></div>
+        <div class="bar indep" style="grid-column:4 / 7">YOLO 一鍵訓練腳本 + 首次真訓練<small>全程獨立</small></div>
+      </div>
+    </div>
+    <div class="critnote"><span class="dot"></span>
+      <span><strong>硬依賴</strong>：佳凱的實驗（Day 4–5）等峻維的特徵快取 PR（7/22 死線）——沒有快取，實驗每一步都要重跑整批 DINOv2，根本跑不完。
+      文凱的曲線圖等佳凱的實驗 CSV（7/24 給第一版即可，格式先講好：<code>seed 數, 準確率, auto_ratio</code>）。
+      其他人全程獨立。<strong>7/25–26 週末</strong>整合驗收＋把數據圖擺進簡報草稿。</span></div>
+  </section>
+
+  <!-- 4 每人任務 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>每個人的細項任務</h2></div>
+    <p class="sec-sub">□ 是待辦；<span style="color:var(--accent);font-weight:700">綠框</span>是本週關鍵動作；<span style="color:var(--done);font-weight:700">■</span> 是上週已完成、本週接續的基礎。</p>
+    <div class="people">
+
+      <!-- 佳凱 -->
+      <div class="person lead">
+        <div class="p-head">
+          <div class="p-avatar">凱</div>
+          <div class="p-id"><span class="nm">佳凱</span><span class="role">架構師 · MySQL 收尾 + 主動學習實驗</span></div>
+          <span class="p-when">7/20 → 7/24</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">前半週把 MySQL 從「通一條路」變成「全面切換」；後半週親自跑<strong>主動學習實驗</strong>——這條曲線是整個專題「省工時」主張的唯一硬證據，實驗設計你最清楚。</p>
+
+          <p class="p-step">① MySQL 全面切換（7/20 → 7/22）</p>
+          <ul class="tasks">
+            <li class="check">Week 2：schema 對齊已拍板、images/segments 讀寫已通</li>
+            <li class="star">補完 <code>examples</code> / <code>users</code> 的 CRUD（含 768 維向量的存法：JSON 欄位即可，別過度設計），15 個 Repository 方法全數落地</li>
+            <li class="star">寫一支 <span class="file">scripts/migrate_json_to_mysql.py</span> 搬遷腳本，把既有 <code>store.json</code> 的資料搬進 MySQL——大家累積的標註不能丟</li>
+            <li>設定切換開關（環境變數選 json / mysql），CI 與本機開發預設仍走 JSON，docker-compose 走 MySQL</li>
+            <li>驗證：docker-compose 重啟後資料還在；跑一輪上傳→分割→標註確認無漏</li>
+          </ul>
+
+          <p class="p-step">② 主動學習實驗（7/23 → 7/24，等峻維快取）</p>
+          <ul class="tasks">
+            <li class="star">固定一批照片（貓狗各 50 張這種量級）＋人工標好的正解當驗證集；種子從 0 逐步加到 20，每一步記錄：<code>seed 數 / 驗證準確率 / auto_ratio（省工時比例）</code>，輸出 CSV 給文凱</li>
+            <li class="star">同一份數據跑兩組信心策略（<code>max_prob</code> vs <code>entropy</code>）對照，順便決定 demo 用哪組參數</li>
+            <li>寫成 <span class="file">scripts/al_experiment.py</span>，可重跑——Week 4 若要換資料集重出圖，一鍵就好</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 峻維 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">維</div>
+          <div class="p-id"><span class="nm">峻維</span><span class="role">效能衝刺 · 本週關鍵路徑</span></div>
+          <span class="p-when">7/20 → 7/22 發 PR</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">模型都接完了，本週把它們<strong>變快</strong>。兩個目標：SAM 自動分割 17.5s → ≤5s、標種子後即時回訓（特徵快取）。
+            這不是錦上添花——佳凱的實驗、demo 的體感、Week 4 雲端 CPU 部署，全都壓在這上面。</p>
+
+          <p class="p-step">① SAM 提速（7/20 → 7/21）</p>
+          <ul class="tasks">
+            <li class="check">Week 1–2：SamSegmenter、benchmark 腳本、Grounding DINO 都已完成</li>
+            <li class="star">先分段計時找瓶頸：encoder 推論 / <code>generate()</code> 後處理（NMS、RLE 在 CPU 跑）/ 遮罩 resize——別瞎調</li>
+            <li class="star">調參對照：<code>SAM_POINTS_PER_SIDE</code> 32→16（提示點剩 1/4）、<code>max_side</code> 1024→768，各跑一組「速度 vs 遮罩品質」，用 <span class="file">tests/benchmark_sam.py</span> 出表</li>
+            <li>確認模型真的在 GPU 上（印 <code>next(self.sam.parameters()).device</code>）；把最終參數寫進 <span class="file">.env.example</span></li>
+          </ul>
+
+          <p class="p-step">② 特徵快取（7/21 → 7/22）</p>
+          <ul class="tasks">
+            <li class="star"><span class="file">app/models.py</span> 的 <code>Segment</code> 加 <code>feature</code> 欄位；<code>_classify_segment()</code> 第一次算完就存</li>
+            <li class="star"><code>reclassify_pending()</code> 改讀快取向量、只重跑 <code>classifier.predict()</code>（毫秒級）——標一個種子，全部片段顏色即時翻新</li>
+            <li>順手修：<code>segment_image()</code> N 塊遮罩觸發 N 次全檔重寫 → 批次加完存一次（MySQL 模式則天然逐列，無此問題）</li>
+            <li>mock 模式下 <span class="file">tests/</span> 全綠；7/22 發 PR（佳凱的實驗在等）</li>
+          </ul>
+
+          <p class="p-step">③ 全模型耗時基準表（7/23 → 7/24）</p>
+          <ul class="tasks">
+            <li>SAM（調參前後）/ DINOv2 / Grounding DINO 各量單次耗時（GPU 與 CPU 各一輪），整理成一張表給文凱放 Dashboard、給君璇評估 Week 4 雲端機型</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 文凱 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">文</div>
+          <div class="p-id"><span class="nm">文凱</span><span class="role">Dashboard + 審核體驗</span></div>
+          <span class="p-when">7/20 → 7/24</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">把「系統有多好用」變成看得見的畫面。前半週做圖表與審核介面（不等任何人），後半週把佳凱的實驗數據畫成<strong>那條要放進簡報的曲線</strong>。</p>
+
+          <p class="p-step">① Dashboard + 審核打磨（7/20 → 7/22，獨立）</p>
+          <ul class="tasks">
+            <li class="check">Week 2：雙模式前端、loading 狀態已完成</li>
+            <li class="star">stats 面板圖表化（工程師模式）：省工時比例（<code>auto_ratio</code>）大數字＋圓環、類別分布長條、審核進度；資料 <code>/api/stats</code> 都有，輕量方案即可（Chart.js 或手寫 SVG，別引重框架）</li>
+            <li class="star">審核介面打磨：鍵盤快捷（←→切片段、Enter 接受、數字鍵改類別）、批次全部接受——demo 時審核那一段的流暢度全靠這個</li>
+            <li>遮罩 hover 高亮與類別顏色一致性順一遍（素人模式維持極簡，不加東西）</li>
+          </ul>
+
+          <p class="p-step">② 準確率曲線（7/23 → 7/24，等佳凱 CSV）</p>
+          <ul class="tasks">
+            <li class="star">把實驗 CSV 畫成「種子數 vs 準確率 / 省工時」雙軸曲線，Dashboard 一份、簡報用高解析輸出一份</li>
+            <li>跟佳凱先講好 CSV 欄位格式，7/23 前先用假資料把圖做好，數據一到直接換</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 君璇 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">璇</div>
+          <div class="p-id"><span class="nm">君璇</span><span class="role">LINE 收尾 + YOLO 一鍵訓練</span></div>
+          <span class="p-when">7/20 → 7/24 · 全程獨立</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">先把 Week 2 的進階驗收項（LINE 回結果圖）收掉，然後做「標註→訓練」閉環的最後一塊：<strong>一鍵訓練腳本</strong>。這證明我們標出來的資料真的能餵模型，Week 4 的成果數據也從這裡來。</p>
+
+          <p class="p-step">① LINE 回結果圖（7/20 → 7/21）</p>
+          <ul class="tasks">
+            <li class="check">Week 2：圖文選單導流上傳、打字觸發 <code>segment_text</code> 已通</li>
+            <li class="star">把切割結果（遮罩疊在原圖上）畫成一張圖回傳給使用者；LINE 回圖需要公開 URL，本週先用 ngrok 測，正式網址 Week 4 部署後切換</li>
+            <li>失敗情境優雅回覆（沒配到物件 / 模型忙碌），加簡單的「使用說明」回覆詞</li>
+          </ul>
+
+          <p class="p-step">② YOLO 一鍵訓練（7/21 → 7/24）</p>
+          <ul class="tasks">
+            <li class="star">寫 <span class="file">scripts/train_yolo.py</span>：呼叫 <code>/api/export?format=yolo</code> 拿資料集 → 產生 <code>data.yaml</code> → <code>ultralytics</code> 訓練 YOLOv8n-seg，參數（epochs / imgsz）可調</li>
+            <li class="star">用大家 Week 2–3 累積的真標註跑第一次訓練（Colab GPU），存訓練曲線與預測範例圖——這些圖 Week 4 簡報直接用</li>
+            <li>過程中發現 exporter 的座標 / 類別對應問題就開 issue，讓佳凱排修</li>
+            <li>（前置）盤點 Week 4 GCP 部署要的東西：帳號、預算、要不要 GPU 機型——把峻維的 CPU 耗時表拿去估</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 5 名詞小百科 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>名詞小百科（講給組員與評審聽）</h2></div>
+    <p class="sec-sub">點開展開。本週的關鍵概念都跟「證明系統有用」有關。</p>
+    <div class="concepts">
+
+      <details class="concept" open>
+        <summary><span class="plus">＋</span>準確率曲線是什麼？為什麼它是簡報的核心證據？<span class="q">實驗設計</span></summary>
+        <div class="c-body">
+          <p>我們的主張是「人標一點點，系統標剩下的」。要證明它，就要回答：<strong>種子標到第幾個，系統就夠準了？</strong></p>
+          <p>做法：固定一批圖和正解，種子從 0 個逐步加到 20 個，每加一個就量兩個數字——<strong>驗證準確率</strong>（系統標得對不對）和 <strong>auto_ratio</strong>（多少比例不用人看）。畫成曲線後，理想的形狀是「前幾個種子急速上升、之後趨平」——那個「趨平的點」就是我們的賣點：<span class="hl">標 5 個，省 70% 工時</span>這種一句話結論，就是從這張圖讀出來的。</p>
+          <div class="flow">seed=0 → 全部送審（0% 省工時）→ seed=3 → 準確率 80%、省 60% → seed=10 → 趨平 ← 這裡就是證據</div>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>特徵快取為什麼讓主動學習「即時」？<span class="q">效能</span></summary>
+        <div class="c-body">
+          <p>主動學習迴圈是：標一個種子 → 回訓分類器 → <strong>重新預測所有未審片段</strong>。重新預測需要每個片段的特徵向量——但向量根本沒變（圖和遮罩都沒動），變的只有分類器。</p>
+          <p>現在的寫法每次都重跑 DINOv2 去算向量，真模型下標一個種子要等幾十秒。改成<strong>第一次算完就存起來</strong>之後，回訓只重跑 kNN 預測（毫秒級）——「標一個種子、滿畫面顏色即時翻新」這個 demo 最有感的瞬間才成立，佳凱的實驗（要重複幾百次）也才跑得完。</p>
+          <div class="flow">改前：標種子 → 全部重跑 DINOv2（幾十秒）❌　　改後：標種子 → 讀快取 → 只重跑 kNN（&lt;0.1s）✅</div>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>SAM 為什麼慢？提速在調什麼？<span class="q">效能</span></summary>
+        <div class="c-body">
+          <p>「自動分割整張」的原理是在圖上撒一格提示點（<code>points_per_side=32</code> 就是 32×32＝<strong>1024 個點</strong>），每個點都問一次「這裡有什麼」，再把上千個候選遮罩去重過濾。慢的通常不是模型推論，而是<strong>點太多＋後處理在 CPU 上跑</strong>。</p>
+          <p>兩個旋鈕：<strong>點撒少一點</strong>（32→16，剩 1/4）、<strong>圖縮小一點再切</strong>（1024→768）。代價是小物件可能漏切，所以要跑對照表用數據決定。另外「點一下切一塊」和 Grounding DINO 的框提示本來就只問一兩個點，不受影響——素人流程天生是快的。</p>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>一鍵訓練證明了什麼？<span class="q">閉環</span></summary>
+        <div class="c-body">
+          <p>標註平台的終點不是「標完」，是<strong>標出來的資料真的能訓練出模型</strong>。一鍵訓練腳本把「匯出 YOLO 資料集 → 訓練 YOLOv8-seg → 出 mAP 和預測圖」串成一條命令。</p>
+          <p>對評審來說這是完整的故事：<span class="hl">素人打一句話 → 系統標好 → 匯出 → 訓練出一個能認貓的模型</span>——從原始照片到可用模型，全程在我們的平台裡發生。Week 4 的成果數據（mAP、預測範例圖）就從這裡產出。</p>
+          <div class="flow">標註（本平台）→ export YOLO → ultralytics 訓練 → mAP + 預測圖（簡報素材）</div>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="verify">
+      <span class="mark">✅</span>
+      <div>
+        <h3>7/26 驗收標準</h3>
+        <p>本週驗收分「數據」與「基建」兩組，全部要在<strong>真模型 + MySQL</strong> 之下成立：</p>
+        <ol>
+          <li><b>效能（體感）：</b>SAM 自動分割單張 ≤5 秒；標一個種子後所有片段<b>即時</b>更新預測（特徵快取生效）。</li>
+          <li><b>數據（證據）：</b>主動學習實驗 CSV ＋「種子數 vs 準確率 / 省工時」曲線圖完成，Dashboard 上看得到，簡報版輸出好。</li>
+          <li><b>MySQL（基建）：</b>docker-compose 下 MySQL 為預設儲存，搬遷腳本把舊 store.json 資料搬入，重啟資料不掉。</li>
+          <li><b>LINE（閉環）：</b>選單上傳＋打「cat」→ 收到切割結果圖（ngrok 測試環境即可）。</li>
+          <li><b>訓練（閉環）：</b><code>scripts/train_yolo.py</code> 用真標註跑完一次訓練，訓練曲線與預測範例圖存檔。</li>
+        </ol>
+      </div>
+    </div>
+    <p class="foot-note">Smart Label Platform · Week 3 開發計畫（7/20–7/26）· 佳凱 / 峻維 / 文凱 / 君璇</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第二週開發計畫 · Smart Label Platform</title>
+<style>
+  :root{
+    --bg:#f3f6f6; --surface:#ffffff; --surface-2:#eaefef; --surface-3:#e0e7e6;
+    --ink:#15201f; --ink-2:#485956; --ink-3:#7a8987; --line:#d8e0df;
+    --accent:#0d7c8b; --accent-ink:#095c68; --accent-soft:#dceff1;
+    --done:#2c8a58; --done-soft:#dceee4;
+    --todo:#b0761a; --todo-soft:#f4e9d2;
+    --missing:#c23a52; --missing-soft:#f6dee2;
+    --font-sans:"PingFang TC","Microsoft JhengHei","Noto Sans TC","Segoe UI",system-ui,sans-serif;
+    --font-mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"Noto Sans Mono",monospace;
+    --maxw:1040px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1416; --surface:#151d1f; --surface-2:#1c2628; --surface-3:#243032;
+      --ink:#e7edec; --ink-2:#a4b2b0; --ink-3:#74817f; --line:#273234;
+      --accent:#34b2c0; --accent-ink:#7fd6df; --accent-soft:#123138;
+      --done:#48b579; --done-soft:#12291e;
+      --todo:#d59a3d; --todo-soft:#2c2413;
+      --missing:#e26a80; --missing-soft:#2c1418;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f3f6f6; --surface:#ffffff; --surface-2:#eaefef; --surface-3:#e0e7e6;
+    --ink:#15201f; --ink-2:#485956; --ink-3:#7a8987; --line:#d8e0df;
+    --accent:#0d7c8b; --accent-ink:#095c68; --accent-soft:#dceff1;
+    --done:#2c8a58; --done-soft:#dceee4; --todo:#b0761a; --todo-soft:#f4e9d2;
+    --missing:#c23a52; --missing-soft:#f6dee2;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1416; --surface:#151d1f; --surface-2:#1c2628; --surface-3:#243032;
+    --ink:#e7edec; --ink-2:#a4b2b0; --ink-3:#74817f; --line:#273234;
+    --accent:#34b2c0; --accent-ink:#7fd6df; --accent-soft:#123138;
+    --done:#48b579; --done-soft:#12291e; --todo:#d59a3d; --todo-soft:#2c2413;
+    --missing:#e26a80; --missing-soft:#2c1418;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);
+    font-size:17px;line-height:1.65;-webkit-font-smoothing:antialiased;letter-spacing:.01em;
+    overflow-wrap:break-word}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  code,.mono{font-family:var(--font-mono);font-size:.86em;letter-spacing:0}
+  .file{font-family:var(--font-mono);font-size:.82em;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--accent-ink);white-space:nowrap}
+
+  /* ---- header ---- */
+  header.hero{border-bottom:1px solid var(--line);background:
+    linear-gradient(180deg,var(--surface) 0%,var(--bg) 100%)}
+  .hero-inner{max-width:var(--maxw);margin:0 auto;padding:46px 22px 34px}
+  .eyebrow{font-size:.74rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent-ink);font-weight:700;margin:0 0 14px}
+  h1{font-size:clamp(1.9rem,5vw,2.9rem);line-height:1.1;margin:0 0 12px;
+    font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+  .lede{font-size:1.06rem;color:var(--ink-2);max-width:60ch;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;margin-top:22px}
+  .meta .tag{font-size:.78rem;background:var(--surface-2);border:1px solid var(--line);
+    padding:4px 11px;border-radius:100px;color:var(--ink-2)}
+  .meta .tag b{color:var(--ink);font-weight:700}
+
+  /* ---- sections ---- */
+  section{padding:40px 0}
+  section+section{border-top:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:12px;margin:0 0 6px}
+  .sec-num{font-family:var(--font-mono);font-size:.8rem;color:var(--accent);
+    font-weight:700;flex:none}
+  h2{font-size:1.5rem;margin:0;font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+  .sec-sub{color:var(--ink-2);margin:.35rem 0 26px;max-width:64ch}
+
+  /* ---- status chips ---- */
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:.76rem;font-weight:700;
+    padding:2px 9px;border-radius:6px;white-space:nowrap;letter-spacing:.01em}
+  .chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+  .chip.done{color:var(--done);background:var(--done-soft)}
+  .chip.stub{color:var(--todo);background:var(--todo-soft)}
+  .chip.missing{color:var(--missing);background:var(--missing-soft)}
+
+  /* ---- status table ---- */
+  .scroll{overflow-x:auto}
+  table.status{width:100%;border-collapse:collapse;font-size:.92rem;min-width:520px}
+  table.status th{text-align:left;font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:700;padding:0 12px 10px;border-bottom:1px solid var(--line)}
+  table.status td{padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
+  table.status tr:last-child td{border-bottom:none}
+  table.status td.mod{font-weight:700;color:var(--ink)}
+
+  /* ---- goal callout ---- */
+  .goal{background:var(--accent-soft);border:1px solid var(--accent);border-radius:14px;
+    padding:22px 24px;display:flex;gap:16px;align-items:flex-start}
+  .goal .mark{font-size:1.5rem;line-height:1;flex:none;margin-top:2px}
+  .goal h3{margin:0 0 6px;font-size:1.12rem;color:var(--accent-ink)}
+  .goal p{margin:0;color:var(--ink);font-size:.97rem}
+  .goal .arrow{font-family:var(--font-mono);color:var(--accent-ink);font-size:.86rem;
+    margin-top:10px;display:block}
+  .goal ul{margin:10px 0 0;padding-left:20px;color:var(--ink);font-size:.95rem}
+  .goal ul li{margin:4px 0}
+
+  /* ---- mode matrix ---- */
+  .matrix{overflow-x:auto;margin-top:18px}
+  table.mx{width:100%;border-collapse:collapse;font-size:.92rem;min-width:460px}
+  table.mx th,table.mx td{padding:11px 14px;border:1px solid var(--line);text-align:center}
+  table.mx th{font-size:.78rem;color:var(--ink-3);background:var(--surface-2);font-weight:700}
+  table.mx td:first-child,table.mx th:first-child{text-align:left;font-weight:800;color:var(--ink)}
+  table.mx .y{color:var(--done);font-weight:800}
+  table.mx .n{color:var(--ink-3);font-weight:700}
+
+  /* ---- gantt ---- */
+  .gantt-wrap{overflow-x:auto;padding-bottom:6px}
+  .gantt{display:grid;grid-template-columns:120px repeat(7,minmax(132px,1fr));
+    grid-auto-rows:auto;gap:9px;min-width:1140px;align-items:stretch}
+  .g-daylab{font-family:var(--font-mono);font-size:.82rem;color:var(--ink-3);
+    text-align:center;font-weight:700;padding-bottom:2px}
+  .g-daylab small{display:block;font-size:.7rem;font-weight:600;opacity:.8}
+  .g-name{font-weight:800;font-size:1rem;display:flex;flex-direction:column;gap:1px}
+  .g-name small{font-weight:600;font-size:.74rem;color:var(--ink-3);letter-spacing:.02em}
+  .bar{border-radius:8px;padding:10px 13px;font-size:.9rem;font-weight:700;line-height:1.35;
+    min-height:44px;display:flex;flex-direction:column;justify-content:center;border:1px solid transparent;
+    overflow-wrap:break-word;white-space:normal}
+  .bar small{display:block;font-weight:600;font-size:.74rem;opacity:.85;margin-top:3px;line-height:1.3}
+  .bar.crit{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .bar.soft{background:var(--surface-2);color:var(--ink);border-color:var(--line)}
+  .bar.indep{background:var(--done-soft);color:var(--done);border-color:var(--done)}
+  .g-track{grid-column:2 / -1;height:1px;background:var(--line);margin:2px 0}
+  .critnote{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:.84rem;color:var(--ink-2)}
+  .critnote .dot{width:12px;height:12px;border-radius:3px;background:var(--accent);flex:none}
+
+  /* ---- person cards ---- */
+  .people{display:grid;gap:18px}
+  .person{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .p-head{display:flex;align-items:center;gap:13px;padding:16px 20px;background:var(--surface-2);
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .p-avatar{width:40px;height:40px;border-radius:10px;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.05rem;flex:none}
+  .person.lead .p-avatar{background:var(--accent-ink)}
+  .p-id{display:flex;flex-direction:column;gap:1px;margin-right:auto}
+  .p-id .nm{font-weight:800;font-size:1.05rem}
+  .p-id .role{font-size:.78rem;color:var(--ink-2)}
+  .p-when{font-family:var(--font-mono);font-size:.72rem;color:var(--accent-ink);
+    background:var(--accent-soft);padding:3px 9px;border-radius:6px;font-weight:700}
+  .p-body{padding:16px 20px 20px}
+  .p-goal{font-size:.9rem;color:var(--ink-2);margin:0 0 14px;padding-left:12px;
+    border-left:3px solid var(--accent)}
+  .p-step{font-size:.78rem;font-weight:800;letter-spacing:.04em;color:var(--accent-ink);
+    margin:16px 0 9px;text-transform:none}
+  .p-step:first-of-type{margin-top:4px}
+  ul.tasks{list-style:none;margin:0;padding:0;display:grid;gap:9px}
+  ul.tasks li{display:block;position:relative;padding-left:25px;font-size:.92rem}
+  ul.tasks li::before{content:"";position:absolute;left:0;top:6px;width:15px;height:15px;
+    border:2px solid var(--ink-3);border-radius:4px;box-sizing:border-box}
+  ul.tasks li.star::before{border-color:var(--accent);background:var(--accent-soft)}
+  ul.tasks li.check::before{border-color:var(--done);background:var(--done);
+    box-shadow:inset 0 0 0 2px var(--surface)}
+
+  /* ---- concept accordions ---- */
+  .concepts{display:grid;gap:12px}
+  details.concept{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    overflow:hidden}
+  details.concept summary{cursor:pointer;padding:16px 20px;font-weight:800;font-size:1.02rem;
+    list-style:none;display:flex;align-items:center;gap:11px}
+  details.concept summary::-webkit-details-marker{display:none}
+  details.concept summary .plus{font-family:var(--font-mono);color:var(--accent);font-weight:700;
+    transition:transform .2s;flex:none}
+  details.concept[open] summary .plus{transform:rotate(45deg)}
+  details.concept summary .q{font-size:.72rem;color:var(--ink-3);font-weight:700;
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;flex:none}
+  .c-body{padding:2px 20px 20px;color:var(--ink-2);font-size:.94rem}
+  .c-body p{margin:0 0 11px}
+  .c-body strong{color:var(--ink)}
+  .c-body table{width:100%;border-collapse:collapse;font-size:.86rem;margin:6px 0 4px}
+  .c-body table td,.c-body table th{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left}
+  .c-body table th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)}
+  .c-body .hl{background:var(--accent-soft);color:var(--accent-ink);font-weight:700}
+  .c-body .flow{font-family:var(--font-mono);font-size:.8rem;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:8px;padding:12px 14px;color:var(--ink);
+    overflow-x:auto;white-space:nowrap;line-height:1.8}
+
+  /* ---- demo tiers ---- */
+  .tier{border-radius:14px;padding:18px 22px;margin-bottom:13px;border:1px solid var(--line)}
+  .tier.must{background:var(--accent-soft);border-color:var(--accent)}
+  .tier.bonus{background:var(--surface)}
+  .tier h3{margin:0;font-size:1.05rem;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .tier .lab{font-size:.7rem;font-weight:800;letter-spacing:.04em;padding:2px 9px;border-radius:6px;flex:none}
+  .tier.must .lab{background:var(--accent);color:#fff}
+  .tier.bonus .lab{background:var(--todo-soft);color:var(--todo)}
+  .tier p{margin:8px 0 0;font-size:.94rem;color:var(--ink-2)}
+  .tier p b{color:var(--ink)}
+  .tier .who{font-family:var(--font-mono);font-size:.76rem;color:var(--accent-ink);margin-top:8px;display:block}
+  .runbook{counter-reset:step;display:grid;gap:11px;margin:18px 0 0;padding:0;list-style:none}
+  .runbook li{position:relative;padding-left:37px;font-size:.95rem;color:var(--ink)}
+  .runbook li::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:0;
+    width:25px;height:25px;border-radius:50%;background:var(--accent);color:#fff;
+    font-size:.82rem;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .runbook li.plus::before{content:"+";background:var(--todo)}
+  .runbook li small{display:block;color:var(--ink-3);font-size:.8rem;margin-top:1px}
+
+  /* ---- footer ---- */
+  footer{background:var(--surface);border-top:1px solid var(--line);padding:34px 0 44px}
+  .verify{display:flex;gap:16px;align-items:flex-start;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:14px;padding:22px 24px}
+  .verify .mark{font-size:1.4rem;flex:none}
+  .verify h3{margin:0 0 6px;font-size:1.1rem}
+  .verify p{margin:0 0 10px;color:var(--ink-2);font-size:.95rem}
+  .verify ol{margin:0;padding-left:20px;color:var(--ink-2);font-size:.93rem}
+  .verify ol li{margin:5px 0}
+  .verify ol li b{color:var(--ink)}
+  .foot-note{text-align:center;color:var(--ink-3);font-size:.8rem;margin-top:24px}
+
+  @media(max-width:560px){
+    ul.tasks li{font-size:.88rem}
+    .p-head{gap:10px}
+  }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">Smart Label Platform · 開發排程</p>
+    <h1>第二週開發計畫</h1>
+    <p class="lede">第一週把切割（<b>MobileSAM</b>）和看懂物件（<b>DINOv2</b>）都換成真的了。這一週不再往模型堆疊，
+      而是把平台<b>做成產品</b>：讓使用者<b>用一句話就能標</b>（Grounding DINO）、前端分成<b>素人 / 工程師兩種模式</b>、
+      再把 <b>LINE Bot</b> 接成素人入口，資料改存進 <b>MySQL</b>。目標是把「素人閉環」整條打通。</p>
+    <div class="meta">
+      <span class="tag">團隊 · <b>佳凱 / 峻維 / 文凱 / 君璇</b></span>
+      <span class="tag">週期 · <b>7/09（四）→ 7/19（日）驗收</b></span>
+      <span class="tag">四條並行主線 · <b>Grounding DINO ｜ 雙模式前端 ｜ LINE Bot ｜ MySQL</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 1 現況盤點 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>現況盤點：模型都真了，接下來把它變產品</h2></div>
+    <p class="sec-sub">兩個最重的真模型（SAM、DINOv2）上週已合併。這一週補的是<strong>產品層</strong>：自然語言操作、雙模式前端、
+      LINE 入口、正式資料庫——全部疊在既有 pipeline 上，不動核心 AI 介面。</p>
+    <div class="scroll">
+      <table class="status">
+        <thead><tr><th>模組</th><th>檔案</th><th>狀態</th></tr></thead>
+        <tbody>
+          <tr><td class="mod">MobileSAM 真分割</td><td><span class="file">app/ml/sam.py</span></td><td><span class="chip done">Week 1 完成 · 已合併 + benchmark</span></td></tr>
+          <tr><td class="mod">DINOv2 特徵抽取</td><td><span class="file">app/ml/embedding.py</span></td><td><span class="chip done">Week 1 提前完成（原為前置）· 768 維真向量</span></td></tr>
+          <tr><td class="mod">few-shot 分類（＝種子樣本操作）</td><td><span class="file">app/ml/classifier.py</span></td><td><span class="chip done">完整（kNN + softmax）</span></td></tr>
+          <tr><td class="mod">主動學習迴圈</td><td><span class="file">app/services/pipeline.py</span></td><td><span class="chip done">完整（低信心→送人工審核）</span></td></tr>
+          <tr><td class="mod">LINE Login / 登入</td><td><span class="file">app/routes/auth.py</span></td><td><span class="chip done">已接（OAuth）</span></td></tr>
+          <tr><td class="mod">Grounding DINO 文字分割（＝自然語言操作）</td><td><span class="file">app/ml/grounding.py（新）</span></td><td><span class="chip missing">本週要做 · 峻維</span></td></tr>
+          <tr><td class="mod">前端雙模式（素人 / 工程師）</td><td><span class="file">app/templates + static/js</span></td><td><span class="chip missing">本週要做 · 文凱</span></td></tr>
+          <tr><td class="mod">MySQL 儲存 + 影像 per-user 歸屬</td><td><span class="file">app/repository.py</span></td><td><span class="chip stub">目前 store.json · 本週換 MySQL · 佳凱</span></td></tr>
+          <tr><td class="mod">LINE Bot 素人入口</td><td><span class="file">app/routes/line_bot.py</span></td><td><span class="chip missing">只有簽章驗證 · 本週從頭串 · 君璇</span></td></tr>
+          <tr><td class="mod">YOLOv8 一鍵訓練</td><td><span class="file">—</span></td><td><span class="chip stub">移至 Week 3（配 Dashboard）</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 2 本週目標 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>本週目標：打通「素人閉環」</h2></div>
+    <p class="sec-sub">產品有兩種使用者。這週要讓<strong>素人只靠一句話就能完成標註</strong>，同時保留<strong>工程師的進階操作</strong>。四條線各自獨立，佳凱定介面與整合把關。
+      <strong>務實定位：本週交付的是「可 demo 的 MVP」，不是四條全部完工</strong>——其中 Grounding DINO、MySQL、LINE 三塊都比「串接」更重，驗收採分階段（見文末）。</p>
+    <div class="goal">
+      <span class="mark">🎯</span>
+      <div>
+        <h3>從「一個給工程師點的網頁」升級成「素人在 LINE 打字就能用的產品」</h3>
+        <ul>
+          <li><b>Grounding DINO（自然語言操作）：</b>打一句「cat」→ 自動框出貓 → SAM 切精準遮罩。這是素人與 LINE 的<strong>唯一操作方式</strong>。</li>
+          <li><b>雙模式前端：</b>素人模式只露一個自然語言輸入框；工程師模式額外開<strong>種子樣本標註</strong>與<strong>增強參數調整</strong>。</li>
+          <li><b>MySQL：</b>資料從 <code>store.json</code> 換成 MySQL，並把每張圖<strong>歸屬到使用者</strong>（本週檔案先放伺服器磁碟，真正上雲 bucket 留給 Week 4 部署）。</li>
+          <li><b>LINE Bot：</b>圖文選單「上傳圖片」→ 以 LINE 身分登入網站批次上傳（<strong>繞過 LINE 傳圖的張數 / 壓縮限制</strong>）→ 回 LINE 打字就能切割——LINE 是素人模式的入口。</li>
+        </ul>
+        <span class="arrow">LINE / 網頁打字 → Grounding DINO 框 → SAM 切 → DINOv2 特徵 → 分類 →（低信心）人審 → 存 MySQL（歸屬使用者）</span>
+      </div>
+    </div>
+
+    <div class="matrix">
+      <table class="mx">
+        <thead><tr><th>使用模式</th><th>種子樣本操作<br><small>few-shot</small></th><th>自然語言操作<br><small>Grounding DINO</small></th><th>調增強參數</th></tr></thead>
+        <tbody>
+          <tr><td>素人模式（含 LINE Bot）</td><td class="n">—</td><td class="y">✓</td><td class="n">—</td></tr>
+          <tr><td>工程師模式</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 2.5 MVP demo 劇本 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">2.5</span><h2>MVP demo 劇本：要 demo 的那一刀</h2></div>
+    <p class="sec-sub">「MVP 一次」不是「四條做完」。把火力集中在<strong>一條端到端、只靠自己人就能跑的切片</strong>，其餘做到就是加分。這樣 7/19 一定有東西可演。</p>
+
+    <div class="tier must">
+      <h3><span class="lab">必成主軸</span>網頁自然語言流</h3>
+      <p><b>打「cat」→ <code>segment_text</code>（Grounding DINO 框 → SAM 切）→ 現成的分類 / 審核 / 匯出照跑。</b>
+        之所以最穩：後半段上週<strong>全通了</strong>，這條只新增「文字 → 遮罩」一段；而且<strong>只依賴峻維一個人</strong>，不必等 MySQL、不必等公開網址。配上文凱的素人前端，畫面立刻有產品感。</p>
+      <span class="who">主責 · 峻維（引擎）＋ 文凱（素人前端）　｜　風險最低、觀感最高</span>
+    </div>
+
+    <div class="tier bonus">
+      <h3><span class="lab">加分項</span>MySQL ｜ LINE Bot</h3>
+      <p><b>做到就展示，做不完不影響 demo。</b>
+        <b>MySQL</b> 是後端基建——demo 用 <code>store.json</code> 或 MySQL，觀眾根本看不出差別，而且它卡在資料模型決策。
+        <b>LINE</b> 需要一個<strong>公開 HTTPS webhook</strong>（那是 Week 4 部署的事，demo 當天靠 ngrok 穿透多一個會掉鏈子的環節）。所以這兩塊不綁進「必成」。</p>
+      <span class="who">MySQL · 佳凱　｜　LINE · 君璇　｜　定位：landed 就加分，別讓它拖累主軸</span>
+    </div>
+
+    <p class="p-step" style="margin-top:22px;color:var(--accent-ink)">Demo 當天怎麼演</p>
+    <ol class="runbook">
+      <li>切到<b>素人模式</b> → 上傳一張貓圖 → 打「cat」→ 顯示「分析中…」→ 秀出貼合的遮罩<small>這一步就是整個 demo 的高潮：一句話完成標註</small></li>
+      <li>切到<b>工程師模式</b> → 展示種子樣本標註 + 增強參數旋鈕<small>對比素人只有一個輸入框，講清楚「同一套系統、兩種人用」</small></li>
+      <li>走完<b>審核 → 匯出資料集</b><small>證明不是只會切一張圖，而是完整的「標註 → 資料集」生產線（上週就通）</small></li>
+      <li class="plus"><b>（加分）</b>展示資料落進 MySQL、或在 LINE 打字直接切圖<small>有做到才演，沒做到直接跳過，不影響前三步的完整性</small></li>
+    </ol>
+
+    <div class="critnote" style="margin-top:20px"><span class="dot"></span>
+      <span><strong>唯一真正威脅 MVP 的點</strong>：峻維的 PR 現排 7/15，對 7/19 稍晚。建議他 <strong>7/13 前先生出一個粗版</strong>（框不夠準沒關係），先讓文凱的前端串得上、讓管線通，之後再調準。<strong>先讓它通，再讓它準。</strong></span></div>
+  </section>
+
+  <!-- 3 先後順序 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>先後順序：四線並行，峻維是共用引擎</h2></div>
+    <p class="sec-sub">四條線 Day 1 都能開工，但<strong>峻維的自然語言 endpoint 是文凱（素人前端）與君璇（LINE）共用的引擎</strong>，所以他仍在關鍵路徑上。橫條顏色＝
+      <span class="chip crit" style="background:var(--accent);color:#fff">關鍵路徑</span>
+      <span class="chip indep">獨立可並行</span>
+      <span class="chip soft" style="background:var(--surface-2);color:var(--ink);border:1px solid var(--line)">依賴 / 整合</span></p>
+    <div class="gantt-wrap">
+      <div class="gantt">
+        <!-- header row -->
+        <div></div>
+        <div class="g-daylab">7/09<small>四</small></div>
+        <div class="g-daylab">7/10<small>五</small></div>
+        <div class="g-daylab">7/13<small>一</small></div>
+        <div class="g-daylab">7/14<small>二</small></div>
+        <div class="g-daylab">7/15<small>三</small></div>
+        <div class="g-daylab">7/16<small>四</small></div>
+        <div class="g-daylab">7/17<small>五</small></div>
+        <div class="g-track" style="grid-column:2 / -1"></div>
+
+        <!-- 佳凱 -->
+        <div class="g-name">佳凱<small>架構師 + MySQL</small></div>
+        <div class="bar soft" style="grid-column:2 / 3">定介面<small>模式權限 + 儲存抽象</small></div>
+        <div class="bar indep" style="grid-column:3 / 7">實作 MySQL 遷移 + 影像歸屬<small>逐列 CRUD</small></div>
+        <div class="bar soft" style="grid-column:7 / 9">review + 整合<small>把關契約</small></div>
+
+        <!-- 峻維 -->
+        <div class="g-name">峻維<small>分割</small></div>
+        <div class="bar crit" style="grid-column:2 / 7">Grounding DINO → segment_text endpoint → PR<small>素人/LINE 共用引擎</small></div>
+
+        <!-- 文凱 -->
+        <div class="g-name">文凱<small>前端雙模式</small></div>
+        <div class="bar indep" style="grid-column:2 / 5">模式切換 + 工程師 UI<small>獨立可先做</small></div>
+        <div class="bar soft" style="grid-column:5 / 9">接素人自然語言框<small>等峻維 endpoint</small></div>
+
+        <!-- 君璇 -->
+        <div class="g-name">君璇<small>LINE Bot</small></div>
+        <div class="bar indep" style="grid-column:2 / 5">圖文選單 + LINE Login 導流上傳<small>獨立可先做</small></div>
+        <div class="bar soft" style="grid-column:5 / 9">打字觸發 segment_text + 回覆<small>等峻維 endpoint</small></div>
+      </div>
+    </div>
+    <div class="critnote"><span class="dot"></span>
+      <span><strong>唯一硬依賴</strong>：峻維的 <code>segment_text</code>（自然語言 → 遮罩）是文凱和君璇都要接的共用 endpoint，所以他 Day 1 先把<strong>介面簽名定死</strong>、Day 5（7/15）發 PR。
+      在那之前，文凱先做獨立的模式切換 UI、君璇先做獨立的圖文選單與 LINE Login 導流上傳，兩人都<strong>先用現有 <code>segment_point</code> 當替身開發，不必空等</strong>。
+      佳凱因為儲存層介面不變，MySQL 遷移可獨立進行，君璇的 LINE 存檔<strong>照樣打同一組 <code>Repository</code> 方法、不必等 MySQL 完工</strong>。<strong>7/18–19 週末</strong>整合驗收。</span></div>
+  </section>
+
+  <!-- 4 每人任務 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>每個人的細項任務</h2></div>
+    <p class="sec-sub">□ 是待辦；<span style="color:var(--accent);font-weight:700">綠框</span>是本週關鍵動作；<span style="color:var(--done);font-weight:700">■</span> 是上週已完成、本週接續的基礎。</p>
+    <div class="people">
+
+      <!-- 佳凱 -->
+      <div class="person lead">
+        <div class="p-head">
+          <div class="p-avatar">凱</div>
+          <div class="p-id"><span class="nm">佳凱</span><span class="role">架構師 + MySQL 遷移</span></div>
+          <span class="p-when">7/09 → 7/17</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">這週身兼兩職：先釘死兩個介面（<strong>模式權限</strong> + <strong>儲存抽象</strong>）讓大家平行開工，再<strong>親手把 store.json 遷到 MySQL</strong>——這塊從君璇那邊接過來，因為你本來就要定抽象、對 <span class="file">db_spec</span>。</p>
+
+          <p class="p-step">① 先定介面（7/09）</p>
+          <ul class="tasks">
+            <li class="check">Week 1：Review MobileSAM PR、建 <span class="file">models/</span> 慣例、benchmark 已合併</li>
+            <li class="star">定 <code>segment_text</code> 在 pipeline 的入口簽名，跟峻維對齊（文凱、君璇都要接，先定死不亂改）</li>
+            <li class="star"><strong>模式權限</strong>：素人只能自然語言、工程師才開種子樣本＋增強參數。gate 放<strong>後端</strong>（別只靠前端藏按鈕），素人的 API 就是打不到種子樣本端點；可沿用 <code>User.role</code></li>
+          </ul>
+
+          <p class="p-step">② 實作 MySQL 遷移（7/10 → 7/15）</p>
+          <ul class="tasks">
+            <li class="star"><strong>先拍板資料模型（是決策，不只是寫 SQL）</strong>：現有 <span class="file">MySQL/init.sql</span> 和程式的 dataclass <strong>對不上</strong>——① PK 是 <code>AUTO_INCREMENT INT</code>，程式卻用 12 字元 uuid；② <code>predicted_label</code>/<code>human_label</code>/<code>line_id</code> 設 <code>NOT NULL</code>，程式常是 <code>None</code>；③ SQL 多了 <code>project</code>（含 novice/expert 模式）與 <code>history</code> 兩表，程式裡沒有。要先決定：id 型別、NOT NULL 放寬、要不要採用 project 概念。</li>
+            <li class="star">保持 <span class="file">app/repository.py</span> 的 <code>Repository</code> 介面不變，底層換 MySQL；注意 <code>_save()</code> 現在是「整包重寫 JSON」，SQL 要改成<strong>逐列 CRUD</strong>（15 個方法各寫）</li>
+            <li>本週務實目標：打通<strong>一條 images → segments 的寫入 / 讀取路徑</strong>且 schema 對齊即可，完整遷移分階段</li>
+          </ul>
+
+          <p class="p-step">③ 整合把關（7/16 → 7/17）</p>
+          <ul class="tasks">
+            <li>Review 三個 PR（峻維 / 文凱 / 君璇）+ 整合驗收：素人閉環跑通，開關全關時退回 Week 1 行為不壞</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 峻維 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">維</div>
+          <div class="p-id"><span class="nm">峻維</span><span class="role">分割工程師 · 本週共用引擎</span></div>
+          <span class="p-when">7/09 → 7/15</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">上週把 SAM 接上，這週做<strong>素人的自然語言引擎</strong>：打字就能框物件。做法是 Grounding DINO 給框、你已完成的 SAM predictor 吃框出遮罩（Grounded-SAM）。
+            <strong>鐵律：一樣只回傳既有的 <code>MaskDict</code>，不改 <code>Segmenter</code> 介面；<code>segment_text</code> 端點簽名 Day 1 定死。</strong></p>
+
+          <p class="p-step">① 環境與模型（7/09）</p>
+          <ul class="tasks">
+            <li class="check">Week 1：MobileSAM <code>SamSegmenter</code>（<code>segment</code>/<code>segment_at</code>）已完成</li>
+            <li class="star"><code>uv add</code> 裝 Grounding DINO（<code>grounding-dino-tiny</code> 即可），權重放 <span class="file">models/</span> 並 gitignore；沿用上週的 CPU/CUDA 自動偵測</li>
+          </ul>
+
+          <p class="p-step">② 實作 grounding.py（7/10 → 7/14）</p>
+          <ul class="tasks">
+            <li class="star">新增 <span class="file">app/ml/grounding.py</span> 的 <code>GroundingDetector</code>：<code>detect(image, text, box_threshold) → list[bbox]</code>（只做「文字 → 框」，open-vocabulary 偵測）</li>
+            <li class="star"><strong>別把文字偵測塞進 <code>Segmenter</code> 介面</strong>（它只有 <code>segment()</code>/<code>segment_at()</code>）。改由 <strong>pipeline 組合</strong>：Grounding DINO 出框 → SAM predictor 吃框 → <code>MaskDict</code>，兩個模型各自乾淨</li>
+            <li class="star">pipeline 加 <code>segment_text(image, prompt)</code> 入口（比照 <code>segment_point</code>，一樣走 <code>_classify_segment</code> 存 Segment）——這是文凱／君璇共用的 endpoint，也是<strong>本週最大風險</strong>：它現在完全不存在，不是「補個小 endpoint」</li>
+            <li>邊界情況：文字沒配到框 → 回空 list 不當掉；顏色空間沿用 RGB</li>
+          </ul>
+
+          <p class="p-step">③ 驗證與交付（7/15）</p>
+          <ul class="tasks">
+            <li>對貓圖打 <code>"cat"</code>、<code>"cat . dog"</code>，確認框準、遮罩貼合</li>
+            <li>沿用上週 benchmark 格式量單張耗時（Week 3 Dashboard 用）</li>
+            <li>7/15 發 PR；提醒佳凱：真模型不進 CI（太重），本地手動驗</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 文凱 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">文</div>
+          <div class="p-id"><span class="nm">文凱</span><span class="role">前端雙模式</span></div>
+          <span class="p-when">7/09 → 7/16</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">上週把 DINOv2 特徵接上。這週把網頁<strong>拆成兩種人用</strong>：素人只看到一個自然語言框，工程師才看到全部進階工具。前端這塊你最熟。</p>
+
+          <p class="p-step">① 模式切換 + 工程師 UI（7/09 → 7/13，獨立）</p>
+          <ul class="tasks">
+            <li class="check">Week 1：<code>DinoEmbedder</code> 真 768 維特徵已完成合併</li>
+            <li class="star">前端加「素人 / 工程師」模式切換，兩種模式渲染不同工具列</li>
+            <li class="star"><strong>工程師模式</strong>：保留＋整理現有的種子樣本標註（描邊 / 點選 → <code>add_example</code>）、加增強參數旋鈕（信心門檻 / kNN k，之後接 Albumentations）</li>
+            <li>先用現有 <code>segment_point</code> 當替身開發，不等峻維</li>
+          </ul>
+
+          <p class="p-step">② 素人自然語言框（7/14 → 7/16，等峻維）</p>
+          <ul class="tasks">
+            <li class="star"><strong>素人模式</strong>：畫面只有一個自然語言輸入框，打字 → 呼叫 <code>segment_text</code> → 顯示切割結果；種子樣本 / 增強旋鈕全藏起來</li>
+            <li>加「分析中…」loading 狀態（Grounding DINO 也要跑幾秒，比照上週 SAM）</li>
+            <li>跟佳凱確認：素人前端就算被繞過，後端權限 gate 也擋得住種子樣本端點</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 君璇 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">璇</div>
+          <div class="p-id"><span class="nm">君璇</span><span class="role">LINE Bot 素人入口</span></div>
+          <span class="p-when">7/09 → 7/17</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">上週研究過 LINE，這週把 <strong>LINE Bot 做成素人入口</strong>（現在 <span class="file">line_bot.py</span> 只有簽章驗證）。上傳<strong>不走 LINE 聊天室</strong>——LINE 會壓縮圖片、一次一張、有容量限制；改成<strong>圖文選單導流到網站上傳</strong>，身分用現成的 LINE Login 自動接上。</p>
+
+          <p class="p-step">① 圖文選單 + 導流上傳（7/09 → 7/13，獨立）</p>
+          <ul class="tasks">
+            <li class="check">Week 1：LINE 前置研究、Messaging API 申請已完成</li>
+            <li class="star">建<strong>圖文選單（Rich Menu，九宮格）</strong>：放「上傳圖片」等入口——用 LINE OA Manager 後台設定即可起步，之後有需要再改用 RichMenu API 腳本管理</li>
+            <li class="star">「上傳圖片」連到網站的 <strong>LINE Login</strong> 流程（<span class="file">app/routes/auth.py</span> 的 OAuth 與 <code>get_user_by_line_id</code> 都已存在）→ 登入完成直接落在素人模式上傳頁——<strong>身分自動綁定，不用輸帳密</strong></li>
+            <li class="star">上傳用網站現成的 <code>POST /api/images</code>（本來就支援多檔）——<strong>不受 LINE 張數 / 壓縮限制</strong>；圖片歸屬該使用者（依賴佳凱的影像 per-user 歸屬：<code>ImageRecord</code> 目前還沒有 user 欄位）</li>
+            <li>手機點選單要連得到網站才能測整段導流——本週用 ngrok 測，正式網址 Week 4 部署後切換</li>
+            <li>webhook 補上<strong>文字</strong>訊息處理（打字當 prompt），先回固定訊息確認通，不必等峻維</li>
+          </ul>
+
+          <p class="p-step">② 打字觸發分割 + 回覆（7/14 → 7/17，等峻維）</p>
+          <ul class="tasks">
+            <li class="star">使用者在 LINE 打「cat」→ 對<strong>他自己名下</strong>的圖呼叫 <code>segment_text</code>（峻維的共用引擎）→ 回覆切割結果；LINE 一律<strong>素人模式</strong>，只認自然語言</li>
+            <li>「對哪張圖切」要定清楚：第一版預設<strong>最近上傳的一張</strong>，回覆時附檔名確認；之後再考慮讓使用者用選單挑圖</li>
+            <li>API 失敗 / 沒配到物件 / 名下沒有圖，都要優雅回覆，別讓 webhook 爆掉；7/17 發 PR</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 5 名詞小百科 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>名詞小百科（講給組員與評審聽）</h2></div>
+    <p class="sec-sub">點開展開。這些是本週報告與開工都會用到的核心概念。</p>
+    <div class="concepts">
+
+      <details class="concept" open>
+        <summary><span class="plus">＋</span>兩種模式 × 兩種操作，到底差在哪？<span class="q">核心賣點</span></summary>
+        <div class="c-body">
+          <p>我們的產品服務兩種人，所以有<strong>兩種操作方式</strong>：</p>
+          <p><strong>自然語言操作</strong>——打一句話（「cat」）系統就幫你框出物件、切好。門檻最低，<strong>素人和 LINE 只能用這個</strong>。背後是 Grounding DINO。</p>
+          <p><strong>種子樣本操作</strong>——人手動描邊 / 點選幾個範例當「種子」，讓 few-shot 分類器學會你的專屬類別。比較費工但更精準可控，<strong>只開放給工程師模式</strong>。</p>
+          <table>
+            <tr><th>模式</th><th>種子樣本</th><th>自然語言</th><th>調增強參數</th></tr>
+            <tr><td class="hl">素人 / LINE</td><td>✗</td><td>✓</td><td>✗</td></tr>
+            <tr><td class="hl">工程師</td><td>✓</td><td>✓</td><td>✓</td></tr>
+          </table>
+          <p>關鍵：這道權限線要放<strong>後端</strong>，不是前端把按鈕藏起來就算數——素人的 API 根本打不到種子樣本 / 參數端點。</p>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>Grounding DINO 是什麼？跟 SAM 怎麼合作？<span class="q">自然語言引擎</span></summary>
+        <div class="c-body">
+          <p>SAM 很會「切」，但它<strong>不知道你想要哪一塊</strong>，所以要嘛整張自動切、要嘛手動點。Grounding DINO 補的正是這塊：它是 <strong>open-vocabulary 偵測器</strong>，給一句自由文字（<code>"cat"</code>），它就框出畫面裡對應的物件。</p>
+          <p>兩者串起來就是業界很紅的 <strong>Grounded-SAM</strong>：<span class="hl">文字 → Grounding DINO 出框 → 框餵給 SAM → 精準遮罩</span>。使用者不必手動點，打字就能標——這正是我們素人模式的操作方式。SAM 的 predictor 上週已寫好，直接吃 box prompt。</p>
+          <div class="flow">"cat" → Grounding DINO（框）→ SamPredictor.predict(box=…) → MaskDict（照舊）→ 分類 / 審核 / 存 MySQL</div>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>為什麼把 store.json 換成 MySQL？<span class="q">資料庫</span></summary>
+        <div class="c-body">
+          <p>骨架期用一個 <code>store.json</code> 檔存全部資料，開發方便，但一旦要<strong>多使用者、雲端儲存、給每個人一塊影像空間</strong>，單一 JSON 檔就撐不住——併發會壞、也難查詢關聯。</p>
+          <p>所以升級成 <strong>MySQL</strong>：使用者、影像、片段、種子範例各自有表，用外鍵關聯（「這張圖屬於哪個使用者、切出哪些片段」）。好處是併發安全、查詢快、天生支援「使用者 ↔ 影像雲端空間」這種關係。</p>
+          <p>關鍵：靠佳凱定的<strong>儲存層抽象</strong>，<code>Repository</code> 介面不變，只是底層從讀寫 JSON 換成讀寫 MySQL——pipeline 和 routes 一行都不用改。</p>
+          <div class="flow">store.json（單檔，開發用）  →  MySQL（多使用者 · 影像歸屬使用者 · 關聯查詢）</div>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>LINE Bot 怎麼變成「操作模型」的入口？<span class="q">素人入口</span></summary>
+        <div class="c-body">
+          <p>對素人來說，裝一個網站、學一套介面都嫌麻煩。<strong>LINE 是他們每天都在用的東西</strong>，所以 LINE 就是入口。但<strong>上傳不走聊天室</strong>——LINE 傳圖會被壓縮、一次一張、有容量限制，批次標註根本餵不飽。</p>
+          <p>做法是<strong>圖文選單（九宮格）導流</strong>：使用者點「上傳圖片」→ 走 LINE Login 進網站（身分自動綁定，<code>get_user_by_line_id</code> 對回同一個帳號）→ 在網頁上不限張數批次上傳，圖片歸他名下。回到 LINE 打一句「cat」，後端就對他名下的圖呼叫同一個 <code>segment_text</code>，把結果回給他。<strong>LINE 一律走素人模式</strong>，只認自然語言，不開放種子樣本那些進階操作。</p>
+          <div class="flow">圖文選單「上傳」→ LINE Login 進網站 → 批次上傳（歸該使用者）→ 回 LINE 打「cat」→ segment_text → 回結果</div>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="verify">
+      <span class="mark">✅</span>
+      <div>
+        <h3>7/19 驗收標準</h3>
+        <p>本週交付的是<strong>可 demo 的 MVP</strong>，不是四條全部完工。核心驗收與進階驗收分開，把風險說誠實：</p>
+        <ol>
+          <li><b>自然語言（核心）：</b>網頁輸入 <code>"cat"</code> → <code>segment_text</code> 跑 Grounding DINO → SAM → 存成 Segment 並回圖顯示。</li>
+          <li><b>雙模式（核心）：</b>素人 / 工程師前端分流完成，後端至少有<b>基本權限 gate</b>擋住素人存取進階端點。</li>
+          <li><b>MySQL（核心）：</b>schema 與 dataclass 對齊拍板，完成一條 <b>images/segments 寫入 → 讀取</b>路徑（完整遷移分階段）。</li>
+          <li><b>LINE（核心 + 進階）：</b>核心＝圖文選單導流 → LINE Login 登入 → 網站上傳且圖片歸屬該使用者，webhook 收文字觸發 <code>segment_text</code>；<b>回結果圖列為進階驗收</b>。</li>
+        </ol>
+      </div>
+    </div>
+    <p class="foot-note">Smart Label Platform · Week 2 開發計畫（7/09–7/19）· 佳凱 / 峻維 / 文凱 / 君璇</p>
+  </div>
+</footer>
+
+</body>
+</html>

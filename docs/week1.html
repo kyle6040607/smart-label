@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第一週開發計畫 · Smart Label Platform</title>
+<style>
+  :root{
+    --bg:#f3f6f6; --surface:#ffffff; --surface-2:#eaefef; --surface-3:#e0e7e6;
+    --ink:#15201f; --ink-2:#485956; --ink-3:#7a8987; --line:#d8e0df;
+    --accent:#0d7c8b; --accent-ink:#095c68; --accent-soft:#dceff1;
+    --done:#2c8a58; --done-soft:#dceee4;
+    --todo:#b0761a; --todo-soft:#f4e9d2;
+    --missing:#c23a52; --missing-soft:#f6dee2;
+    --font-sans:"PingFang TC","Microsoft JhengHei","Noto Sans TC","Segoe UI",system-ui,sans-serif;
+    --font-mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"Noto Sans Mono",monospace;
+    --maxw:920px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1416; --surface:#151d1f; --surface-2:#1c2628; --surface-3:#243032;
+      --ink:#e7edec; --ink-2:#a4b2b0; --ink-3:#74817f; --line:#273234;
+      --accent:#34b2c0; --accent-ink:#7fd6df; --accent-soft:#123138;
+      --done:#48b579; --done-soft:#12291e;
+      --todo:#d59a3d; --todo-soft:#2c2413;
+      --missing:#e26a80; --missing-soft:#2c1418;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f3f6f6; --surface:#ffffff; --surface-2:#eaefef; --surface-3:#e0e7e6;
+    --ink:#15201f; --ink-2:#485956; --ink-3:#7a8987; --line:#d8e0df;
+    --accent:#0d7c8b; --accent-ink:#095c68; --accent-soft:#dceff1;
+    --done:#2c8a58; --done-soft:#dceee4; --todo:#b0761a; --todo-soft:#f4e9d2;
+    --missing:#c23a52; --missing-soft:#f6dee2;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1416; --surface:#151d1f; --surface-2:#1c2628; --surface-3:#243032;
+    --ink:#e7edec; --ink-2:#a4b2b0; --ink-3:#74817f; --line:#273234;
+    --accent:#34b2c0; --accent-ink:#7fd6df; --accent-soft:#123138;
+    --done:#48b579; --done-soft:#12291e; --todo:#d59a3d; --todo-soft:#2c2413;
+    --missing:#e26a80; --missing-soft:#2c1418;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);
+    line-height:1.65;-webkit-font-smoothing:antialiased;letter-spacing:.01em}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+  code,.mono{font-family:var(--font-mono);font-size:.86em;letter-spacing:0}
+  .file{font-family:var(--font-mono);font-size:.82em;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--accent-ink);white-space:nowrap}
+
+  /* ---- header ---- */
+  header.hero{border-bottom:1px solid var(--line);background:
+    linear-gradient(180deg,var(--surface) 0%,var(--bg) 100%)}
+  .hero-inner{max-width:var(--maxw);margin:0 auto;padding:46px 22px 34px}
+  .eyebrow{font-size:.74rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent-ink);font-weight:700;margin:0 0 14px}
+  h1{font-size:clamp(1.9rem,5vw,2.9rem);line-height:1.1;margin:0 0 12px;
+    font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+  .lede{font-size:1.06rem;color:var(--ink-2);max-width:60ch;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;margin-top:22px}
+  .meta .tag{font-size:.78rem;background:var(--surface-2);border:1px solid var(--line);
+    padding:4px 11px;border-radius:100px;color:var(--ink-2)}
+  .meta .tag b{color:var(--ink);font-weight:700}
+
+  /* ---- sections ---- */
+  section{padding:40px 0}
+  section+section{border-top:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:12px;margin:0 0 6px}
+  .sec-num{font-family:var(--font-mono);font-size:.8rem;color:var(--accent);
+    font-weight:700;flex:none}
+  h2{font-size:1.5rem;margin:0;font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+  .sec-sub{color:var(--ink-2);margin:.35rem 0 26px;max-width:64ch}
+
+  /* ---- status chips ---- */
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:.76rem;font-weight:700;
+    padding:2px 9px;border-radius:6px;white-space:nowrap;letter-spacing:.01em}
+  .chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+  .chip.done{color:var(--done);background:var(--done-soft)}
+  .chip.stub{color:var(--todo);background:var(--todo-soft)}
+  .chip.missing{color:var(--missing);background:var(--missing-soft)}
+
+  /* ---- status table ---- */
+  .scroll{overflow-x:auto}
+  table.status{width:100%;border-collapse:collapse;font-size:.92rem;min-width:520px}
+  table.status th{text-align:left;font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-3);font-weight:700;padding:0 12px 10px;border-bottom:1px solid var(--line)}
+  table.status td{padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
+  table.status tr:last-child td{border-bottom:none}
+  table.status td.mod{font-weight:700;color:var(--ink)}
+
+  /* ---- goal callout ---- */
+  .goal{background:var(--accent-soft);border:1px solid var(--accent);border-radius:14px;
+    padding:22px 24px;display:flex;gap:16px;align-items:flex-start}
+  .goal .mark{font-size:1.5rem;line-height:1;flex:none;margin-top:2px}
+  .goal h3{margin:0 0 6px;font-size:1.12rem;color:var(--accent-ink)}
+  .goal p{margin:0;color:var(--ink);font-size:.97rem}
+  .goal .arrow{font-family:var(--font-mono);color:var(--accent-ink);font-size:.86rem;
+    margin-top:10px;display:block}
+
+  /* ---- gantt ---- */
+  .gantt-wrap{overflow-x:auto;padding-bottom:6px}
+  .gantt{display:grid;grid-template-columns:104px repeat(5,minmax(84px,1fr));
+    grid-auto-rows:auto;gap:8px;min-width:620px;align-items:center}
+  .g-daylab{font-family:var(--font-mono);font-size:.74rem;color:var(--ink-3);
+    text-align:center;font-weight:700;padding-bottom:2px}
+  .g-name{font-weight:800;font-size:.9rem;display:flex;flex-direction:column;gap:1px}
+  .g-name small{font-weight:600;font-size:.68rem;color:var(--ink-3);letter-spacing:.02em}
+  .bar{border-radius:8px;padding:8px 11px;font-size:.8rem;font-weight:700;line-height:1.25;
+    min-height:38px;display:flex;align-items:center;border:1px solid transparent}
+  .bar small{display:block;font-weight:600;font-size:.68rem;opacity:.85;margin-top:1px}
+  .bar.crit{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .bar.soft{background:var(--surface-2);color:var(--ink);border-color:var(--line)}
+  .bar.indep{background:var(--done-soft);color:var(--done);border-color:var(--done)}
+  .g-track{grid-column:2 / -1;height:1px;background:var(--line);margin:2px 0}
+  .critnote{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:.84rem;color:var(--ink-2)}
+  .critnote .dot{width:12px;height:12px;border-radius:3px;background:var(--accent);flex:none}
+
+  /* ---- person cards ---- */
+  .people{display:grid;gap:18px}
+  .person{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .p-head{display:flex;align-items:center;gap:13px;padding:16px 20px;background:var(--surface-2);
+    border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .p-avatar{width:40px;height:40px;border-radius:10px;background:var(--accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.05rem;flex:none}
+  .person.lead .p-avatar{background:var(--accent-ink)}
+  .p-id{display:flex;flex-direction:column;gap:1px;margin-right:auto}
+  .p-id .nm{font-weight:800;font-size:1.05rem}
+  .p-id .role{font-size:.78rem;color:var(--ink-2)}
+  .p-when{font-family:var(--font-mono);font-size:.72rem;color:var(--accent-ink);
+    background:var(--accent-soft);padding:3px 9px;border-radius:6px;font-weight:700}
+  .p-body{padding:16px 20px 20px}
+  .p-goal{font-size:.9rem;color:var(--ink-2);margin:0 0 14px;padding-left:12px;
+    border-left:3px solid var(--accent)}
+  .p-step{font-size:.78rem;font-weight:800;letter-spacing:.04em;color:var(--accent-ink);
+    margin:16px 0 9px;text-transform:none}
+  .p-step:first-of-type{margin-top:4px}
+  ul.tasks{list-style:none;margin:0;padding:0;display:grid;gap:9px}
+  ul.tasks li{display:flex;gap:10px;font-size:.92rem;align-items:flex-start}
+  ul.tasks li::before{content:"";width:15px;height:15px;border:2px solid var(--ink-3);
+    border-radius:4px;flex:none;margin-top:4px}
+  ul.tasks li.star::before{border-color:var(--accent);background:var(--accent-soft)}
+
+  /* ---- concept accordions ---- */
+  .concepts{display:grid;gap:12px}
+  details.concept{background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    overflow:hidden}
+  details.concept summary{cursor:pointer;padding:16px 20px;font-weight:800;font-size:1.02rem;
+    list-style:none;display:flex;align-items:center;gap:11px}
+  details.concept summary::-webkit-details-marker{display:none}
+  details.concept summary .plus{font-family:var(--font-mono);color:var(--accent);font-weight:700;
+    transition:transform .2s;flex:none}
+  details.concept[open] summary .plus{transform:rotate(45deg)}
+  details.concept summary .q{font-size:.72rem;color:var(--ink-3);font-weight:700;
+    border:1px solid var(--line);border-radius:5px;padding:1px 6px;flex:none}
+  .c-body{padding:2px 20px 20px;color:var(--ink-2);font-size:.94rem}
+  .c-body p{margin:0 0 11px}
+  .c-body strong{color:var(--ink)}
+  .c-body table{width:100%;border-collapse:collapse;font-size:.86rem;margin:6px 0 4px}
+  .c-body table td,.c-body table th{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left}
+  .c-body table th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-3)}
+  .c-body .hl{background:var(--accent-soft);color:var(--accent-ink);font-weight:700}
+  .c-body .flow{font-family:var(--font-mono);font-size:.8rem;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:8px;padding:12px 14px;color:var(--ink);
+    overflow-x:auto;white-space:nowrap;line-height:1.8}
+
+  /* ---- footer ---- */
+  footer{background:var(--surface);border-top:1px solid var(--line);padding:34px 0 44px}
+  .verify{display:flex;gap:16px;align-items:flex-start;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:14px;padding:22px 24px}
+  .verify .mark{font-size:1.4rem;flex:none}
+  .verify h3{margin:0 0 6px;font-size:1.1rem}
+  .verify p{margin:0;color:var(--ink-2);font-size:.95rem}
+  .foot-note{text-align:center;color:var(--ink-3);font-size:.8rem;margin-top:24px}
+
+  @media(max-width:560px){
+    ul.tasks li{font-size:.88rem}
+    .p-head{gap:10px}
+  }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">Smart Label Platform · 開發排程</p>
+    <h1>第一週開發計畫</h1>
+    <p class="lede">骨架已經用 Mock 端到端跑通了。這一週的任務不是「從零做上傳→出遮罩」——
+      那早就會了——而是把第一個假模型換成真的 <b>MobileSAM</b>。以下是每個人要做什麼、為什麼、誰先誰後。</p>
+    <div class="meta">
+      <span class="tag">團隊 · <b>佳凱 / 峻維 / 文凱 / 君璇</b></span>
+      <span class="tag">週期 · <b>Week 1（5 個工作天）</b></span>
+      <span class="tag">關鍵路徑 · <b>SamSegmenter</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 1 現況盤點 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>現況盤點：我們已經走到哪</h2></div>
+    <p class="sec-sub">整條 pipeline（上傳 → 分割 → 抽特徵 → few-shot 分類 → 信心分流 → 人工審核 → 匯出資料集）
+      <strong>已經會動</strong>，靠的是可運作的 Mock 實作。真正的 AI 模型還是空殼，這就是接下來幾週要一個一個補上的。</p>
+    <div class="scroll">
+      <table class="status">
+        <thead><tr><th>模組</th><th>檔案</th><th>狀態</th></tr></thead>
+        <tbody>
+          <tr><td class="mod">few-shot 分類器</td><td><span class="file">app/ml/classifier.py</span></td><td><span class="chip done">完整（kNN + softmax）</span></td></tr>
+          <tr><td class="mod">主動學習信心</td><td><span class="file">app/ml/active_learning.py</span></td><td><span class="chip done">完整</span></td></tr>
+          <tr><td class="mod">Pipeline 串接</td><td><span class="file">app/services/pipeline.py</span></td><td><span class="chip done">完整（含迴圈）</span></td></tr>
+          <tr><td class="mod">資料集匯出</td><td><span class="file">app/services/exporter.py</span></td><td><span class="chip done">完整（COCO/YOLO/mask）</span></td></tr>
+          <tr><td class="mod">Web 標記介面</td><td><span class="file">app/templates/index.html</span></td><td><span class="chip done">上傳/分割/審核/匯出都有</span></td></tr>
+          <tr><td class="mod">SAM 分割</td><td><span class="file">app/ml/sam.py</span></td><td><span class="chip stub">Mock 能跑 · 真 SamSegmenter 是空殼</span></td></tr>
+          <tr><td class="mod">特徵抽取（DINOv2）</td><td><span class="file">app/ml/embedding.py</span></td><td><span class="chip stub">Mock 能跑 · 真 DinoEmbedder 是空殼</span></td></tr>
+          <tr><td class="mod">YOLO-seg 訓練腳本</td><td><span class="file">—</span></td><td><span class="chip missing">還沒有</span></td></tr>
+          <tr><td class="mod">Dockerfile / GCP 部署</td><td><span class="file">—</span></td><td><span class="chip missing">還沒有</span></td></tr>
+          <tr><td class="mod">LINE Bot</td><td><span class="file">—</span></td><td><span class="chip missing">還沒有</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 2 本週目標 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>本週唯一主線目標</h2></div>
+    <p class="sec-sub">簡報上寫「第一週：跑通 MobileSAM」。骨架其實已經用 Mock 通了，所以真正的任務是<strong>升級</strong>。</p>
+    <div class="goal">
+      <span class="mark">🎯</span>
+      <div>
+        <h3>把 Mock 分割換成真的 MobileSAM</h3>
+        <p>在 <code>USE_REAL_SAM=1</code> 之下，上傳一張貓圖 → 由<strong>真 MobileSAM</strong> 切出遮罩 →
+          現有的分類、審核、匯出流程照跑不壞。等於把「第一週跑通 MobileSAM」從假的升級成真的。</p>
+        <span class="arrow">上傳 → 真 SAM 切割 → 分類（現成）→ 審核（現成）→ 匯出（現成）</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 先後順序 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>先後順序：誰先誰後</h2></div>
+    <p class="sec-sub">模型已定案用 <strong>MobileSAM</strong>，所以峻維 Day 1 就能直接開工。關鍵路徑：
+      <strong>峻維扛主線 → 佳凱 review</strong>；君璇全程獨立、文凱先做自己的再回頭配合。橫條顏色＝
+      <span class="chip crit" style="background:var(--accent);color:#fff">關鍵路徑</span>
+      <span class="chip indep">獨立可並行</span>
+      <span class="chip soft" style="background:var(--surface-2);color:var(--ink);border:1px solid var(--line)">依賴他人</span></p>
+    <div class="gantt-wrap">
+      <div class="gantt">
+        <!-- header row -->
+        <div></div>
+        <div class="g-daylab">Day 1</div><div class="g-daylab">Day 2</div>
+        <div class="g-daylab">Day 3</div><div class="g-daylab">Day 4</div><div class="g-daylab">Day 5</div>
+        <div class="g-track" style="grid-column:2 / -1"></div>
+
+        <!-- 佳凱 -->
+        <div class="g-name">佳凱<small>架構師</small></div>
+        <div class="bar soft" style="grid-column:2 / 3">建 models/<small>gitignore .pth</small></div>
+        <div class="bar soft" style="grid-column:4 / 6">review PR<small>整合驗收</small></div>
+
+        <!-- 峻維 -->
+        <div class="g-name">峻維<small>分割</small></div>
+        <div class="bar crit" style="grid-column:2 / 5">實作 SamSegmenter → 發 PR<small>關鍵路徑 · 全隊等他</small></div>
+
+        <!-- 文凱 -->
+        <div class="g-name">文凱<small>特徵+前端</small></div>
+        <div class="bar indep" style="grid-column:2 / 4">DINOv2 前置<small>獨立</small></div>
+        <div class="bar soft" style="grid-column:4 / 6">配合真 SAM 調前端<small>等峻維 PR</small></div>
+
+        <!-- 君璇 -->
+        <div class="g-name">君璇<small>訓練+部署</small></div>
+        <div class="bar indep" style="grid-column:2 / 7">export→Colab 訓練 · Dockerfile · LINE 研究<small>全程獨立</small></div>
+      </div>
+    </div>
+    <div class="critnote"><span class="dot"></span>
+      <span><strong>唯一的硬依賴</strong>：峻維 Day 3 發 PR，佳凱才能 review、整合。模型既已定案，峻維下載 checkpoint 即可開工；
+      佳凱 Day 1 同步建好 <span class="file">models/</span> 慣例與 <span class="file">.gitignore</span>，避免大檔進 git。其他人不該卡在這條線上等。</span></div>
+  </section>
+
+  <!-- 4 每人任務 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>每個人的細項任務</h2></div>
+    <p class="sec-sub">□ 是待辦；<span style="color:var(--accent);font-weight:700">綠框</span>是那個人本週的關鍵動作。</p>
+    <div class="people">
+
+      <!-- 佳凱 -->
+      <div class="person lead">
+        <div class="p-head">
+          <div class="p-avatar">凱</div>
+          <div class="p-id"><span class="nm">佳凱</span><span class="role">架構師 / 協調</span></div>
+          <span class="p-when">Day 1 上午 · Day 3–4</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">骨架是你建的，本週轉為「把關 + 整合」。模型已定案 MobileSAM，你的重點是守住介面契約、確保換模型後整條流程不壞。</p>
+          <ul class="tasks">
+            <li class="star">建 <span class="file">models/</span> 目錄 + <span class="file">.gitignore</span> 排除 <code>*.pt / *.pth</code>（別讓 checkpoint 進 git）</li>
+            <li class="star">Review 峻維的 PR：盯緊 <code>MaskDict</code> 契約沒被破壞（<code>mask</code> / <code>bbox</code> / <code>area</code> 型別與意義一致）</li>
+            <li>整合驗證：<code>USE_REAL_SAM=1</code> 時整條流程仍跑通</li>
+            <li>測試策略：真 SAM 太重不進 CI，<span class="file">tests/</span> 維持用 mock</li>
+            <li>更新 README 的 checkpoint 下載步驟（<code>SAM_CHECKPOINT</code> 變數已存在於 config）</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 峻維 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">維</div>
+          <div class="p-id"><span class="nm">峻維</span><span class="role">分割工程師 · 本週主角</span></div>
+          <span class="p-when">Day 1 → Day 3</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">唯一目標：把 <span class="file">app/ml/sam.py</span> 的 <code>SamSegmenter</code>（現在一呼叫就 <code>NotImplementedError</code>，見 sam.py:99–113）真正接上 MobileSAM。
+            <strong>鐵律：只動這個 class 內部，不准改 <code>Segmenter</code> 介面、<code>MaskDict</code> 格式、<code>build_segmenter()</code> 簽名</strong>——上層才不用改。</p>
+
+          <p class="p-step">① 環境與模型（Day 1 上午）</p>
+          <ul class="tasks">
+            <li class="star"><code>uv add</code> 裝 <code>mobile_sam</code>（GitHub 版）＋ <code>torch</code> ＋ <code>torchvision</code></li>
+            <li class="star">下載 <code>mobile_sam.pt</code>（約 40MB）放 <span class="file">models/</span>，並讓 <code>SAM_CHECKPOINT</code> 指到它（config 已有此變數）</li>
+            <li>加上 CPU / CUDA 自動偵測（<code>torch.cuda.is_available()</code>），本機沒 GPU 也要能跑</li>
+          </ul>
+
+          <p class="p-step">② 實作三個方法（Day 1 下午 → Day 2）</p>
+          <ul class="tasks">
+            <li class="star"><code>__init__</code>：<code>sam_model_registry["vit_t"](checkpoint=...)</code> 載入 → <code>.to(device).eval()</code> →
+              同時建 <code>SamAutomaticMaskGenerator</code>（整張自動）與 <code>SamPredictor</code>（點提示）</li>
+            <li class="star"><code>segment()</code>：呼叫 <code>generator.generate(image)</code> → 逐一把每個結果的
+              <code>segmentation</code>(HxW bool)、<code>bbox</code>(XYWH)、<code>area</code> 包成 <code>MaskDict</code>；
+              可用現成的 <code>_to_mask_dict()</code> 保證格式一致</li>
+            <li class="star"><code>segment_at()</code>：<code>predictor.set_image(image)</code> →
+              <code>predict(point_coords=[[x,y]], point_labels=[1], multimask_output=True)</code> →
+              取分數最高的那張 mask 轉成 <code>MaskDict</code></li>
+            <li>顏色空間：pipeline 傳進來的是 <strong>RGB</strong>，MobileSAM 也吃 RGB，別再多轉一次 BGR</li>
+            <li>邊界情況：空遮罩、灰階圖、超大圖要不當掉（沿用 mock 的防呆寫法）</li>
+          </ul>
+
+          <p class="p-step">③ 驗證與交付（Day 3）</p>
+          <ul class="tasks">
+            <li><code>USE_REAL_SAM=1 uv run python main.py</code>，對 <span class="file">data/uploads/</span> 的貓圖跑「自動分割」與「點一下」，確認遮罩貼合物件</li>
+            <li>調參對照 config 的 <code>SAM_MAX_MASKS</code> 概念：用 <code>points_per_side</code> / <code>min_mask_region_area</code> 控制遮罩數量與碎塊</li>
+            <li><strong>Benchmark 表</strong>：Mock vs MobileSAM 的單張推論時間、遮罩數、記憶體，跑同一批貓圖（Week 3 Dashboard 要用）</li>
+            <li>提醒佳凱：真 SAM <strong>不要進 pytest / CI</strong>（太重），本地手動驗即可</li>
+            <li>開 feature branch，Day 3 發 PR 給佳凱 review</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 文凱 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">文</div>
+          <div class="p-id"><span class="nm">文凱</span><span class="role">特徵 + 前端（身兼兩職）</span></div>
+          <span class="p-when">Day 1–2 先 · Day 3–4 後</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">兩件事一前一後：先利用空檔備好自己 Week 2 要用的 DINOv2 環境（獨立），等峻維 PR 出來再回頭把網頁調成配得上真 SAM 的樣子。</p>
+          <ul class="tasks">
+            <li class="star"><strong>Day 1–2（獨立）</strong>：把 <span class="file">app/ml/embedding.py</span> 的 <code>DinoEmbedder</code> 環境裝起來（torch + transformers），跑通「一張圖 → 768 維向量」</li>
+            <li><strong>Day 3–4（等峻維）</strong>：真 SAM 遮罩更多更細，檢查 <span class="file">app/static/js/app.js</span> canvas 疊圖顯示與效能</li>
+            <li>加「分割中…」loading 狀態——真 SAM 比 Mock 慢好幾秒，沒提示會像當機</li>
+            <li>（有餘力）stats 面板從純文字加個簡單圖表，鋪 Week 3 Dashboard</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 君璇 -->
+      <div class="person">
+        <div class="p-head">
+          <div class="p-avatar">璇</div>
+          <div class="p-id"><span class="nm">君璇</span><span class="role">訓練 + 部署</span></div>
+          <span class="p-when">Day 1–5 · 全程獨立</span>
+        </div>
+        <div class="p-body">
+          <p class="p-goal">主線是訓練+部署（Week 4 才重），本週用現成的 exporter 做前置驗證，完全不碰峻維的 SAM，隨時能開工。</p>
+          <ul class="tasks">
+            <li class="star">用現有 <span class="file">app/services/exporter.py</span> 把 <span class="file">data/</span> 的貓遮罩匯出成 <strong>YOLOv8-seg</strong> 格式</li>
+            <li class="star">在 Colab 裝 <code>ultralytics</code>，拿那份資料集跑一次 mini 訓練 → 證明「標註→訓練」閉環真的通</li>
+            <li>寫 <span class="file">Dockerfile</span>（目前沒有），把 Flask app 容器化，本機 <code>docker build</code> + <code>run</code> 成功</li>
+            <li>前置研究：LINE Messaging API 申請、GCP 帳號/專案建立（Week 4 要用，先卡位）</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 5 名詞小百科 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>名詞小百科（講給組員聽）</h2></div>
+    <p class="sec-sub">點開展開。這些是報告和開工都會用到的核心概念。</p>
+    <div class="concepts">
+
+      <details class="concept" open>
+        <summary><span class="plus">＋</span>為什麼有「Mock / 真模型」兩套？<span class="q">架構</span></summary>
+        <div class="c-body">
+          <p>每個重模型都切成一個乾淨介面，底下掛兩種實作：<strong>Mock 版</strong>（免下載、用傳統演算法，讓流程立刻能跑）和 <strong>真實版</strong>（接真模型）。用環境變數一鍵切換。</p>
+          <p>好處：全隊 Day 1 就能對著會動的系統開發，不用等模型；換模型時<strong>上層 API、前端、分類器完全不用改</strong>。這一週做的就是把 SAM 這一格從 Mock 換成真的。</p>
+          <div class="flow">MockSegmenter（OpenCV，現在）  ⇄  SamSegmenter（真 MobileSAM，本週補）</div>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>什麼是主動學習迴圈？<span class="q">核心賣點</span></summary>
+        <div class="c-body">
+          <p>一般標註是人把每張圖都標一遍，很花時間。<strong>主動學習</strong>反過來：讓模型先自動標，只把「模型自己也沒把握（信心分數低）」的少數樣本挑出來給人審核。</p>
+          <p>人只修正這些關鍵樣本 → 餵回模型 → 模型變準 → 下一輪不確定的更少。這個<strong>自動標 → 挑低信心 → 人工修正 → 回饋重訓</strong>的循環，就是主動學習迴圈。在我們系統裡就是「工程師只審核標紅的樣本，其餘全自動」。</p>
+          <div class="flow">自動標 → 挑低信心（標紅）→ 人工修正 → 回訓 → 更準 →（循環）</div>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>為什麼定案用 MobileSAM？<span class="q">已定案</span></summary>
+        <div class="c-body">
+          <p>原版 SAM 又大又慢（模型好幾 GB），不適合放上線，所以要用輕量版。常見兩個選擇，我們<strong>已定案 MobileSAM</strong>：</p>
+          <table>
+            <tr><th>版本</th><th>做法</th><th>特點</th></tr>
+            <tr><td class="hl">MobileSAM ←採用</td><td>把 SAM 的影像編碼器換成輕量骨幹（vit_t）</td><td>用法幾乎跟原版 SAM 一樣，遷移最省事</td></tr>
+            <tr><td>FastSAM</td><td>改用 YOLOv8 架構做全圖分割</td><td>更快，但 API 跟 SAM 不同，接法要另寫</td></tr>
+          </table>
+          <p>關鍵理由：<code>SamSegmenter</code> 的骨架已照原版 SAM 的用法寫好（<code>sam_model_registry</code> / <code>SamAutomaticMaskGenerator</code> / <code>SamPredictor</code>），
+            <strong>MobileSAM 的 API 幾乎照搬</strong>，峻維只要把權重換成 <code>vit_t</code> 版就能接上，改動最小、風險最低。FastSAM 若日後想比較速度，可當延伸實驗。</p>
+        </div>
+      </details>
+
+      <details class="concept">
+        <summary><span class="plus">＋</span>為什麼是 768 維向量？<span class="q">DINOv2</span></summary>
+        <div class="c-body">
+          <p>DINOv2 的工作是把一張圖<strong>壓成一串數字</strong>來代表內容，這串數字有多長就叫幾維。維度越高、資訊越豐富、越能分辨細節，但越吃運算。</p>
+          <p>768 不是我們挑的，是「<strong>dinov2-base</strong>」這個版本架構寫死的輸出長度（改不了）。現在的 Mock 版只有 50 維（顏色+形狀），只能靠顏色分；768 維的 DINOv2 才真的「看懂」這是貓那是狗。</p>
+          <table>
+            <tr><th>版本</th><th>維度</th><th>特點</th></tr>
+            <tr><td>dinov2-small</td><td>384</td><td>最小最快</td></tr>
+            <tr><td class="hl">dinov2-base ←目前選</td><td>768</td><td>平衡</td></tr>
+            <tr><td>dinov2-large</td><td>1024</td><td>更準更重</td></tr>
+          </table>
+          <p>關鍵：換模型時分類器<strong>完全不用改</strong>——它是照向量長度動態算的，餵 50 維或 768 維都吃。若 base 太重跑不動，退用 small（384）只要改兩行。</p>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="verify">
+      <span class="mark">✅</span>
+      <div>
+        <h3>週五驗收標準</h3>
+        <p>在 <code>USE_REAL_SAM=1</code> 之下，於瀏覽器上傳貓圖 → 真 MobileSAM 切出遮罩 →
+          分類 / 審核 / 匯出流程照跑不壞。做到這一點，Week 1「跑通 MobileSAM」就從 Mock 正式升級成真的。</p>
+      </div>
+    </div>
+    <p class="foot-note">Smart Label Platform · Week 1 開發計畫 · 佳凱 / 峻維 / 文凱 / 君璇</p>
+  </div>
+</footer>
+
+</body>
+</html>
