@@ -112,7 +112,7 @@ class SamSegmenter:
     def __init__(
         self,
         checkpoint: str,
-        model_type: str = "vit_h",
+        model_type: str = "vit_t",
         device: str = "cuda",
         points_per_side: int = 32,
         min_mask_region_area: int = 100,
@@ -128,9 +128,11 @@ class SamSegmenter:
             self.device = "cpu"
             print("GPU 不可用，改用 CPU")
 
-        # 如果載入的是 MobileSAM 權重，則模型類型應修正為 vit_t
-        if "mobile_sam" in checkpoint.lower() and model_type == "vit_h":
-            model_type = "vit_t"
+        if model_type not in sam_model_registry:
+            supported = ", ".join(sorted(sam_model_registry))
+            raise ValueError(
+                f"不支援的 SAM_MODEL_TYPE: {model_type!r}；可用類型: {supported}"
+            )
 
         print(f"--- MobileSAM 初始化中 ---")
         print(f"指定架構: {model_type}")
@@ -215,13 +217,15 @@ def build_segmenter(
     max_masks: int = 12,
     min_area_ratio: float = 0.004,
     flood_tol: int = 12,
-    checkpoint: str = "models/sam_vit_h_4b8939.pth",
+    checkpoint: str = "models/mobile_sam.pt",
+    model_type: str = "vit_t",
     points_per_side: int = 32,
     min_mask_region_area: int = 100,
 ) -> Segmenter:
     if use_real_sam:
         return SamSegmenter(
             checkpoint=checkpoint,
+            model_type=model_type,
             points_per_side=points_per_side,
             min_mask_region_area=min_mask_region_area,
         )
