@@ -144,6 +144,12 @@ canvas { display: block; cursor: crosshair; }
   font-size: 12px;
 }
 .queue li .probs { color: var(--muted); }
+.queue li .queue-item { display: flex; gap: 8px; align-items: flex-start; }
+.queue li .seg-thumb {
+  width: 56px; height: 56px; flex-shrink: 0;
+  border-radius: 4px; background: #1a2332;
+}
+.queue li .queue-body { flex: 1; min-width: 0; }
 .queue li input { width: 90px; margin-right: 6px; }
 .queue li .seg-del { margin-left: 4px; background: transparent; border: 1px solid var(--danger); color: var(--danger); }
 
