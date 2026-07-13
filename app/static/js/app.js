@@ -8,8 +8,23 @@ const state = {
   drawing: false,
   points: [],
   segmenting: false,
+  lastSegments: [],   // 目前畫布上的片段，供審核卡片 hover 加亮用
 };
 const $ = (id) => document.getElementById(id);
+
+// 原圖快取：縮圖與重繪共用同一份，避免重複下載解碼
+const imageCache = new Map();
+function loadImage(imageId) {
+  if (!imageCache.has(imageId)) {
+    imageCache.set(imageId, new Promise((resolve, reject) => {
+      const pic = new Image();
+      pic.onload = () => resolve(pic);
+      pic.onerror = reject;
+      pic.src = `/api/images/${imageId}/file`;
+    }));
+  }
+  return imageCache.get(imageId);
+}
 
 const canvas = $("canvas");
 const ctx = canvas.getContext("2d");
@@ -206,14 +221,16 @@ canvas.onmouseup = async () => {
 };
 
 // ---------- 把遮罩疊回圖上：高信心綠框、低信心紅框 ----------
-async function redraw(segments) {
-  const pic = new Image();
-  await new Promise((r) => { pic.onload = r; pic.src = `/api/images/${state.currentImage.id}/file`; });
+// highlightId：審核卡片 hover 時，把對應的框加粗變黃
+async function redraw(segments, highlightId = null) {
+  state.lastSegments = segments;
+  const pic = await loadImage(state.currentImage.id);
   ctx.drawImage(pic, 0, 0);
   for (const s of segments) {
     const [x, y, w, h] = s.bbox;
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = s.needs_review ? "#ff5470" : "#36d399";
+    const hi = s.id === highlightId;
+    ctx.lineWidth = hi ? 4 : 2;
+    ctx.strokeStyle = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
     ctx.strokeRect(x, y, w, h);
     if (s.final_label) {
       ctx.fillStyle = ctx.strokeStyle;
@@ -292,13 +309,36 @@ async function refreshSidebar() {
       .map(([k, v]) => `${k}:${v.toFixed(2)}`)
       .join(" · ") || "（尚無範例可分類）";
     li.innerHTML = `
-      <div>預測：${s.predicted_label ?? "—"} · 信心 ${s.confidence.toFixed(2)}</div>
-      <div class="probs">${probs}</div>
-      <div style="margin-top:6px">
-        <input placeholder="正確類別" data-seg="${s.id}" />
-        <button class="confirm">確認</button>
-        <button class="seg-del" title="刪掉這個切壞的片段">刪除</button>
+      <div class="queue-item">
+        <canvas class="seg-thumb" width="56" height="56" title="片段預覽"></canvas>
+        <div class="queue-body">
+          <div>預測：${s.predicted_label ?? "—"} · 信心 ${s.confidence.toFixed(2)}</div>
+          <div class="probs">${probs}</div>
+          <div style="margin-top:6px">
+            <input placeholder="正確類別" data-seg="${s.id}" />
+            <button class="confirm">確認</button>
+            <button class="seg-del" title="刪掉這個切壞的片段">刪除</button>
+          </div>
+        </div>
       </div>`;
+    // 縮圖：以 bbox 為中心裁一塊正方形（外擴 15% 留點上下文）
+    loadImage(s.image_id).then((pic) => {
+      const [x, y, w, h] = s.bbox;
+      const tc = li.querySelector(".seg-thumb");
+      const tctx = tc.getContext("2d");
+      let size = Math.max(w, h) * 1.3;
+      size = Math.min(size, pic.width, pic.height);
+      const sx = Math.max(0, Math.min(pic.width - size, x + w / 2 - size / 2));
+      const sy = Math.max(0, Math.min(pic.height - size, y + h / 2 - size / 2));
+      tctx.drawImage(pic, sx, sy, size, size, 0, 0, tc.width, tc.height);
+    }).catch(() => {});
+    // 滑過卡片 → 大圖上對應的框加亮（只對目前選中的圖有效）
+    li.onmouseenter = () => {
+      if (state.currentImage && s.image_id === state.currentImage.id) redraw(state.lastSegments, s.id);
+    };
+    li.onmouseleave = () => {
+      if (state.currentImage && s.image_id === state.currentImage.id) redraw(state.lastSegments);
+    };
     li.querySelector(".confirm").onclick = async () => {
       const label = li.querySelector("input").value.trim();
       if (!label) return;
