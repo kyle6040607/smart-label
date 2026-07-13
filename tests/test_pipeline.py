@@ -60,16 +60,26 @@ def test_active_learning_loop(tmp_path):
     assert stats["num_labels"] == 2
     assert 0.0 <= stats["auto_ratio"] <= 1.0
 
-    # 刪掉建錯的類別：範例消失、用它標的片段退回送審、分類器不再就緒
+    # 刪掉建錯的類別：範例消失、用它標的片段退回送審
     assert rseg.human_label == "red" and rseg.reviewed
     n = pipe.delete_label("red")
     assert n == 1
     assert repo.labels() == ["blue"]
-    assert not pipe.classifier.ready  # 只剩一個類別
+    # 只剩一個類別仍可運作（單類別走相似度信心）
+    assert pipe.classifier.ready
     again = repo.get_segment(rseg.id)
-    assert again.human_label is None and not again.reviewed and again.needs_review
-    # 未審片段的舊預測也要被清掉，不能殘留刪掉的類別
-    assert again.predicted_label is None and again.probs == {}
+    assert again.human_label is None and not again.reviewed
+    # 重新預測後不能殘留刪掉的類別；信心是相似度分數，送審與否跟著門檻走
+    # （真實特徵下紅藍純色塊的相似度不一定低，不賭絕對數值）
+    assert set(again.probs) == {"blue"}
+    assert 0.0 <= again.confidence <= 1.0
+    assert again.needs_review == (again.confidence < cfg.confidence_threshold)
+
+    # 範例刪光 → 分類器才真正失效，預測要被清空
+    pipe.delete_label("blue")
+    assert not pipe.classifier.ready
+    empty = repo.get_segment(rseg.id)
+    assert empty.predicted_label is None and empty.probs == {} and empty.needs_review
     # 刪不存在的類別 → 0
     assert pipe.delete_label("nope") == 0
 

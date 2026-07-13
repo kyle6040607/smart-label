@@ -30,8 +30,8 @@ class FewShotClassifier:
 
     @property
     def ready(self) -> bool:
-        """至少要有 2 個類別才有分類意義。"""
-        return len(self._labels) >= 2
+        """有 1 個類別就能運作；單一類別時信心改用相似度（見 _predict_single）。"""
+        return len(self._labels) >= 1
 
     def fit(self, examples: list[LabelExample]) -> None:
         """用目前所有種子範例重建分類器（主動學習回訓就是再呼叫一次）。"""
@@ -43,14 +43,27 @@ class FewShotClassifier:
         self._labels = sorted(set(self._y))
 
     def predict(self, feature: np.ndarray) -> dict[str, float]:
-        """回傳每個類別的機率（加總為 1）。"""
+        """回傳每個類別的機率（多類別時加總為 1；單一類別時為相似度分數）。"""
         if not self.ready:
             return {}
+        if len(self._labels) == 1:
+            return self._predict_single(feature)
         if self.kind == "knn":
             return self._predict_knn(feature)
         if self.kind == "softmax":
             return self._predict_softmax(feature)
         raise ValueError(f"未知的 classifier kind: {self.kind}")
+
+    # ---- 單一類別：沒有對照組可比，機率比例會恆為 1.0，
+    #      改用「與最近 K 個種子的 cosine 相似度」當信心，像才高分、不像就低分。----
+    def _predict_single(self, feature: np.ndarray) -> dict[str, float]:
+        dists = np.linalg.norm(self._X - feature, axis=1)
+        k = min(self.k, len(dists))
+        nearest = np.sort(dists)[:k]
+        # 特徵已 L2 normalize：cosine = 1 - d²/2（範圍 [-1, 1]），夾到 [0, 1] 當分數
+        sims = 1.0 - (nearest ** 2) / 2.0
+        score = float(np.clip(sims.mean(), 0.0, 1.0))
+        return {self._labels[0]: round(score, 4)}
 
     # ---- kNN：看最近 K 個鄰居的類別比例（提案第 7 頁）----
     def _predict_knn(self, feature: np.ndarray) -> dict[str, float]:
