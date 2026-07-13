@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
-from app.models import ImageRecord, Segment, LabelExample, User
+from app.models import ImageRecord, Segment, LabelExample, User, LineSession
 
 
 class Repository:
+    # LINE session 多久沒湊齊視為過期（秒）；過期視為新一輪，交由呼叫端回收舊圖
+    SESSION_TTL_SECONDS = 600
+
     def __init__(self, db_file: Path):
         self.db_file = db_file
         self._lock = threading.Lock()
@@ -21,6 +25,7 @@ class Repository:
         self.segments: dict[str, Segment] = {}
         self.examples: dict[str, LabelExample] = {}
         self.users: dict[str, User] = {}
+        self.line_sessions: dict[str, LineSession] = {}
         self._load()
 
     # ---------- 影像 ----------
@@ -153,6 +158,113 @@ class Repository:
     def list_users(self) -> list[User]:
         return list(self.users.values())
 
+    # ---------- LINE session（多圖累加 + 明確「傳完了」信號才收 prompt）----------
+    def _fresh_session_or_expired(self, line_user_id: str) -> tuple[LineSession | None, list[str]]:
+        """回傳（未過期的 session 或 None, 若過期要清掉的舊圖 id 列表）。"""
+        s = self.line_sessions.get(line_user_id)
+        if s is None:
+            return None, []
+        if time.time() - s.updated_at > self.SESSION_TTL_SECONDS:
+            return None, list(s.image_ids)
+        return s, []
+
+    def get_line_session(self, line_user_id: str) -> LineSession | None:
+        return self.line_sessions.get(line_user_id)
+
+    def add_line_session_image(self, line_user_id: str, image_id: str) -> tuple[LineSession, list[str], bool]:
+        """新增一張圖到 session。
+
+        回傳 (session, 因逾時被清掉的舊圖 id 列表, reopened)。
+        reopened=True 代表使用者先前已輸入「傳完了」（不管是否已確認），
+        這次傳圖重新打開收圖狀態。
+        """
+        with self._lock:
+            s, expired_ids = self._fresh_session_or_expired(line_user_id)
+            if s is None:
+                s = LineSession(line_user_id=line_user_id)
+            reopened = s.images_done
+            s.image_ids.append(image_id)
+            s.images_done = False
+            s.confirmed = False
+            s.updated_at = time.time()
+            self.line_sessions[line_user_id] = s
+            self._save()
+            return s, expired_ids, reopened
+
+    def mark_line_session_images_done(self, line_user_id: str) -> LineSession | None:
+        """使用者輸入「傳完了」，進入待確認狀態。若一張圖都沒傳，回傳 None。"""
+        with self._lock:
+            s = self.line_sessions.get(line_user_id)
+            if s is None or not s.image_ids:
+                return None
+            s.images_done = True
+            s.confirmed = False
+            s.updated_at = time.time()
+            self._save()
+            return s
+
+    def confirm_line_session_images(self, line_user_id: str) -> LineSession | None:
+        """使用者輸入「確認」。若目前不是「待確認」狀態，回傳 None。"""
+        with self._lock:
+            s = self.line_sessions.get(line_user_id)
+            if s is None or not s.images_done or s.confirmed:
+                return None
+            s.confirmed = True
+            s.updated_at = time.time()
+            self._save()
+            return s
+
+    def reset_line_session_images(self, line_user_id: str) -> list[str]:
+        """使用者輸入「取消」，清空已傳的圖片，回傳要清掉的 image_id 列表。"""
+        with self._lock:
+            s = self.line_sessions.get(line_user_id)
+            if s is None:
+                return []
+            old_ids = list(s.image_ids)
+            s.image_ids = []
+            s.images_done = False
+            s.confirmed = False
+            s.prompt = None
+            s.updated_at = time.time()
+            self._save()
+            return old_ids
+
+    def set_line_session_prompt(self, line_user_id: str, prompt: str) -> LineSession | None:
+        """設定 prompt。若圖片還沒確認，回傳 None（呼叫端應先擋掉這個狀態）。"""
+        with self._lock:
+            s = self.line_sessions.get(line_user_id)
+            if s is None or not s.confirmed:
+                return None
+            s.prompt = prompt
+            s.updated_at = time.time()
+            self._save()
+            return s
+
+    def try_consume_line_session(self, line_user_id: str) -> tuple[str, LineSession | None]:
+        """檢查 session 狀態；圖文都到齊時原子性地取出並清除，避免重複觸發。
+
+        回傳 status: "empty" | "collecting_images" | "awaiting_confirmation"
+        | "waiting_prompt" | "ready"。
+        """
+        with self._lock:
+            s = self.line_sessions.get(line_user_id)
+            if s is None or not s.image_ids:
+                return "empty", None
+            if not s.images_done:
+                return "collecting_images", s
+            if not s.confirmed:
+                return "awaiting_confirmation", s
+            if s.prompt is None:
+                return "waiting_prompt", s
+            self.line_sessions.pop(line_user_id, None)
+            self._save()
+            return "ready", s
+
+    def clear_line_session(self, line_user_id: str) -> None:
+        with self._lock:
+            self.line_sessions.pop(line_user_id, None)
+            self._save()
+
     # ---------- 統計（給準確率曲線 / 省下工時用）----------
     def stats(self) -> dict:
         segs = list(self.segments.values())
@@ -178,6 +290,7 @@ class Repository:
             "segments": [s.to_dict() for s in self.segments.values()],
             "examples": [e.to_dict() for e in self.examples.values()],
             "users": [u.to_dict() for u in self.users.values()],
+            "line_sessions": [s.to_dict() for s in self.line_sessions.values()],
         }
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.db_file.with_suffix(".tmp")
@@ -197,3 +310,7 @@ class Repository:
             self.examples[d["id"]] = LabelExample(**{k: v for k, v in d.items() if k in LabelExample.__dataclass_fields__})
         for d in data.get("users", []):
             self.users[d["id"]] = User(**{k: v for k, v in d.items() if k in User.__dataclass_fields__})
+        for d in data.get("line_sessions", []):
+            self.line_sessions[d["line_user_id"]] = LineSession(
+                **{k: v for k, v in d.items() if k in LineSession.__dataclass_fields__}
+            )
