@@ -27,8 +27,15 @@
     <!-- 1. 上傳 -->
     <section class="panel">
       <h2>1 · 上傳照片</h2>
-      <input type="file" id="fileInput" multiple accept="image/*" />
-      <button id="uploadBtn">上傳</button>
+      <input type="file" id="fileInput" multiple accept="image/*" style="display: none;" />
+      <div id="dropZone" class="drop-zone">
+        <p>拖曳照片至此，或點選下方按鈕</p>
+        <div style="display: flex; justify-content: center; gap: 8px; align-items: center;">
+          <button id="selectFileBtn" type="button" class="btn-secondary">選擇檔案</button>
+          <button id="uploadBtn" type="button">上傳</button>
+        </div>
+        <span class="hint" id="fileCountHint" style="display: block; margin-top: 8px;">尚未選擇檔案</span>
+      </div>
       <div id="thumbs" class="thumbs"></div>
     </section>
 

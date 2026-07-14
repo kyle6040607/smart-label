@@ -53,14 +53,26 @@ function toImageXY(e) {
   };
 }
 
-// ---------- 上傳 ----------
 $("uploadBtn").onclick = async () => {
   const files = $("fileInput").files;
   if (!files.length) return alert("先選檔案");
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
   const res = await fetch("/api/images", { method: "POST", body: fd });
-  if (!res.ok) return alert("上傳失敗：" + (await res.text()));
+  if (!res.ok) {
+    const text = await res.text();
+    let errorMsg = text;
+    try {
+      const json = JSON.parse(text);
+      errorMsg = json.error || json.message || text;
+    } catch (e) {}
+    return alert("上傳失敗：" + errorMsg);
+  }
+  // 清除選擇的檔案與提示
+  $("fileInput").value = "";
+  if ($("fileCountHint")) {
+    $("fileCountHint").textContent = "尚未選擇檔案";
+  }
   await loadThumbs();
 };
 
@@ -128,8 +140,14 @@ $("autoSegBtn").onclick = async () => {
   try {
     const res = await fetch(`/api/images/${imageId}/segment`, { method: "POST" });
     if (!res.ok) throw await responseError(res, "自動分割失敗");
-    const segs = await res.json();
-    await redraw(segs);
+    const data = await res.json();
+    
+    // 如果全部區塊原本就已經存在（無缺失且已自動分割過），彈出完成提示
+    if (data.status === "already_completed") {
+      alert("已經完成自動分割");
+    }
+    
+    await redraw(data.segments);
     await refreshSidebar();
   } catch (error) {
     console.error(error);
@@ -350,8 +368,20 @@ async function refreshSidebar() {
       await refreshAfterSegChange();
     };
     li.querySelector(".seg-del").onclick = async () => {
-      await fetch(`/api/segments/${s.id}`, { method: "DELETE" });
-      await refreshAfterSegChange();
+      li.classList.add("deleting");
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      try {
+        const res = await fetch(`/api/segments/${s.id}`, { method: "DELETE" });
+        if (!res.ok) {
+          li.classList.remove("deleting");
+          return alert("刪除失敗：" + (await res.text()));
+        }
+        await refreshAfterSegChange();
+      } catch (error) {
+        li.classList.remove("deleting");
+        console.error(error);
+        alert("刪除時發生錯誤");
+      }
     };
     ul.appendChild(li);
   });
@@ -363,6 +393,40 @@ $("exportBtn").onclick = () => {
   // 直接導向下載端點，瀏覽器自動存檔
   window.location = `/api/export?format=${encodeURIComponent(fmt)}`;
 };
+
+// ---------- 拖曳上傳與檔案選擇相關邏輯 ----------
+const dropZone = $("dropZone");
+const fileInput = $("fileInput");
+const selectFileBtn = $("selectFileBtn");
+const fileCountHint = $("fileCountHint");
+
+if (dropZone && fileInput && selectFileBtn && fileCountHint) {
+  selectFileBtn.onclick = () => fileInput.click();
+
+  fileInput.onchange = () => {
+    const count = fileInput.files.length;
+    fileCountHint.textContent = count > 0 ? `已選取 ${count} 個檔案` : "尚未選擇檔案";
+  };
+
+  dropZone.ondragover = (e) => {
+    e.preventDefault();
+    dropZone.classList.add("dragover");
+  };
+
+  dropZone.ondragleave = () => {
+    dropZone.classList.remove("dragover");
+  };
+
+  dropZone.ondrop = (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("dragover");
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      fileInput.files = e.dataTransfer.files;
+      const count = fileInput.files.length;
+      fileCountHint.textContent = `已拖入 ${count} 個檔案`;
+    }
+  };
+}
 
 // 初始載入
 loadThumbs();

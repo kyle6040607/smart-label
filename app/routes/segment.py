@@ -12,13 +12,27 @@ bp = Blueprint("segment", __name__, url_prefix="/api")
 
 @bp.post("/images/<image_id>/segment")
 def segment_image(image_id: str):
-    """對整張圖自動切割並分類，回傳所有片段（含信心、是否送審）。"""
+    """對整張圖自動切割並分類，回傳所有片段（含信心、是否送審）與完成狀態。"""
     repo, pipeline = get_repo(), get_pipeline()
     img = repo.get_image(image_id)
     if not img:
         abort(404)
+
+    # 紀錄執行前的片段數量
+    existing_count = len(repo.list_segments(image_id))
+
     segments = pipeline.segment_image(img)
-    return jsonify([s.to_dict() for s in segments]), 201
+
+    # 紀錄執行後的片段數量
+    new_count = len(repo.list_segments(image_id))
+
+    # 若數量沒有增加，代表產出的所有片段本來就已經存在（無缺失且已自動分割過）
+    status = "already_completed" if new_count == existing_count else "added"
+
+    return jsonify({
+        "status": status,
+        "segments": [s.to_dict() for s in segments]
+    }), 201
 
 
 @bp.post("/images/<image_id>/segment_point")
