@@ -24,6 +24,7 @@ class ImageRecord:
     path: str = ""
     width: int = 0
     height: int = 0
+    file_hash: str = ""
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
