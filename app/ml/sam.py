@@ -236,8 +236,12 @@ class SamSegmenter:
             x1, y1, x2, y2 = x1 * scale, y1 * scale, x2 * scale, y2 * scale
 
         self.predictor.set_image(infer_image)
-        input_box = np.array([x1, y1, x2, y2])
-
+        ih, iw = infer_image.shape[:2]
+        x1 = max(0.0, min(float(iw - 1), float(x1)))
+        x2 = max(0.0, min(float(iw - 1), float(x2)))
+        y1 = max(0.0, min(float(ih - 1), float(y1)))
+        y2 = max(0.0, min(float(ih - 1), float(y2)))
+        input_box = np.array([x1, y1, x2, y2], dtype=np.float32)
         masks, scores, logits = self.predictor.predict(
             box=input_box,
             multimask_output=False,

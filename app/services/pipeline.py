@@ -128,17 +128,19 @@ class Pipeline:
             
             seg = Segment(image_id=image.id, bbox=(x1, y1, x2 - x1, y2 - y1), area=int(mask.sum()))
             seg.mask_path = self._save_mask(image.id, seg.id, mask)
-            self._classify_segment(img, seg, mask)
-            
+
             seg.predicted_label = prompt
+            seg.probs = {prompt: 1.0}
             seg.confidence = 0.88
-            
+            seg.needs_review = needs_review(seg.confidence, self.config.confidence_threshold)
+
             self.repo.add_segment(seg)
             return [seg]
 
         # 動態載入 YOLO-World 偵測器 (指向已下載大模型)
         if self.yolo_detector is None:
-            self.yolo_detector = YoloWorldDetector("models/yolov8x-worldv2.pt")
+            model_path = str(self.config.base_dir / "models" / "yolov8x-worldv2.pt")
+            self.yolo_detector = YoloWorldDetector(model_path)
 
         # 1. 呼叫 YOLO-World 找出所有符合文字的 bounding boxes
         boxes = self.yolo_detector.predict_boxes(img, prompt, device=self.segmenter.device)

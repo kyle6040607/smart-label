@@ -12,16 +12,15 @@ class YoloWorldDetector:
 
         回傳格式為 list[list[float]]，每個元素為 [x1, y1, x2, y2]
         """
-        # 1. 先將模型完整轉移到 GPU
-        self.model.to("cuda")
+        # 1. 先將模型轉移到指定裝置
+        self.model.to(device)
 
         # 2. 繞過 ultralytics 的 NMS bug (GitHub Issue #9321)
-        # 傳入多於 1 個類別（如加上一個 placeholder）可以強制它走正確的多類別 GPU 推理路徑。
-        # 由於模型此時已在 GPU 上，生成的文字向量也會直接儲存於 GPU。
+        # 傳入多於 1 個類別（如加上一個 placeholder）可以強制它走正確的多類別推理路徑。
         self.model.set_classes([prompt, "placeholder_non_exist_class"])
 
-        # 2. 進行預測，強制指定為 GPU (cuda) 運行，並設定最低信心度為 0.6
-        results = self.model.predict(image, device="cuda", verbose=False, conf=0.6)
+        # 3. 進行預測，使用指定裝置運行，並設定最低信心度為 0.6
+        results = self.model.predict(image, device=device, verbose=False, conf=0.6)
 
         # 3. 僅提取第一個類別 (即 index == 0 的 prompt 目標) 的預測框
         boxes = []
