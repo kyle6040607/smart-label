@@ -56,17 +56,38 @@ class Pipeline:
         imwrite(str(out), (mask > 0).astype(np.uint8) * 255)
         return str(out)
 
-    # ---------- 自動分割整張圖（提案第 3 頁第 2 步）----------
+    # ---------- 自動分割整張圖（提案 demo 第 1 步：自動分割）----------
     def segment_image(self, image: ImageRecord) -> list[Segment]:
         img = self._read_rgb(image.path)
         masks = self.segmenter.segment(img)
+
+        # 取得此圖片目前資料庫中已有的所有片段
+        existing_segs = self.repo.list_segments(image.id)
+
         segments: list[Segment] = []
         for md in masks:
-            seg = Segment(image_id=image.id, bbox=tuple(md["bbox"]), area=md["area"])
-            seg.mask_path = self._save_mask(image.id, seg.id, md["mask"])
-            self._classify_segment(img, seg, md["mask"])
-            self.repo.add_segment(seg)
-            segments.append(seg)
+            bbox = tuple(md["bbox"])
+
+            # 檢查是否已存在相同或極為相近邊界框的區塊（容差 2 像素）
+            matched_seg = None
+            for ex in existing_segs:
+                if (abs(ex.bbox[0] - bbox[0]) <= 2 and
+                    abs(ex.bbox[1] - bbox[1]) <= 2 and
+                    abs(ex.bbox[2] - bbox[2]) <= 2 and
+                    abs(ex.bbox[3] - bbox[3]) <= 2):
+                    matched_seg = ex
+                    break
+
+            if matched_seg is not None:
+                # 已存在相同的區塊，保留既有資料（避免覆蓋已標記成果）
+                segments.append(matched_seg)
+            else:
+                # 缺失的區塊，重新建立、分類並存檔
+                seg = Segment(image_id=image.id, bbox=bbox, area=md["area"])
+                seg.mask_path = self._save_mask(image.id, seg.id, md["mask"])
+                self._classify_segment(img, seg, md["mask"])
+                self.repo.add_segment(seg)
+                segments.append(seg)
         return segments
 
     # ---------- 互動式：使用者點一下切一塊 ----------

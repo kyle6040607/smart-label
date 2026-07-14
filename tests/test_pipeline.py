@@ -104,3 +104,29 @@ def test_segment_text_mock_run(tmp_path):
     assert len(segs) == 1
     assert segs[0].predicted_label == "cat"
     assert segs[0].confidence == 0.88
+
+
+def test_segment_image_prevents_duplicates(tmp_path):
+    pipe, repo, cfg = _pipeline(tmp_path)
+    path = _make_image(cfg.upload_dir, "dup.png", (200, 50, 50))
+    img = repo.add_image(ImageRecord(filename="dup.png", path=path, width=120, height=120))
+
+    # 第一次自動分割
+    segs_first = pipe.segment_image(img)
+    first_count = len(segs_first)
+    assert first_count >= 1
+
+    # 第二次自動分割，應該沒有增加新片段，且回傳相同的片段
+    segs_second = pipe.segment_image(img)
+    assert len(segs_second) == first_count
+    assert len(repo.list_segments(img.id)) == first_count
+
+    # 刪除一個片段
+    seg_to_del = segs_second[0]
+    repo.delete_segment(seg_to_del.id)
+    assert len(repo.list_segments(img.id)) == first_count - 1
+
+    # 第三次自動分割，應該補齊缺少的片段，且不重複增加其他的
+    segs_third = pipe.segment_image(img)
+    assert len(segs_third) == first_count
+    assert len(repo.list_segments(img.id)) == first_count

@@ -20,17 +20,48 @@ def _allowed(filename: str, allowed: tuple[str, ...]) -> bool:
 @bp.post("")
 def upload():
     """支援一次上傳多張。回傳建立的 ImageRecord 清單。"""
+    import hashlib
     cfg, repo = get_config(), get_repo()
     files = request.files.getlist("files") or request.files.getlist("file")
     if not files:
         abort(400, "沒有收到檔案（欄位名 files）")
 
     created = []
+    duplicates = []
+    repo_updated = False
+
     for f in files:
         if not f.filename or not _allowed(f.filename, cfg.allowed_ext):
             continue
+
+        # 計算檔案的 SHA-256 雜湊值
+        file_bytes = f.read()
+        f.seek(0)
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+        # 比對是否已有相同雜湊值的照片已上傳
+        is_duplicate = False
+        for img in repo.list_images():
+            existing_hash = getattr(img, "file_hash", "")
+            # 針對歷史舊資料進行相容性雜湊值計算與補齊
+            if not existing_hash and img.path and Path(img.path).exists():
+                try:
+                    with open(img.path, "rb") as ef:
+                        existing_hash = hashlib.sha256(ef.read()).hexdigest()
+                    img.file_hash = existing_hash
+                    repo_updated = True
+                except Exception:
+                    pass
+            if existing_hash == file_hash:
+                is_duplicate = True
+                duplicates.append(f.filename)
+                break
+
+        if is_duplicate:
+            continue
+
         name = secure_filename(f.filename)
-        rec = ImageRecord(filename=name)
+        rec = ImageRecord(filename=name, file_hash=file_hash)
         dest = cfg.upload_dir / f"{rec.id}_{name}"
         f.save(dest)
         with Image.open(dest) as im:
@@ -38,6 +69,12 @@ def upload():
         rec.path = str(dest)
         repo.add_image(rec)
         created.append(rec.to_dict())
+
+    if repo_updated:
+        repo._save()
+
+    if duplicates and not created:
+        return jsonify({"error": "圖片已上傳過，請勿重複上傳"}), 400
 
     if not created:
         abort(400, "沒有有效的影像檔")
