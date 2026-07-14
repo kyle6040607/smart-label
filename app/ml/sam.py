@@ -31,6 +31,10 @@ class Segmenter(Protocol):
         """在使用者點擊的座標切出單一物件（互動式提示）。"""
         ...
 
+    def segment_by_box(self, image: np.ndarray, bbox: list[float]) -> MaskDict:
+        """在給定的 Bounding Box 內切出單一物件。"""
+        ...
+
 
 def _to_mask_dict(mask: np.ndarray) -> MaskDict:
     mask = (mask > 0).astype(np.uint8)
@@ -105,6 +109,14 @@ class MockSegmenter:
         cv2.floodFill(img, flood, (x, y), (255, 255, 255), t, t,
                       flags=cv2.FLOODFILL_FIXED_RANGE)
         mask = flood[1:-1, 1:-1]
+        return _to_mask_dict(mask)
+
+    def segment_by_box(self, image: np.ndarray, bbox: list[float]) -> MaskDict:
+        """以 BBox 當作遮罩，模擬 SAM 的框提示。"""
+        h, w = image.shape[:2]
+        x1, y1, x2, y2 = map(int, bbox)
+        mask = np.zeros((h, w), dtype=np.uint8)
+        mask[max(0, y1):min(h, y2), max(0, x1):min(w, x2)] = 1
         return _to_mask_dict(mask)
 
 
@@ -205,6 +217,37 @@ class SamSegmenter:
             raise ValueError("SAM 在此點擊位置沒有找到任何物件。")
 
         # 若有進行縮放，需將 mask 用最近鄰插值法 resize 回原圖尺寸
+        if need_resize:
+            best_mask = cv2.resize(best_mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+
+        return _to_mask_dict(best_mask)
+
+    def segment_by_box(self, image: np.ndarray, bbox: list[float]) -> MaskDict:
+        orig_h, orig_w = image.shape[:2]
+        x1, y1, x2, y2 = bbox
+
+        try:
+            infer_image, scale, need_resize, _, _ = _resize_if_needed(image)
+        except ValueError as e:
+            print(f"警告：{e}")
+            return _to_mask_dict(np.zeros((orig_h, orig_w), dtype=np.uint8))
+
+        if need_resize:
+            x1, y1, x2, y2 = x1 * scale, y1 * scale, x2 * scale, y2 * scale
+
+        self.predictor.set_image(infer_image)
+        input_box = np.array([x1, y1, x2, y2])
+
+        masks, scores, logits = self.predictor.predict(
+            box=input_box,
+            multimask_output=False,
+        )
+
+        best_mask = masks[0].astype(np.uint8)
+
+        if best_mask.sum() == 0:
+            raise ValueError("SAM 在此框選範圍內沒有找到任何物件。")
+
         if need_resize:
             best_mask = cv2.resize(best_mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
 

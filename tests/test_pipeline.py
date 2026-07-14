@@ -95,9 +95,12 @@ def test_segment_text_contract_rejects_invalid_prompt(tmp_path):
         pipe.segment_text(image, "a" * 201)
 
 
-def test_segment_text_contract_reports_pending_implementation(tmp_path):
-    pipe, _, _ = _pipeline(tmp_path)
-    image = ImageRecord(filename="contract.png", path="unused")
+def test_segment_text_mock_run(tmp_path):
+    pipe, repo, cfg = _pipeline(tmp_path)
+    path = _make_image(cfg.upload_dir, "t.png", (100, 100, 100))
+    image = repo.add_image(ImageRecord(filename="t.png", path=path, width=120, height=120))
 
-    with pytest.raises(NotImplementedError, match="自然語言分割尚未實作"):
-        pipe.segment_text(image, "cat")
+    segs = pipe.segment_text(image, "cat")
+    assert len(segs) == 1
+    assert segs[0].predicted_label == "cat"
+    assert segs[0].confidence == 0.88
