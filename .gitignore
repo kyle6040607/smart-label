@@ -50,8 +50,8 @@ uploads/
 masks/
 _ppt_dump.txt
 models/*.pth
-models/sam*.pth
-models/mobile_sam.pt
+models/*.pt
+weights/
 
 # 環境變數
 .env

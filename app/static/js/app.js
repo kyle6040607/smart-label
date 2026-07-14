@@ -37,6 +37,8 @@ function setSegmentationLoading(active, message = "分割中…") {
   canvas.setAttribute("aria-busy", String(active));
   $("autoSegBtn").disabled = active || !state.currentImage;
   $("drawBtn").disabled = active || !state.currentImage;
+  $("textPromptInput").disabled = active || !state.currentImage;
+  $("textSegBtn").disabled = active || !state.currentImage;
 }
 
 async function responseError(res, fallback) {
@@ -122,6 +124,8 @@ function selectImage(im, el) {
   el.classList.add("active");
   $("autoSegBtn").disabled = false;
   $("drawBtn").disabled = false;
+  $("textPromptInput").disabled = false;
+  $("textSegBtn").disabled = false;
 
   const pic = new Image();
   pic.onload = () => {
@@ -152,6 +156,34 @@ $("autoSegBtn").onclick = async () => {
   } catch (error) {
     console.error(error);
     alert(error instanceof Error ? error.message : "自動分割失敗");
+  } finally {
+    setSegmentationLoading(false);
+  }
+};
+
+// ---------- 自然語言分割 (YOLO-World) ----------
+$("textSegBtn").onclick = async () => {
+  const promptVal = $("textPromptInput").value.trim();
+  if (!promptVal) return alert("請輸入想搜尋的物件名稱（例如：飛機）");
+  if (!state.currentImage || state.segmenting) return;
+
+  const imageId = state.currentImage.id;
+  setSegmentationLoading(true, `正在搜尋「${promptVal}」並進行分割…`);
+
+  try {
+    const res = await fetch(`/api/images/${imageId}/segment_text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: promptVal }),
+    });
+
+    if (!res.ok) throw await responseError(res, "文字分割失敗");
+    const segs = await res.json();
+    await redraw(segs);
+    await refreshSidebar();
+  } catch (error) {
+    console.error(error);
+    alert(error instanceof Error ? error.message : "文字分割失敗");
   } finally {
     setSegmentationLoading(false);
   }
@@ -349,7 +381,7 @@ async function refreshSidebar() {
       const sx = Math.max(0, Math.min(pic.width - size, x + w / 2 - size / 2));
       const sy = Math.max(0, Math.min(pic.height - size, y + h / 2 - size / 2));
       tctx.drawImage(pic, sx, sy, size, size, 0, 0, tc.width, tc.height);
-    }).catch(() => {});
+    }).catch(() => { });
     // 滑過卡片 → 大圖上對應的框加亮（只對目前選中的圖有效）
     li.onmouseenter = () => {
       if (state.currentImage && s.image_id === state.currentImage.id) redraw(state.lastSegments, s.id);
