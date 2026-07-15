@@ -277,8 +277,10 @@ canvas.onmouseup = async () => {
 // highlightId：審核卡片 hover 時，把對應的框加粗變黃
 async function redraw(segments, highlightId = null) {
   const currentImageId = state.currentImage ? state.currentImage.id : null;
+  if (!currentImageId) return;
   state.lastSegments = segments;
-  const pic = await loadImage(state.currentImage.id);
+  const pic = await loadImage(currentImageId);
+  if (!state.currentImage || state.currentImage.id !== currentImageId) return;
   ctx.drawImage(pic, 0, 0);
 
   // 💡 步驟 1：先畫所有不規則的 SAM 遮罩（Mask），採取「同步加載快取 + 異步載入重繪」以防畫面閃爍
