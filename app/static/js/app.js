@@ -26,6 +26,9 @@ function loadImage(imageId) {
   return imageCache.get(imageId);
 }
 
+// 遮罩影像快取（同步快取 Image 物件，防止非同步 await 造成的時序交錯與閃爍）
+const maskImages = {};
+
 const canvas = $("canvas");
 const ctx = canvas.getContext("2d");
 
@@ -67,7 +70,7 @@ $("uploadBtn").onclick = async () => {
     try {
       const json = JSON.parse(text);
       errorMsg = json.error || json.message || text;
-    } catch (e) {}
+    } catch (e) { }
     return alert("上傳失敗：" + errorMsg);
   }
   // 清除選擇的檔案與提示
@@ -145,12 +148,12 @@ $("autoSegBtn").onclick = async () => {
     const res = await fetch(`/api/images/${imageId}/segment`, { method: "POST" });
     if (!res.ok) throw await responseError(res, "自動分割失敗");
     const data = await res.json();
-    
+
     // 如果全部區塊原本就已經存在（無缺失且已自動分割過），彈出完成提示
     if (data.status === "already_completed") {
       alert("已經完成自動分割");
     }
-    
+
     await redraw(data.segments);
     await refreshSidebar();
   } catch (error) {
@@ -273,17 +276,81 @@ canvas.onmouseup = async () => {
 // ---------- 把遮罩疊回圖上：高信心綠框、低信心紅框 ----------
 // highlightId：審核卡片 hover 時，把對應的框加粗變黃
 async function redraw(segments, highlightId = null) {
+  const currentImageId = state.currentImage ? state.currentImage.id : null;
+  if (!currentImageId) return;
   state.lastSegments = segments;
-  const pic = await loadImage(state.currentImage.id);
+  const pic = await loadImage(currentImageId);
+  if (!state.currentImage || state.currentImage.id !== currentImageId) return;
   ctx.drawImage(pic, 0, 0);
+
+  // 💡 步驟 1：先畫所有不規則的 SAM 遮罩（Mask），採取「同步加載快取 + 異步載入重繪」以防畫面閃爍
   for (const s of segments) {
-    const [x, y, w, h] = s.bbox;
+    const maskImg = maskImages[s.id];
     const hi = s.id === highlightId;
-    ctx.lineWidth = hi ? 4 : 2;
-    ctx.strokeStyle = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
-    ctx.strokeRect(x, y, w, h);
+    const color = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
+
+    if (maskImg && maskImg.complete && maskImg.naturalWidth > 0) {
+      // 若已經下載完畢，同步進行著色與繪製，避免 await 導致繪圖不同步
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = pic.width;
+      tempCanvas.height = pic.height;
+      const tctx = tempCanvas.getContext("2d");
+
+      // 1. 先繪製黑白遮罩圖
+      tctx.drawImage(maskImg, 0, 0);
+
+      // 2. 取得畫素進行去背與著色：將黑白色彩的「亮度」直接映射為「透明度（Alpha）」
+      const imgData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const data = imgData.data;
+
+      // 解析 hex 顏色為 RGB
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+
+      for (let i = 0; i < data.length; i += 4) {
+        const rVal = data[i];     // R 通道值 (0 ~ 255) 代表亮度
+        const aVal = data[i + 3]; // 原本的 Alpha 通道值 (0 ~ 255) 代表透明度
+        
+        // 💡 融合公式：最終透明度 = (亮度/255) * 原本的透明度
+        // 這能 100% 相容「黑底白階圖」與「透明底白階圖」，徹底解決整片染紅的 bug！
+        const alphaVal = Math.round((rVal / 255) * aVal);
+        
+        data[i] = r;       // R 通道設為目標色
+        data[i + 1] = g;   // G 通道設為目標色
+        data[i + 2] = b;   // B 通道設為目標色
+        data[i + 3] = alphaVal; // 寫入融合後的透明度
+      }
+      tctx.putImageData(imgData, 0, 0);
+
+      // 3. 疊加到主 Canvas
+      ctx.save();
+      ctx.globalAlpha = 0.35; // 35% 半透明色塊
+      ctx.drawImage(tempCanvas, 0, 0);
+      ctx.restore();
+    } else if (!maskImages[s.id]) {
+      // 若尚未下載，則啟動非同步下載，下載成功後觸發重繪
+      const img = new Image();
+      img.src = `/api/segments/${s.id}/mask`;
+      img.onload = () => {
+        // 確保重新繪製時仍為同一張大圖，防止圖片切換後的時序干擾
+        if (state.currentImage && state.currentImage.id === currentImageId) {
+          redraw(segments, highlightId);
+        }
+      };
+      img.onerror = () => {
+        console.warn("Mask 下載失敗:", s.id);
+      };
+      maskImages[s.id] = img;
+    }
+  }
+
+  // 💡 步驟 2：只畫文字標籤（方框已移除）
+  for (const s of segments) {
     if (s.final_label) {
-      ctx.fillStyle = ctx.strokeStyle;
+      const [x, y] = s.bbox;
+      const hi = s.id === highlightId;
+      ctx.fillStyle = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
       ctx.font = "14px sans-serif";
       ctx.fillText(`${s.final_label} ${s.confidence.toFixed(2)}`, x + 2, y + 14);
     }
