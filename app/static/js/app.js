@@ -29,6 +29,47 @@ function loadImage(imageId) {
 // 遮罩影像快取（同步快取 Image 物件，防止非同步 await 造成的時序交錯與閃爍）
 const maskImages = {};
 
+// 著色後的遮罩快取：key = "segId:color"，value = 裁到 bbox 的小 canvas
+const tintedMaskCache = new Map();
+
+// 取得（或建立）指定顏色的著色遮罩，尚未下載完成時回傳 null
+function getTintedMask(s, color) {
+  const key = `${s.id}:${color}`;
+  const cached = tintedMaskCache.get(key);
+  if (cached) return cached;
+
+  const maskImg = maskImages[s.id];
+  if (!maskImg || !maskImg.complete || maskImg.naturalWidth === 0) return null;
+
+  const [x, y, w, h] = s.bbox;
+  if (!w || !h) return null;
+
+  // 只處理 bbox 範圍，不用開整張圖大小的 canvas
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = w;
+  tempCanvas.height = h;
+  const tctx = tempCanvas.getContext("2d");
+  tctx.drawImage(maskImg, x, y, w, h, 0, 0, w, h);
+
+  // 將黑白遮罩的「亮度」映射為「透明度」，並填上目標色
+  const imgData = tctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+  const r = parseInt(color.slice(1, 3), 16);
+  const g = parseInt(color.slice(3, 5), 16);
+  const b = parseInt(color.slice(5, 7), 16);
+  for (let i = 0; i < data.length; i += 4) {
+    // 亮度 × 原透明度，同時相容黑底白階與透明底白階的遮罩
+    data[i + 3] = Math.round((data[i] / 255) * data[i + 3]);
+    data[i] = r;
+    data[i + 1] = g;
+    data[i + 2] = b;
+  }
+  tctx.putImageData(imgData, 0, 0);
+
+  tintedMaskCache.set(key, tempCanvas);
+  return tempCanvas;
+}
+
 const canvas = $("canvas");
 const ctx = canvas.getContext("2d");
 
@@ -283,63 +324,29 @@ async function redraw(segments, highlightId = null) {
   if (!state.currentImage || state.currentImage.id !== currentImageId) return;
   ctx.drawImage(pic, 0, 0);
 
-  // 💡 步驟 1：先畫所有不規則的 SAM 遮罩（Mask），採取「同步加載快取 + 異步載入重繪」以防畫面閃爍
+  // 💡 步驟 1：先畫所有不規則的 SAM 遮罩（Mask），著色結果按 (segId, color) 快取，hover 重繪只剩 drawImage
   for (const s of segments) {
-    const maskImg = maskImages[s.id];
     const hi = s.id === highlightId;
     const color = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
+    const tinted = getTintedMask(s, color);
 
-    if (maskImg && maskImg.complete && maskImg.naturalWidth > 0) {
-      // 若已經下載完畢，同步進行著色與繪製，避免 await 導致繪圖不同步
-      const tempCanvas = document.createElement("canvas");
-      tempCanvas.width = pic.width;
-      tempCanvas.height = pic.height;
-      const tctx = tempCanvas.getContext("2d");
-
-      // 1. 先繪製黑白遮罩圖
-      tctx.drawImage(maskImg, 0, 0);
-
-      // 2. 取得畫素進行去背與著色：將黑白色彩的「亮度」直接映射為「透明度（Alpha）」
-      const imgData = tctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-      const data = imgData.data;
-
-      // 解析 hex 顏色為 RGB
-      const r = parseInt(color.slice(1, 3), 16);
-      const g = parseInt(color.slice(3, 5), 16);
-      const b = parseInt(color.slice(5, 7), 16);
-
-      for (let i = 0; i < data.length; i += 4) {
-        const rVal = data[i];     // R 通道值 (0 ~ 255) 代表亮度
-        const aVal = data[i + 3]; // 原本的 Alpha 通道值 (0 ~ 255) 代表透明度
-        
-        // 💡 融合公式：最終透明度 = (亮度/255) * 原本的透明度
-        // 這能 100% 相容「黑底白階圖」與「透明底白階圖」，徹底解決整片染紅的 bug！
-        const alphaVal = Math.round((rVal / 255) * aVal);
-        
-        data[i] = r;       // R 通道設為目標色
-        data[i + 1] = g;   // G 通道設為目標色
-        data[i + 2] = b;   // B 通道設為目標色
-        data[i + 3] = alphaVal; // 寫入融合後的透明度
-      }
-      tctx.putImageData(imgData, 0, 0);
-
-      // 3. 疊加到主 Canvas
+    if (tinted) {
+      const [x, y] = s.bbox;
       ctx.save();
       ctx.globalAlpha = 0.35; // 35% 半透明色塊
-      ctx.drawImage(tempCanvas, 0, 0);
+      ctx.drawImage(tinted, x, y);
       ctx.restore();
     } else if (!maskImages[s.id]) {
       // 若尚未下載，則啟動非同步下載，下載成功後觸發重繪
       const img = new Image();
       img.src = `/api/segments/${s.id}/mask`;
       img.onload = () => {
-        // 確保重新繪製時仍為同一張大圖，防止圖片切換後的時序干擾
-        if (state.currentImage && state.currentImage.id === currentImageId) {
-          redraw(segments, highlightId);
-        }
+        // segments 若已被較新的 redraw 取代，就不要用舊資料蓋回去
+        if (state.lastSegments === segments) redraw(segments, highlightId);
       };
       img.onerror = () => {
         console.warn("Mask 下載失敗:", s.id);
+        delete maskImages[s.id]; // 移除失敗紀錄，讓下次 redraw 能重試
       };
       maskImages[s.id] = img;
     }
