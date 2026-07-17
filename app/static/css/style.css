@@ -60,6 +60,7 @@ main {
   border: 1px solid #28323f;
   border-radius: 10px;
   padding: 16px;
+  min-width: 0; /* 防止網格項目被大內容撐開 */
 }
 .panel h2 { margin-top: 0; font-size: 15px; color: var(--accent); }
 .panel h3 { font-size: 13px; color: var(--muted); }
@@ -103,7 +104,12 @@ button.on { background: #ffd93d; color: #1a2230; font-weight: 600; }
   border: 1px solid #28323f;
   border-radius: 6px;
 }
-canvas { display: block; cursor: crosshair; }
+canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  cursor: crosshair;
+}
 .canvas-wrap.is-loading canvas { pointer-events: none; }
 .canvas-loading {
   position: absolute;
