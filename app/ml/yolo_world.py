@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 from ultralytics import YOLOWorld
 
@@ -15,20 +16,26 @@ class YoloWorldDetector:
         # 1. 先將模型轉移到指定裝置
         self.model.to(device)
 
-        # 2. 繞過 ultralytics 的 NMS bug (GitHub Issue #9321)
-        # 傳入多於 1 個類別（如加上一個 placeholder）可以強制它走正確的多類別推理路徑。
-        self.model.set_classes([prompt, "placeholder_non_exist_class"])
+        # 2. 設定預測目標類別（僅使用使用者的 prompt，不添加其他佔位類別）
+        self.model.set_classes([prompt])
 
-        # 3. 進行預測，使用指定裝置運行，並設定最低信心度為 0.6
-        results = self.model.predict(image, device=device, verbose=False, conf=0.6)
+        # 3. 進行預測
+        # 💡 重要：Ultralytics YOLO.predict 傳入 numpy array 時預期格式為 BGR。
+        # 由於 Pipeline 中使用的是 RGB 矩陣，在此我們必須將其轉回 BGR，
+        # 這能 100% 根除 YOLO-World 內部發生的「紅藍通道對調」隱藏 Bug，讓顏色偵測變得極其精確！
+        bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        results = self.model.predict(bgr_image, device=device, verbose=False, conf=0.4)
 
-        # 3. 僅提取第一個類別 (即 index == 0 的 prompt 目標) 的預測框
+        # 💡 印出模型實際抓到的所有框數以及名稱
+        detected_names = [prompt] * len(results[0].boxes)
+        print(f"📊 [YOLO-World] 原始偵測總框數: {len(detected_names)}, 偵測到的物件名稱: {detected_names}")
+
+        # 4. 提取所有預測框並轉為 Python list
         boxes = []
         for box in results[0].boxes:
-            # 確保只拿符合使用者 prompt 的框，過濾掉佔位類別
-            if int(box.cls[0].item()) == 0:
-                # xyxy[0] 是 [x1, y1, x2, y2] 的 Tensor
-                xyxy = box.xyxy[0].cpu().numpy().tolist()
-                boxes.append(xyxy)
+            # xyxy[0] 是 [x1, y1, x2, y2] 的 Tensor
+            xyxy = box.xyxy[0].cpu().numpy().tolist()
+            boxes.append(xyxy)
 
+        print(f"🎯 [YOLO-World] 符合 Prompt '{prompt}' 的篩選後框數: {len(boxes)}")
         return boxes

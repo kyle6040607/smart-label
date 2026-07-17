@@ -90,6 +90,9 @@ class Config:
     default_admin_user: str = os.getenv("DEFAULT_ADMIN_USER", "sa")
     default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "sa")
 
+    # --- Gemini API Key ---
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+
     # --- 上傳限制 ---
     max_content_length: int = 32 * 1024 * 1024  # 32 MB
     allowed_ext: tuple[str, ...] = field(
