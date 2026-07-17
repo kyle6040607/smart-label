@@ -22,7 +22,7 @@ def test_dino_embedder_initialization(monkeypatch):
     embedder = DinoEmbedder(model_name="facebook/dinov2-base", device="cpu")
     assert embedder.dim == 768
     assert embedder.model is not None
-
+    
 
 def test_dino_embedder_encode(monkeypatch):
     """測試 DinoEmbedder 能否對影像與遮罩進行特徵提取，且維度與 L2 常態化皆正確。"""

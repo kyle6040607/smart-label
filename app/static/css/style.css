@@ -199,22 +199,3 @@ canvas { display: block; cursor: crosshair; }
 .btn-secondary:hover {
   background: rgb(79 156 255 / 10%);
 }
-
-/* 刪除時的晃動/震動與縮小淡出特效 */
-@keyframes shake-and-delete {
-  0% { transform: scale(1) translateX(0); }
-  10% { transform: scale(1.05) translateX(-4px) rotate(-2deg); }
-  20% { transform: scale(1.05) translateX(4px) rotate(2deg); }
-  30% { transform: scale(1.05) translateX(-4px) rotate(-2deg); }
-  40% { transform: scale(1.05) translateX(4px) rotate(2deg); }
-  50% { transform: scale(1.02) translateX(-2px) rotate(-1deg); }
-  60% { transform: scale(1.02) translateX(2px) rotate(1deg); }
-  70% { transform: scale(1) translateX(0); opacity: 1; }
-  100% { transform: scale(0) rotate(15deg); opacity: 0; }
-}
-
-.queue li.deleting {
-  animation: shake-and-delete 0.8s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
-  pointer-events: none;
-}
-
