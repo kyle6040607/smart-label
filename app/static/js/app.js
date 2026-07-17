@@ -474,17 +474,13 @@ async function refreshSidebar() {
       await refreshAfterSegChange();
     };
     li.querySelector(".seg-del").onclick = async () => {
-      li.classList.add("deleting");
-      await new Promise((resolve) => setTimeout(resolve, 800));
       try {
         const res = await fetch(`/api/segments/${s.id}`, { method: "DELETE" });
         if (!res.ok) {
-          li.classList.remove("deleting");
           return alert("刪除失敗：" + (await res.text()));
         }
         await refreshAfterSegChange();
       } catch (error) {
-        li.classList.remove("deleting");
         console.error(error);
         alert("刪除時發生錯誤");
       }
