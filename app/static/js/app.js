@@ -172,10 +172,23 @@ function selectImage(im, el) {
   $("textSegBtn").disabled = false;
 
   const pic = new Image();
-  pic.onload = () => {
+  pic.onload = async () => {
+    // 防呆防競態：確認加載完成時，使用者沒有切換到其他張圖
+    if (!state.currentImage || state.currentImage.id !== im.id) return;
     canvas.width = pic.width;
     canvas.height = pic.height;
     ctx.drawImage(pic, 0, 0);
+
+    // 載入並重繪該影像先前已有的所有標記區塊
+    try {
+      const res = await fetch(`/api/images/${im.id}/segments`);
+      if (!res.ok) return;
+      const segments = await res.json();
+      if (!state.currentImage || state.currentImage.id !== im.id) return;
+      await redraw(segments);
+    } catch (err) {
+      console.error("載入已標記區塊失敗:", err);
+    }
   };
   pic.src = `/api/images/${im.id}/file`;
 }

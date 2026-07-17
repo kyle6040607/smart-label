@@ -64,8 +64,30 @@ def upload():
         rec = ImageRecord(filename=name, file_hash=file_hash)
         dest = cfg.upload_dir / f"{rec.id}_{name}"
         f.save(dest)
+
+        # 讀取並等比例縮小原圖（避免大圖撐開版面且加速 AI 運算）
         with Image.open(dest) as im:
-            rec.width, rec.height = im.size
+            # 自動校正 EXIF 旋轉方向
+            from PIL import ImageOps
+            im_corrected = ImageOps.exif_transpose(im)
+            
+            max_side = 1024
+            if max(im_corrected.size) > max_side:
+                scale = max_side / max(im_corrected.size)
+                new_size = (int(im_corrected.size[0] * scale), int(im_corrected.size[1] * scale))
+                im_resized = im_corrected.resize(new_size, Image.Resampling.LANCZOS)
+                
+                # 儲存覆蓋原檔，保持原格式（或預設為 JPEG）
+                save_format = im.format or "JPEG"
+                im_resized.save(dest, format=save_format)
+                rec.width, rec.height = new_size
+            else:
+                # 若不需縮小但有旋轉校正，重新存檔
+                if im_corrected.size != im.size:
+                    save_format = im.format or "JPEG"
+                    im_corrected.save(dest, format=save_format)
+                rec.width, rec.height = im_corrected.size
+
         rec.path = str(dest)
         repo.add_image(rec)
         created.append(rec.to_dict())
