@@ -26,10 +26,7 @@
   <main>
     <!-- 1. 上傳 -->
     <section class="panel">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-        <h2 style="margin: 0;">1 · 上傳照片</h2>
-        <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
-      </div>
+      <h2 style="margin-bottom: 8px;">1 · 上傳照片</h2>
       <input type="file" id="fileInput" multiple accept="image/*" style="display: none;" />
       <div id="dropZone" class="drop-zone">
         <p>拖曳照片至此，或點選下方按鈕</p>
@@ -39,14 +36,15 @@
         </div>
         <span class="hint" id="fileCountHint" style="display: block; margin-top: 8px;">尚未選擇檔案</span>
       </div>
-      <!-- 批次管理控制條（預設隱藏） -->
-      <div id="imgBatchControl" class="batch-control-bar" hidden>
-        <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
+      <!-- 批次管理控制條 -->
+      <div class="batch-control-bar">
+        <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
           <input type="checkbox" id="selectAllImgs" /> 全選
         </label>
-        <div style="display: flex; gap: 8px;">
-          <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px;" disabled>確認刪除</button>
-          <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">取消</button>
+        <div style="display: flex; gap: 8px; margin-left: auto;">
+          <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
+          <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
+          <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
         </div>
       </div>
       <div id="thumbs" class="thumbs"></div>
@@ -85,18 +83,18 @@
       <h3>已建立的類別</h3>
       <ul id="labelList" class="labels"></ul>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; margin-bottom: 8px;">
+      <div style="margin-top: 20px; margin-bottom: 8px;">
         <h3 style="margin: 0; font-size: 13px; color: var(--muted);">低信心待審（標紅）</h3>
-        <button id="toggleSegBatchModeBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px;">批次管理</button>
       </div>
-      <!-- 批次管理控制條（預設隱藏） -->
-      <div id="segBatchControl" class="batch-control-bar" style="margin-bottom: 8px;" hidden>
-        <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; margin: 0;">
+      <!-- 批次管理控制條 -->
+      <div class="batch-control-bar" style="margin-bottom: 8px;">
+        <label id="selectAllSegsLabel" style="display: none; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; margin: 0;">
           <input type="checkbox" id="selectAllSegs" /> 全選
         </label>
-        <div style="display: flex; gap: 6px;">
-          <button id="batchDelSegsBtn" class="btn-danger" style="padding: 3px 8px; font-size: 11px;" disabled>確認刪除</button>
-          <button id="cancelSegBatchBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px;">取消</button>
+        <div style="display: flex; gap: 6px; margin-left: auto;">
+          <button id="toggleSegBatchModeBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px;">批次管理</button>
+          <button id="batchDelSegsBtn" class="btn-danger" style="padding: 3px 8px; font-size: 11px; display: none;" disabled>確認刪除</button>
+          <button id="cancelSegBatchBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px; display: none;">取消</button>
         </div>
       </div>
       <ul id="reviewQueue" class="queue"></ul>

@@ -613,36 +613,30 @@ function updateSegBatchBtnState() {
 }
 
 // 照片批次管理切換
-$("toggleImgBatchModeBtn").onclick = () => {
-  state.imgBatchMode = !state.imgBatchMode;
-  const isBatch = state.imgBatchMode;
-  $("toggleImgBatchModeBtn").textContent = isBatch ? "退出管理" : "批次管理";
-  $("imgBatchControl").hidden = !isBatch;
+function toggleImgBatchUI(isBatch) {
+  state.imgBatchMode = isBatch;
+  $("toggleImgBatchModeBtn").style.display = isBatch ? "none" : "block";
+  $("batchDelImgsBtn").style.display = isBatch ? "block" : "none";
+  $("cancelImgBatchBtn").style.display = isBatch ? "block" : "none";
+  $("selectAllImgsLabel").style.display = isBatch ? "flex" : "none";
   loadThumbs();
-};
+}
 
-$("cancelImgBatchBtn").onclick = () => {
-  state.imgBatchMode = false;
-  $("toggleImgBatchModeBtn").textContent = "批次管理";
-  $("imgBatchControl").hidden = true;
-  loadThumbs();
-};
+$("toggleImgBatchModeBtn").onclick = () => toggleImgBatchUI(true);
+$("cancelImgBatchBtn").onclick = () => toggleImgBatchUI(false);
 
 // 待審遮罩批次管理切換
-$("toggleSegBatchModeBtn").onclick = () => {
-  state.segBatchMode = !state.segBatchMode;
-  const isBatch = state.segBatchMode;
-  $("toggleSegBatchModeBtn").textContent = isBatch ? "退出管理" : "批次管理";
-  $("segBatchControl").hidden = !isBatch;
+function toggleSegBatchUI(isBatch) {
+  state.segBatchMode = isBatch;
+  $("toggleSegBatchModeBtn").style.display = isBatch ? "none" : "block";
+  $("batchDelSegsBtn").style.display = isBatch ? "block" : "none";
+  $("cancelSegBatchBtn").style.display = isBatch ? "block" : "none";
+  $("selectAllSegsLabel").style.display = isBatch ? "flex" : "none";
   refreshSidebar();
-};
+}
 
-$("cancelSegBatchBtn").onclick = () => {
-  state.segBatchMode = false;
-  $("toggleSegBatchModeBtn").textContent = "批次管理";
-  $("segBatchControl").hidden = true;
-  refreshSidebar();
-};
+$("toggleSegBatchModeBtn").onclick = () => toggleSegBatchUI(true);
+$("cancelSegBatchBtn").onclick = () => toggleSegBatchUI(false);
 
 // 照片全選
 $("selectAllImgs").onchange = (e) => {
@@ -690,10 +684,7 @@ $("batchDelImgsBtn").onclick = async () => {
     }
 
     // 退出批次模式並重整
-    state.imgBatchMode = false;
-    $("toggleImgBatchModeBtn").textContent = "批次管理";
-    $("imgBatchControl").hidden = true;
-    await loadThumbs();
+    toggleImgBatchUI(false);
     await refreshSidebar();
   } catch (err) {
     alert("批次刪除失敗: " + err.message);
@@ -718,9 +709,7 @@ $("batchDelSegsBtn").onclick = async () => {
     if (!res.ok) throw new Error(await res.text());
 
     // 退出批次模式並重整
-    state.segBatchMode = false;
-    $("toggleSegBatchModeBtn").textContent = "批次管理";
-    $("segBatchControl").hidden = true;
+    toggleSegBatchUI(false);
     await refreshAfterSegChange();
   } catch (err) {
     alert("批次刪除失敗: " + err.message);
