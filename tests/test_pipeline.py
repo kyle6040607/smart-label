@@ -25,6 +25,8 @@ def _pipeline(tmp_path) -> tuple[Pipeline, Repository, Config]:
         base_dir=tmp_path, data_dir=tmp_path, upload_dir=tmp_path / "up",
         mask_dir=tmp_path / "mask", db_file=tmp_path / "store.json",
     )
+    cfg.use_real_sam = False
+    cfg.use_real_embedding = False
     cfg.ensure_dirs()
     repo = Repository(cfg.db_file)
     return Pipeline(cfg, repo), repo, cfg

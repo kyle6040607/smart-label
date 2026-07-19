@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from typing import Callable
 
 from app.config import Config
 from app.ml.active_learning import confidence_score, needs_review
@@ -57,7 +58,10 @@ class Pipeline:
         return str(out)
 
     # ---------- 自動分割整張圖（提案 demo 第 1 步：自動分割）----------
-    def segment_image(self, image: ImageRecord) -> list[Segment]:
+    def segment_image(self, image: ImageRecord, progress_callback: Callable[[dict], None] | None = None) -> list[Segment]:
+        if progress_callback:
+            progress_callback({"event": "progress", "stage": "segmenting", "progress": 10, "message": "正在執行影像自動切割偵測..."})
+
         img = self._read_rgb(image.path)
         masks = self.segmenter.segment(img)
 
@@ -65,7 +69,17 @@ class Pipeline:
         existing_segs = self.repo.list_segments(image.id)
 
         segments: list[Segment] = []
-        for md in masks:
+        total_masks = len(masks)
+        for i, md in enumerate(masks):
+            if progress_callback:
+                progress_val = 75 + int((i / max(total_masks, 1)) * 20)
+                progress_callback({
+                    "event": "progress",
+                    "stage": "classifying",
+                    "progress": progress_val,
+                    "message": f"正在分類及儲存區塊 ({i + 1}/{total_masks})..."
+                })
+
             bbox = tuple(md["bbox"])
 
             # 檢查是否已存在相同或極為相近邊界框的區塊（容差 2 像素）
@@ -88,6 +102,9 @@ class Pipeline:
                 self._classify_segment(img, seg, md["mask"])
                 self.repo.add_segment(seg)
                 segments.append(seg)
+        
+        if progress_callback:
+            progress_callback({"event": "progress", "stage": "done", "progress": 100, "message": "自動分割完成！"})
         return segments
 
     # ---------- 互動式：使用者點一下切一塊 ----------
@@ -101,7 +118,7 @@ class Pipeline:
         return seg
 
     # ---------- 自然語言：用文字找物件並切出遮罩（Week 2）----------
-    def segment_text(self, image: ImageRecord, prompt: str) -> list[Segment]:
+    def segment_text(self, image: ImageRecord, prompt: str, progress_callback: Callable[[dict], None] | None = None) -> list[Segment]:
         """依文字提示分割圖片中的物件。
 
         - prompt 會先移除前後空白，不可為空，最多 200 個字元。
@@ -114,6 +131,9 @@ class Pipeline:
             raise ValueError("prompt 不可為空")
         if len(prompt) > 200:
             raise ValueError("prompt 不可超過 200 個字元")
+
+        if progress_callback:
+            progress_callback({"event": "progress", "stage": "detecting", "progress": 10, "message": "正在執行物件偵測中..."})
 
         img = self._read_rgb(image.path)
 
@@ -135,6 +155,8 @@ class Pipeline:
             seg.needs_review = needs_review(seg.confidence, self.config.confidence_threshold)
 
             self.repo.add_segment(seg)
+            if progress_callback:
+                progress_callback({"event": "progress", "stage": "done", "progress": 100, "message": "文字分割完成！"})
             return [seg]
 
         # 動態載入 YOLO-World 偵測器 (指向已下載大模型)
@@ -146,9 +168,18 @@ class Pipeline:
         boxes = self.yolo_detector.predict_boxes(img, prompt, device=self.segmenter.device)
         
         segments: list[Segment] = []
+        total_boxes = len(boxes)
 
         # 2. 逐一將框餵給 SAM 做分割
-        for bbox in boxes:
+        for i, bbox in enumerate(boxes):
+            if progress_callback:
+                progress_val = 75 + int((i / max(total_boxes, 1)) * 20)
+                progress_callback({
+                    "event": "progress",
+                    "stage": "segmenting",
+                    "progress": progress_val,
+                    "message": f"正在進行物件分割 ({i + 1}/{total_boxes})..."
+                })
             try:
                 # 呼叫 SAM 預測遮罩
                 md = self.segmenter.segment_by_box(img, bbox)
