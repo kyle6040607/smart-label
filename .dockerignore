@@ -10,7 +10,7 @@ __pycache__
 .env.*
 !.env.example
 
-runs
+runs/
 data/
 models/*.pth
 models/*.pt

@@ -131,7 +131,7 @@ def callback():
             body,
             signature,
         )
-
+        
     except InvalidSignatureError:
         abort(400)
 

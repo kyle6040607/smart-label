@@ -23,7 +23,7 @@ CREATE TABLE if not exists project (
     CONSTRAINT fk_project_owner_id_user_id FOREIGN KEY (owner_id) REFERENCES user(id) ON DELETE CASCADE
 )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---photo
+-- photo
 CREATE TABLE if not exists photo(
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     project_id INT UNSIGNED NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE if not exists photo(
     CONSTRAINT fk_photo_project_id_project_id FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE
 )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---segment
+-- segment
 CREATE TABLE if not exists segment(
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     photo_id INT UNSIGNED NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE if not exists segment(
     CONSTRAINT fk_segment_photo_id_photo_id FOREIGN KEY (photo_id) REFERENCES photo(id) ON DELETE CASCADE
 )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---example
+-- example
 CREATE TABLE if not exists example(
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     project_id INT UNSIGNED NOT NULL,
