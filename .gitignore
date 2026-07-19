@@ -65,3 +65,8 @@ weights/
 
 # DinoV2 / PyTorch Hub cache (if local)
 .cache/
+
+
+# Google Cloud SQL Proxy
+cloud-sql-proxy.exe
+cloud_sql_proxy.exe
