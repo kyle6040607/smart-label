@@ -641,7 +641,7 @@ def handle_text_message(event):
         if session is None:
             reply_text(
                 event.reply_token,
-                "目前沒有待確認的圖片，請先傳圖片並輸入「傳完了」",
+                "目前沒有待確認的圖片，請先傳圖片並輸入「完成」",
             )
 
             return
