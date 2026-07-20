@@ -9,6 +9,8 @@ const state = {
   points: [],
   segmenting: false,
   lastSegments: [],   // 目前畫布上的片段，供審核卡片 hover 加亮用
+  imgBatchMode: false,
+  segBatchMode: false,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -126,6 +128,10 @@ async function loadThumbs() {
   const imgs = await (await fetch("/api/images")).json();
   const box = $("thumbs");
   box.innerHTML = "";
+  
+  // 根據批次管理狀態切換 CSS class
+  box.classList.toggle("batch-active", state.imgBatchMode);
+
   imgs.forEach((im) => {
     const wrap = document.createElement("div");
     wrap.className = "thumb";
@@ -133,7 +139,20 @@ async function loadThumbs() {
     const el = document.createElement("img");
     el.src = `/api/images/${im.id}/file`;
     el.title = im.filename;
-    el.onclick = () => selectImage(im, el);
+    el.onclick = () => {
+      if (state.imgBatchMode) return; // 批次模式下點選圖片不切換
+      selectImage(im, el);
+    };
+
+    // 批次管理勾選框
+    const chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.className = "thumb-chk";
+    chk.dataset.id = im.id;
+    chk.onclick = (e) => {
+      e.stopPropagation();
+      updateImgBatchBtnState();
+    };
 
     const del = document.createElement("button");
     del.className = "thumb-del";
@@ -141,9 +160,15 @@ async function loadThumbs() {
     del.title = "刪除這張";
     del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
 
-    wrap.append(el, del);
+    wrap.append(chk, el, del);
     box.appendChild(wrap);
   });
+
+  // 非批次模式下，重設勾選狀態
+  if (!state.imgBatchMode) {
+    $("selectAllImgs").checked = false;
+    updateImgBatchBtnState();
+  }
 }
 
 async function deleteImage(im) {
@@ -440,6 +465,10 @@ async function refreshSidebar() {
   const queue = await (await fetch("/api/review/queue")).json();
   const ul = $("reviewQueue");
   ul.innerHTML = "";
+  
+  // 依據批次管理狀態切換 CSS 類別
+  ul.classList.toggle("batch-active", state.segBatchMode);
+
   queue.forEach((s) => {
     const li = document.createElement("li");
     const probs = Object.entries(s.probs)
@@ -447,6 +476,7 @@ async function refreshSidebar() {
       .join(" · ") || "（尚無範例可分類）";
     li.innerHTML = `
       <div class="queue-item">
+        <input type="checkbox" class="seg-chk" data-id="${s.id}" />
         <canvas class="seg-thumb" width="56" height="56" title="片段預覽"></canvas>
         <div class="queue-body">
           <div>預測：${s.predicted_label ?? "—"} · 信心 ${s.confidence.toFixed(2)}</div>
@@ -458,6 +488,13 @@ async function refreshSidebar() {
           </div>
         </div>
       </div>`;
+    
+    // 綁定批次勾選框事件
+    const chk = li.querySelector(".seg-chk");
+    chk.onclick = () => {
+      updateSegBatchBtnState();
+    };
+
     // 縮圖：以 bbox 為中心裁一塊正方形（外擴 15% 留點上下文）
     loadImage(s.image_id).then((pic) => {
       const [x, y, w, h] = s.bbox;
@@ -477,7 +514,7 @@ async function refreshSidebar() {
       if (state.currentImage && s.image_id === state.currentImage.id) redraw(state.lastSegments);
     };
     li.querySelector(".confirm").onclick = async () => {
-      const label = li.querySelector("input").value.trim();
+      const label = li.querySelector("input[data-seg]").value.trim();
       if (!label) return;
       await fetch(`/api/segments/${s.id}/review`, {
         method: "POST",
@@ -500,6 +537,12 @@ async function refreshSidebar() {
     };
     ul.appendChild(li);
   });
+
+  // 非批次模式下，重設勾選狀態
+  if (!state.segBatchMode) {
+    $("selectAllSegs").checked = false;
+    updateSegBatchBtnState();
+  }
 }
 
 // ---------- 匯出資料集（專案的最終產出：圖 + 遮罩 + 標籤）----------
@@ -542,6 +585,136 @@ if (dropZone && fileInput && selectFileBtn && fileCountHint) {
     }
   };
 }
+
+// ---------- 批次管理輔助函式與事件監聽器 ----------
+
+function updateImgBatchBtnState() {
+  const chks = document.querySelectorAll(".thumb-chk");
+  const checked = document.querySelectorAll(".thumb-chk:checked");
+  const btn = $("batchDelImgsBtn");
+  if (btn) btn.disabled = checked.length === 0;
+
+  const selectAll = $("selectAllImgs");
+  if (selectAll) {
+    selectAll.checked = chks.length > 0 && checked.length === chks.length;
+  }
+}
+
+function updateSegBatchBtnState() {
+  const chks = document.querySelectorAll(".seg-chk");
+  const checked = document.querySelectorAll(".seg-chk:checked");
+  const btn = $("batchDelSegsBtn");
+  if (btn) btn.disabled = checked.length === 0;
+
+  const selectAll = $("selectAllSegs");
+  if (selectAll) {
+    selectAll.checked = chks.length > 0 && checked.length === chks.length;
+  }
+}
+
+// 照片批次管理切換
+function toggleImgBatchUI(isBatch) {
+  state.imgBatchMode = isBatch;
+  $("toggleImgBatchModeBtn").style.display = isBatch ? "none" : "block";
+  $("batchDelImgsBtn").style.display = isBatch ? "block" : "none";
+  $("cancelImgBatchBtn").style.display = isBatch ? "block" : "none";
+  $("selectAllImgsLabel").style.display = isBatch ? "flex" : "none";
+  loadThumbs();
+}
+
+$("toggleImgBatchModeBtn").onclick = () => toggleImgBatchUI(true);
+$("cancelImgBatchBtn").onclick = () => toggleImgBatchUI(false);
+
+// 待審遮罩批次管理切換
+function toggleSegBatchUI(isBatch) {
+  state.segBatchMode = isBatch;
+  $("toggleSegBatchModeBtn").style.display = isBatch ? "none" : "block";
+  $("batchDelSegsBtn").style.display = isBatch ? "block" : "none";
+  $("cancelSegBatchBtn").style.display = isBatch ? "block" : "none";
+  $("selectAllSegsLabel").style.display = isBatch ? "flex" : "none";
+  refreshSidebar();
+}
+
+$("toggleSegBatchModeBtn").onclick = () => toggleSegBatchUI(true);
+$("cancelSegBatchBtn").onclick = () => toggleSegBatchUI(false);
+
+// 照片全選
+$("selectAllImgs").onchange = (e) => {
+  const isChecked = e.target.checked;
+  document.querySelectorAll(".thumb-chk").forEach((chk) => {
+    chk.checked = isChecked;
+  });
+  updateImgBatchBtnState();
+};
+
+// 待審遮罩全選
+$("selectAllSegs").onchange = (e) => {
+  const isChecked = e.target.checked;
+  document.querySelectorAll(".seg-chk").forEach((chk) => {
+    chk.checked = isChecked;
+  });
+  updateSegBatchBtnState();
+};
+
+// 執行照片批次刪除
+$("batchDelImgsBtn").onclick = async () => {
+  const checked = document.querySelectorAll(".thumb-chk:checked");
+  const ids = Array.from(checked).map((chk) => chk.dataset.id);
+  if (ids.length === 0) return;
+
+  if (!confirm(`確定要批次刪除選取的 ${ids.length} 張照片嗎？這會同時清除與其相關的遮罩。`)) return;
+
+  try {
+    const res = await fetch("/api/images/delete_batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_ids: ids }),
+    });
+
+    if (!res.ok) throw new Error(await res.text());
+    
+    // 如果刪除的照片包含當前選擇的圖片，清空畫布
+    if (state.currentImage && ids.includes(state.currentImage.id)) {
+      state.currentImage = null;
+      $("autoSegBtn").disabled = true;
+      $("drawBtn").disabled = true;
+      $("textPromptInput").disabled = true;
+      $("textSegBtn").disabled = true;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // 退出批次模式並重整
+    toggleImgBatchUI(false);
+    await refreshSidebar();
+  } catch (err) {
+    alert("批次刪除失敗: " + err.message);
+  }
+};
+
+// 執行遮罩批次刪除
+$("batchDelSegsBtn").onclick = async () => {
+  const checked = document.querySelectorAll(".seg-chk:checked");
+  const ids = Array.from(checked).map((chk) => chk.dataset.id);
+  if (ids.length === 0) return;
+
+  if (!confirm(`確定要批次刪除選取的 ${ids.length} 個遮罩片段嗎？`)) return;
+
+  try {
+    const res = await fetch("/api/segments/delete_batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ segment_ids: ids }),
+    });
+
+    if (!res.ok) throw new Error(await res.text());
+
+    // 退出批次模式並重整
+    toggleSegBatchUI(false);
+    await refreshAfterSegChange();
+  } catch (err) {
+    alert("批次刪除失敗: " + err.message);
+  }
+};
 
 // 初始載入
 loadThumbs();
