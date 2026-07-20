@@ -57,8 +57,13 @@
         <button id="autoSegBtn" disabled>自動分割整張</button>
         <button id="drawBtn" disabled>✏️ 手動描邊</button>
         
-        <!-- 自然語言分割 (YOLO-World) 控制區 -->
+        <!-- 自然語言分割 (YOLO-World / Grounding DINO) 控制區 -->
         <div class="text-seg-wrap" style="display: inline-flex; gap: 6px; margin: 0 10px; align-items: center;">
+          <select id="modelEngineSelect" disabled 
+                  style="padding: 6px; border-radius: 6px; border: 1px solid #3f4e60; background: #1e293b; color: #fff; cursor: pointer;">
+            <option value="yolo_world">YOLO-World</option>
+            <option value="grounding_dino">Grounding DINO</option>
+          </select>
           <input type="text" id="textPromptInput" placeholder="輸入文字搜尋物件（如：飛機）" disabled 
                  style="padding: 6px 12px; border-radius: 6px; border: 1px solid #3f4e60; background: #1e293b; color: #fff; width: 220px;" />
           <button id="textSegBtn" disabled class="btn-link" style="background: #3b82f6; border: none; cursor: pointer; padding: 6px 12px; border-radius: 6px; color: white;">🔍 文字分割</button>

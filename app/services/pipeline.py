@@ -22,6 +22,7 @@ from app.repository import Repository
 from app.utils import imread, imwrite
 from app.ml.yolo_world import YoloWorldDetector
 from app.services.gemini import GeminiService
+from app.ml.GroundingDINO import GroundingDinoDetector
 
 
 class Pipeline:
@@ -29,6 +30,7 @@ class Pipeline:
         self.config = config
         self.repo = repo
         self.yolo_detector = None
+        self.dino_detector = None
         self.gemini_service = GeminiService(config.gemini_api_key)
         self.segmenter = build_segmenter(
             config.use_real_sam,
@@ -124,6 +126,7 @@ class Pipeline:
         self,
         image: ImageRecord,
         prompt: str,
+        engine: str = "yolo_world",
         progress_callback: Callable[[dict], None] | None = None,
     ) -> list[Segment]:
         """依文字提示分割圖片中的物件。
@@ -208,79 +211,50 @@ class Pipeline:
 
             return mock_segments
 
-        # 動態載入 YOLO-World
-        if self.yolo_detector is None:
-            model_path = str(
-                self.config.base_dir
-                / "models"
-                / "yolov8x-worldv2.pt"
-            )
-            self.yolo_detector = YoloWorldDetector(model_path)
+        # 根據 engine 選擇動態加載偵測模型
+        if engine == "grounding_dino":
+            if self.dino_detector is None:
+                self.dino_detector = GroundingDinoDetector()
+        else:
+            if self.yolo_detector is None:
+                model_path = str(self.config.base_dir / "models" / "yolov8x-worldv2.pt")
+                self.yolo_detector = YoloWorldDetector(model_path)
 
         # 先找出所有類別的 bounding boxes，方便計算整體進度
         detections = []
-
         for cls_name in parsed_classes:
-            boxes = self.yolo_detector.predict_boxes(
-                img,
-                cls_name,
-                device=self.segmenter.device,
-            )
-            detections.extend(
-                (cls_name, bbox)
-                for bbox in boxes
-            )
+            if engine == "grounding_dino":
+                boxes = self.dino_detector.predict_boxes(img, cls_name, device=self.segmenter.device)
+            else:
+                boxes = self.yolo_detector.predict_boxes(img, cls_name, device=self.segmenter.device)
+            detections.extend((cls_name, bbox) for bbox in boxes)
 
         segments: list[Segment] = []
         total_boxes = len(detections)
 
-        # 將每個 bounding box 交給 SAM 分割
-        for i, (cls_name, bbox) in enumerate(detections):
+        for i, (cls_name, bbox) in enumerate(detections, start=1):
             if progress_callback:
-                progress_val = 75 + int(
-                    (i / max(total_boxes, 1)) * 20
-                )
+                progress_pct = int(10 + (i / max(1, total_boxes)) * 85)
                 progress_callback({
                     "event": "progress",
                     "stage": "segmenting",
-                    "progress": progress_val,
-                    "message": (
-                        f"正在進行物件分割 "
-                        f"({i + 1}/{total_boxes})..."
-                    ),
+                    "progress": progress_pct,
+                    "message": f"正在進行遮罩分割中 ({i}/{total_boxes})...",
                 })
 
             try:
                 md = self.segmenter.segment_by_box(img, bbox)
-
-                seg = Segment(
-                    image_id=image.id,
-                    bbox=tuple(md["bbox"]),
-                    area=md["area"],
-                )
-                seg.mask_path = self._save_mask(
-                    image.id,
-                    seg.id,
-                    md["mask"],
-                )
-                self._classify_segment(
-                    img,
-                    seg,
-                    md["mask"],
-                )
-
-                # 分類器沒有預測結果時，使用 Gemini/文字解析的類別
+                seg = Segment(image_id=image.id, bbox=tuple(md["bbox"]), area=md["area"])
+                seg.mask_path = self._save_mask(image.id, seg.id, md["mask"])
+                self._classify_segment(img, seg, md["mask"])
+                
                 if seg.predicted_label is None:
                     seg.predicted_label = cls_name
-
+                
                 self.repo.add_segment(seg)
                 segments.append(seg)
-
-            except Exception as exc:
-                print(
-                    "警告：YOLO Box 進行 SAM 分割失敗："
-                    f"{exc}"
-                )
+            except Exception as e:
+                print(f"警告：BBox 進行 SAM 分割失敗: {e}")
                 continue
 
         if progress_callback:

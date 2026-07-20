@@ -83,7 +83,7 @@ function startFakeProgress(startVal = 10, limitVal = 75) {
   stopFakeProgress();
   currentProgress = startVal;
   updateProgressBar(Math.round(currentProgress));
-  
+
   progressInterval = setInterval(() => {
     if (currentProgress < limitVal) {
       const increment = (limitVal - currentProgress) * 0.04;
@@ -136,15 +136,16 @@ function setSegmentationLoading(active, message = "分割中…", showProgress =
 
   canvas.closest(".canvas-wrap").classList.toggle("is-loading", active);
   canvas.setAttribute("aria-busy", String(active));
-  
+
   if (active) {
     $("autoSegBtn").disabled = true;
   } else {
     updateAutoSegBtn();
   }
-  
+
   $("drawBtn").disabled = active || !state.currentImage;
   $("textPromptInput").disabled = active || !state.currentImage;
+  $("modelEngineSelect").disabled = active || !state.currentImage;
   $("textSegBtn").disabled = active || !state.currentImage;
 }
 
@@ -163,20 +164,20 @@ async function fetchWithProgress(url, options, onProgress) {
   if (!response.ok) {
     throw await responseError(response, "請求失敗");
   }
-  
+
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let finalResult = null;
-  
+
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    
+
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop();
-    
+
     for (const line of lines) {
       if (line.trim()) {
         const data = JSON.parse(line);
@@ -190,7 +191,7 @@ async function fetchWithProgress(url, options, onProgress) {
       }
     }
   }
-  
+
   if (buffer.trim()) {
     try {
       const data = JSON.parse(buffer);
@@ -205,7 +206,7 @@ async function fetchWithProgress(url, options, onProgress) {
       // ignore
     }
   }
-  
+
   if (!finalResult) {
     throw new Error("伺服器未回傳完成狀態");
   }
@@ -248,7 +249,7 @@ async function loadThumbs() {
   const imgs = await (await fetch("/api/images")).json();
   const box = $("thumbs");
   box.innerHTML = "";
-  
+
   // 根據批次管理狀態切換 CSS class
   box.classList.toggle("batch-active", state.imgBatchMode);
 
@@ -315,12 +316,13 @@ function selectImage(im, el) {
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
   el.classList.add("active");
-  
+
   state.autoSegCompleted = false;
   updateAutoSegBtn();
 
   $("drawBtn").disabled = false;
   $("textPromptInput").disabled = false;
+  $("modelEngineSelect").disabled = false;
   $("textSegBtn").disabled = false;
 
   const pic = new Image();
@@ -391,30 +393,21 @@ $("textSegBtn").onclick = async () => {
   if (!promptVal) return alert("請輸入想搜尋的物件名稱（例如：飛機）");
   if (!state.currentImage || state.segmenting) return;
 
+  const engineVal = $("modelEngineSelect").value;
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, `正在搜尋「${promptVal}」並進行分割…`, true);
   startFakeProgress(10, 75);
 
   try {
-    const data = await fetchWithProgress(
-      `/api/images/${imageId}/segment_text`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: promptVal }),
-      },
-      (progressData) => {
-        if (progressData.stage === "segmenting" || progressData.stage === "done") {
-          stopFakeProgress();
-          setSegmentationLoading(true, progressData.message, true);
-          updateProgressBar(progressData.progress);
-        } else {
-          setSegmentationLoading(true, progressData.message, true);
-        }
-      }
-    );
+    const res = await fetch(`/api/images/${imageId}/segment_text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: promptVal, engine: engineVal }),
+    });
 
-    await redraw(data.segments);
+    if (!res.ok) throw await responseError(res, "文字分割失敗");
+    const segs = await res.json();
+    await redraw(segs);
     await refreshSidebar();
   } catch (error) {
     console.error(error);
@@ -618,7 +611,7 @@ async function refreshSidebar() {
   const queue = await (await fetch("/api/review/queue")).json();
   const ul = $("reviewQueue");
   ul.innerHTML = "";
-  
+
   // 依據批次管理狀態切換 CSS 類別
   ul.classList.toggle("batch-active", state.segBatchMode);
 
@@ -641,7 +634,7 @@ async function refreshSidebar() {
           </div>
         </div>
       </div>`;
-    
+
     // 綁定批次勾選框事件
     const chk = li.querySelector(".seg-chk");
     chk.onclick = () => {
@@ -836,7 +829,7 @@ $("batchDelImgsBtn").onclick = async () => {
     });
 
     if (!res.ok) throw new Error(await res.text());
-    
+
     // 如果刪除的照片包含當前選擇的圖片，清空畫布
     if (state.currentImage && ids.includes(state.currentImage.id)) {
       state.currentImage = null;

@@ -90,43 +90,15 @@ def segment_text(image_id: str):
 
     data = request.get_json(silent=True) or {}
     prompt = str(data.get("prompt", "")).strip()
+    engine = str(data.get("engine", "yolo_world")).strip()
+    try:
+        segments = pipeline.segment_text(img, prompt, engine=engine)
+    except ValueError as exc:
+        abort(400, str(exc))
+    except NotImplementedError as exc:
+        abort(503, str(exc))
 
-    q = queue.Queue()
-
-    def run_segmentation():
-        try:
-            def progress_callback(data):
-                q.put(data)
-            
-            segments = pipeline.segment_text(img, prompt, progress_callback=progress_callback)
-            q.put({"event": "done", "segments": segments})
-        except Exception as e:
-            q.put({"event": "error", "message": str(e)})
-
-    t = threading.Thread(target=run_segmentation)
-    t.start()
-
-    def generate():
-        while True:
-            try:
-                data = q.get(timeout=0.5)
-                if data["event"] == "done":
-                    yield json.dumps({
-                        "event": "done",
-                        "segments": [s.to_dict() for s in data["segments"]]
-                    }) + "\n"
-                    break
-                elif data["event"] == "error":
-                    yield json.dumps({"event": "error", "message": data["message"]}) + "\n"
-                    break
-                else:
-                    yield json.dumps(data) + "\n"
-            except queue.Empty:
-                if not t.is_alive():
-                    yield json.dumps({"event": "error", "message": "Text segmentation thread terminated unexpectedly."}) + "\n"
-                    break
-
-    return Response(generate(), status=201, mimetype="application/x-ndjson")
+    return jsonify([seg.to_dict() for seg in segments]), 201
 
 
 @bp.post("/images/<image_id>/segment_polygon")
