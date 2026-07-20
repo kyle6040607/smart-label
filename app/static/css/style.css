@@ -109,6 +109,7 @@ canvas {
   max-width: 100%;
   height: auto;
   cursor: crosshair;
+  touch-action: none; /* 防止行動端繪圖時意外捲動網頁 */
 }
 .canvas-wrap.is-loading canvas { pointer-events: none; }
 .canvas-loading {
@@ -268,5 +269,83 @@ button.btn-danger:disabled {
 /* 待審佇列在批次管理模式時，隱藏單個項目的「刪除」按鈕 */
 .queue.batch-active .seg-del {
   display: none !important;
+}
+
+/* 文字分割控制區 */
+.text-seg-wrap {
+  display: inline-flex;
+  gap: 6px;
+  margin: 0 10px;
+  align-items: center;
+}
+#textPromptInput {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #3f4e60;
+  background: #1e293b;
+  color: #fff;
+  width: 220px;
+}
+.text-seg-btn {
+  background: #3b82f6 !important;
+  border: none !important;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: white !important;
+}
+
+/* RWD 行動與平板端優化 */
+@media (max-width: 1024px) {
+  main {
+    grid-template-columns: 1fr;
+    padding: 12px;
+    gap: 16px;
+  }
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 12px 16px;
+    gap: 12px;
+  }
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 768px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .text-seg-wrap {
+    display: flex !important;
+    width: 100% !important;
+    margin: 4px 0 !important;
+    gap: 6px;
+  }
+  #textPromptInput {
+    flex: 1;
+    width: 100% !important;
+  }
+  #modeHint {
+    text-align: center;
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+  }
+  .batch-control-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+  }
+  .batch-control-bar label {
+    width: 100%;
+    justify-content: center;
+  }
 }
 

@@ -58,10 +58,9 @@
         <button id="drawBtn" disabled>✏️ 手動描邊</button>
         
         <!-- 自然語言分割 (YOLO-World) 控制區 -->
-        <div class="text-seg-wrap" style="display: inline-flex; gap: 6px; margin: 0 10px; align-items: center;">
-          <input type="text" id="textPromptInput" placeholder="輸入文字搜尋物件（如：飛機）" disabled 
-                 style="padding: 6px 12px; border-radius: 6px; border: 1px solid #3f4e60; background: #1e293b; color: #fff; width: 220px;" />
-          <button id="textSegBtn" disabled class="btn-link" style="background: #3b82f6; border: none; cursor: pointer; padding: 6px 12px; border-radius: 6px; color: white;">🔍 文字分割</button>
+        <div class="text-seg-wrap">
+          <input type="text" id="textPromptInput" placeholder="輸入文字搜尋物件（如：飛機）" disabled />
+          <button id="textSegBtn" disabled class="btn-link text-seg-btn">🔍 文字分割</button>
         </div>
         
         <span class="hint" id="modeHint">點物件做單點分割</span>

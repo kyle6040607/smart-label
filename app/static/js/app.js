@@ -221,6 +221,15 @@ function toImageXY(e) {
   };
 }
 
+// 輔助函式：從觸控事件中取得相對於視窗的座標
+function getTouchPos(e) {
+  const touch = e.touches[0] || e.changedTouches[0];
+  return {
+    clientX: touch.clientX,
+    clientY: touch.clientY
+  };
+}
+
 $("uploadBtn").onclick = async () => {
   const files = $("fileInput").files;
   if (!files.length) return alert("先選檔案");
@@ -500,6 +509,59 @@ canvas.onmouseup = async () => {
   await refreshSidebar();
   promptLabel(seg);
 };
+
+// 行動端觸控事件繪圖支援
+canvas.addEventListener("touchstart", (e) => {
+  if (!state.currentImage || !state.drawMode) return;
+  e.preventDefault();
+  state.drawing = true;
+  state.points = [toImageXY(getTouchPos(e))];
+}, { passive: false });
+
+canvas.addEventListener("touchmove", (e) => {
+  if (!state.drawing) return;
+  e.preventDefault();
+  const p = toImageXY(getTouchPos(e));
+  state.points.push(p);
+  // 即時畫出正在描的線
+  ctx.strokeStyle = "#ffd93d";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const a = state.points[state.points.length - 2];
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+}, { passive: false });
+
+canvas.addEventListener("touchend", async (e) => {
+  if (!state.drawing) return;
+  e.preventDefault();
+  state.drawing = false;
+  const points = state.points.map((p) => [p.x, p.y]);
+  state.points = [];
+  if (points.length < 3) {
+    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+    return redraw(all); // 點太少，取消
+  }
+  setSegmentationLoading(true, "儲存描邊中…");
+  try {
+    const res = await fetch(`/api/images/${state.currentImage.id}/segment_polygon`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ points }),
+    });
+    if (!res.ok) return alert("描邊失敗：" + (await res.text()));
+    const seg = await res.json();
+    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+    await redraw(all);
+    await refreshSidebar();
+    promptLabel(seg);
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setSegmentationLoading(false);
+  }
+}, { passive: false });
 
 // ---------- 把遮罩疊回圖上：高信心綠框、低信心紅框 ----------
 // highlightId：審核卡片 hover 時，把對應的框加粗變黃
