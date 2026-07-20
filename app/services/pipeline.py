@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from typing import Callable
 
 from app.config import Config
 from app.ml.active_learning import confidence_score, needs_review
@@ -59,7 +60,10 @@ class Pipeline:
         return str(out)
 
     # ---------- 自動分割整張圖（提案 demo 第 1 步：自動分割）----------
-    def segment_image(self, image: ImageRecord) -> list[Segment]:
+    def segment_image(self, image: ImageRecord, progress_callback: Callable[[dict], None] | None = None) -> list[Segment]:
+        if progress_callback:
+            progress_callback({"event": "progress", "stage": "segmenting", "progress": 10, "message": "正在執行影像自動切割偵測..."})
+
         img = self._read_rgb(image.path)
         masks = self.segmenter.segment(img)
 
@@ -67,7 +71,17 @@ class Pipeline:
         existing_segs = self.repo.list_segments(image.id)
 
         segments: list[Segment] = []
-        for md in masks:
+        total_masks = len(masks)
+        for i, md in enumerate(masks):
+            if progress_callback:
+                progress_val = 75 + int((i / max(total_masks, 1)) * 20)
+                progress_callback({
+                    "event": "progress",
+                    "stage": "classifying",
+                    "progress": progress_val,
+                    "message": f"正在分類及儲存區塊 ({i + 1}/{total_masks})..."
+                })
+
             bbox = tuple(md["bbox"])
 
             # 檢查是否已存在相同或極為相近邊界框的區塊（容差 2 像素）
@@ -90,6 +104,9 @@ class Pipeline:
                 self._classify_segment(img, seg, md["mask"])
                 self.repo.add_segment(seg)
                 segments.append(seg)
+        
+        if progress_callback:
+            progress_callback({"event": "progress", "stage": "done", "progress": 100, "message": "自動分割完成！"})
         return segments
 
     # ---------- 互動式：使用者點一下切一塊 ----------
@@ -102,8 +119,13 @@ class Pipeline:
         self.repo.add_segment(seg)
         return seg
 
-    # ---------- 自然語言：用文字找物件並切出遮罩（Week 2）----------
-    def segment_text(self, image: ImageRecord, prompt: str) -> list[Segment]:
+    # ---------- 自然語言：用文字找物件並切出遮罩----------
+    def segment_text(
+        self,
+        image: ImageRecord,
+        prompt: str,
+        progress_callback: Callable[[dict], None] | None = None,
+    ) -> list[Segment]:
         """依文字提示分割圖片中的物件。
 
         - prompt 會先移除前後空白，不可為空，最多 200 個字元。
@@ -117,75 +139,157 @@ class Pipeline:
         if len(prompt) > 200:
             raise ValueError("prompt 不可超過 200 個字元")
 
+        if progress_callback:
+            progress_callback({
+                "event": "progress",
+                "stage": "detecting",
+                "progress": 10,
+                "message": "正在執行物件偵測中...",
+            })
+
         img = self._read_rgb(image.path)
 
-        # 💡 判斷是否需要丟給 Gemini：包含中文字（需翻譯），或者英文單字數大於 3 個
+        # 中文或超過 3 個英文單字時，交給 Gemini 解析物件類別
         words = prompt.split()
-        has_chinese = any('\u4e00' <= c <= '\u9fff' for c in prompt)
+        has_chinese = any("\u4e00" <= c <= "\u9fff" for c in prompt)
         use_gemini = has_chinese or len(words) > 3
 
-        # 💡 Mock 測試模式：不需真模型，快速模擬 YOLO-World + SAM 的分割返回，使 pytest 單元測試可秒級通過
+        parsed_classes = (
+            self.gemini_service.parse_prompt(prompt)
+            if use_gemini
+            else [prompt]
+        )
+
+        # Mock 測試模式：不載入真實模型
         if not self.config.use_real_sam:
-            parsed_classes = self.gemini_service.parse_prompt(prompt) if use_gemini else [prompt]
-            mock_segments = []
+            mock_segments: list[Segment] = []
             h, w = img.shape[:2]
-            
+
             for i, cls in enumerate(parsed_classes):
-                # 稍微偏移一下 mock 遮罩的位置，防止重合
+                # 稍微偏移各個 mock 遮罩，避免完全重疊
                 offset = i * 20
                 mask = np.zeros((h, w), dtype=np.uint8)
-                x1, y1 = max(0, w // 2 - 50 + offset), max(0, h // 2 - 50 + offset)
-                x2, y2 = min(w, w // 2 + 50 + offset), min(h, h // 2 + 50 + offset)
+
+                x1 = max(0, w // 2 - 50 + offset)
+                y1 = max(0, h // 2 - 50 + offset)
+                x2 = min(w, w // 2 + 50 + offset)
+                y2 = min(h, h // 2 + 50 + offset)
+
                 mask[y1:y2, x1:x2] = 1
-                
-                seg = Segment(image_id=image.id, bbox=(x1, y1, x2 - x1, y2 - y1), area=int(mask.sum()))
-                seg.mask_path = self._save_mask(image.id, seg.id, mask)
-                
+
+                seg = Segment(
+                    image_id=image.id,
+                    bbox=(x1, y1, x2 - x1, y2 - y1),
+                    area=int(mask.sum()),
+                )
+                seg.mask_path = self._save_mask(
+                    image.id,
+                    seg.id,
+                    mask,
+                )
                 seg.predicted_label = cls
                 seg.probs = {cls: 1.0}
                 seg.confidence = 0.88
-                seg.needs_review = needs_review(seg.confidence, self.config.confidence_threshold)
-                
+                seg.needs_review = needs_review(
+                    seg.confidence,
+                    self.config.confidence_threshold,
+                )
+
                 self.repo.add_segment(seg)
                 mock_segments.append(seg)
+
+            if progress_callback:
+                progress_callback({
+                    "event": "progress",
+                    "stage": "done",
+                    "progress": 100,
+                    "message": "文字分割完成！",
+                })
+
             return mock_segments
 
-        # 動態載入 YOLO-World 偵測器 (指向已下載大模型)
+        # 動態載入 YOLO-World
         if self.yolo_detector is None:
-            model_path = str(self.config.base_dir / "models" / "yolov8x-worldv2.pt")
+            model_path = str(
+                self.config.base_dir
+                / "models"
+                / "yolov8x-worldv2.pt"
+            )
             self.yolo_detector = YoloWorldDetector(model_path)
 
-        # 💡 如果滿足條件，則由 Gemini 解析成多個具體英文單詞；其餘則直接交由 YOLO-World 預測
-        parsed_classes = self.gemini_service.parse_prompt(prompt) if use_gemini else [prompt]
-        
-        segments: list[Segment] = []
+        # 先找出所有類別的 bounding boxes，方便計算整體進度
+        detections = []
 
-        # 遍歷所有解析出來的物件類別單詞進行偵測與分割
         for cls_name in parsed_classes:
-            # 1. 呼叫 YOLO-World 找出符合目前類別的 bounding boxes
-            boxes = self.yolo_detector.predict_boxes(img, cls_name, device=self.segmenter.device)
-            
-            # 2. 逐一將框餵給 SAM 做分割
-            for bbox in boxes:
-                try:
-                    # 呼叫 SAM 預測遮罩
-                    md = self.segmenter.segment_by_box(img, bbox)
-                    
-                    # 打包 Segment，跑特徵分類並存入資料庫
-                    seg = Segment(image_id=image.id, bbox=tuple(md["bbox"]), area=md["area"])
-                    seg.mask_path = self._save_mask(image.id, seg.id, md["mask"])
-                    self._classify_segment(img, seg, md["mask"])
-                    
-                    # 💡 優化：只有當分類器還沒學過（predicted_label 為 None）時，
-                    # 才安全使用被解析後的 cls_name，這能保證不干擾主動學習（Active Learning）的原有分類辨識成果！
-                    if seg.predicted_label is None:
-                        seg.predicted_label = cls_name
-                    
-                    self.repo.add_segment(seg)
-                    segments.append(seg)
-                except Exception as e:
-                    print(f"警告：YOLO Box 進行 SAM 分割失敗: {e}")
-                    continue
+            boxes = self.yolo_detector.predict_boxes(
+                img,
+                cls_name,
+                device=self.segmenter.device,
+            )
+            detections.extend(
+                (cls_name, bbox)
+                for bbox in boxes
+            )
+
+        segments: list[Segment] = []
+        total_boxes = len(detections)
+
+        # 將每個 bounding box 交給 SAM 分割
+        for i, (cls_name, bbox) in enumerate(detections):
+            if progress_callback:
+                progress_val = 75 + int(
+                    (i / max(total_boxes, 1)) * 20
+                )
+                progress_callback({
+                    "event": "progress",
+                    "stage": "segmenting",
+                    "progress": progress_val,
+                    "message": (
+                        f"正在進行物件分割 "
+                        f"({i + 1}/{total_boxes})..."
+                    ),
+                })
+
+            try:
+                md = self.segmenter.segment_by_box(img, bbox)
+
+                seg = Segment(
+                    image_id=image.id,
+                    bbox=tuple(md["bbox"]),
+                    area=md["area"],
+                )
+                seg.mask_path = self._save_mask(
+                    image.id,
+                    seg.id,
+                    md["mask"],
+                )
+                self._classify_segment(
+                    img,
+                    seg,
+                    md["mask"],
+                )
+
+                # 分類器沒有預測結果時，使用 Gemini/文字解析的類別
+                if seg.predicted_label is None:
+                    seg.predicted_label = cls_name
+
+                self.repo.add_segment(seg)
+                segments.append(seg)
+
+            except Exception as exc:
+                print(
+                    "警告：YOLO Box 進行 SAM 分割失敗："
+                    f"{exc}"
+                )
+                continue
+
+        if progress_callback:
+            progress_callback({
+                "event": "progress",
+                "stage": "done",
+                "progress": 100,
+                "message": "文字分割完成！",
+            })
 
         return segments
 

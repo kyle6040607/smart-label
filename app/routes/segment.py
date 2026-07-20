@@ -1,9 +1,12 @@
 """分割 API（提案 demo 第 3 步：系統自動分割，低信心標紅）。"""
 from __future__ import annotations
 
+import json
+import queue
+import threading
 from pathlib import Path
 
-from flask import Blueprint, abort, jsonify, request, send_file
+from flask import Blueprint, abort, jsonify, request, send_file, Response
 
 from app.routes import get_pipeline, get_repo
 
@@ -21,18 +24,48 @@ def segment_image(image_id: str):
     # 紀錄執行前的片段數量
     existing_count = len(repo.list_segments(image_id))
 
-    segments = pipeline.segment_image(img)
+    q = queue.Queue()
 
-    # 紀錄執行後的片段數量
-    new_count = len(repo.list_segments(image_id))
+    def run_segmentation():
+        try:
+            def progress_callback(data):
+                q.put(data)
+            
+            segments = pipeline.segment_image(img, progress_callback=progress_callback)
+            q.put({"event": "done", "segments": segments})
+        except Exception as e:
+            q.put({"event": "error", "message": str(e)})
 
-    # 若數量沒有增加，代表產出的所有片段本來就已經存在（無缺失且已自動分割過）
-    status = "already_completed" if new_count == existing_count else "added"
+    t = threading.Thread(target=run_segmentation)
+    t.start()
 
-    return jsonify({
-        "status": status,
-        "segments": [s.to_dict() for s in segments]
-    }), 201
+    def generate():
+        while True:
+            try:
+                data = q.get(timeout=0.5)
+                if data["event"] == "done":
+                    # 紀錄執行後的片段數量
+                    new_count = len(repo.list_segments(image_id))
+                    # 若數量沒有增加，代表產出的所有片段本來就已經存在（無缺失且已自動分割過）
+                    status = "already_completed" if new_count == existing_count else "added"
+                    
+                    yield json.dumps({
+                        "event": "done",
+                        "status": status,
+                        "segments": [s.to_dict() for s in data["segments"]]
+                    }) + "\n"
+                    break
+                elif data["event"] == "error":
+                    yield json.dumps({"event": "error", "message": data["message"]}) + "\n"
+                    break
+                else:
+                    yield json.dumps(data) + "\n"
+            except queue.Empty:
+                if not t.is_alive():
+                    yield json.dumps({"event": "error", "message": "Segmentation thread terminated unexpectedly."}) + "\n"
+                    break
+
+    return Response(generate(), status=201, mimetype="application/x-ndjson")
 
 
 @bp.post("/images/<image_id>/segment_point")
@@ -57,14 +90,43 @@ def segment_text(image_id: str):
 
     data = request.get_json(silent=True) or {}
     prompt = str(data.get("prompt", "")).strip()
-    try:
-        segments = pipeline.segment_text(img, prompt)
-    except ValueError as exc:
-        abort(400, str(exc))
-    except NotImplementedError as exc:
-        abort(503, str(exc))
 
-    return jsonify([seg.to_dict() for seg in segments]), 201
+    q = queue.Queue()
+
+    def run_segmentation():
+        try:
+            def progress_callback(data):
+                q.put(data)
+            
+            segments = pipeline.segment_text(img, prompt, progress_callback=progress_callback)
+            q.put({"event": "done", "segments": segments})
+        except Exception as e:
+            q.put({"event": "error", "message": str(e)})
+
+    t = threading.Thread(target=run_segmentation)
+    t.start()
+
+    def generate():
+        while True:
+            try:
+                data = q.get(timeout=0.5)
+                if data["event"] == "done":
+                    yield json.dumps({
+                        "event": "done",
+                        "segments": [s.to_dict() for s in data["segments"]]
+                    }) + "\n"
+                    break
+                elif data["event"] == "error":
+                    yield json.dumps({"event": "error", "message": data["message"]}) + "\n"
+                    break
+                else:
+                    yield json.dumps(data) + "\n"
+            except queue.Empty:
+                if not t.is_alive():
+                    yield json.dumps({"event": "error", "message": "Text segmentation thread terminated unexpectedly."}) + "\n"
+                    break
+
+    return Response(generate(), status=201, mimetype="application/x-ndjson")
 
 
 @bp.post("/images/<image_id>/segment_polygon")
