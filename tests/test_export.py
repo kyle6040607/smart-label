@@ -28,6 +28,9 @@ def _setup(tmp_path) -> Repository:
         mask_dir=tmp_path / "mask", db_file=tmp_path / "store.json",
     )
     cfg.ensure_dirs()
+    # 不用真模型跑測試（不受 .env 的 USE_REAL_SAM 影響）
+    cfg.use_real_sam = False
+    cfg.use_real_embedding = False
     repo = Repository(cfg.db_file)
     pipe = Pipeline(cfg, repo)
     p = cfg.upload_dir / "a.png"

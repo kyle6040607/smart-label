@@ -10,6 +10,7 @@ from werkzeug.security import generate_password_hash
 
 from app.config import Config, config as default_config
 from app.models import User
+from app.services.jobs import JobRunner
 from app.services.pipeline import Pipeline
 from app.repository import Repository
 
@@ -39,6 +40,7 @@ def create_app(config: Config | None = None) -> Flask:
     app.smart_config = cfg          # type: ignore[attr-defined]
     app.repo = Repository(cfg.db_file)  # type: ignore[attr-defined]
     app.pipeline = Pipeline(cfg, app.repo)  # type: ignore[attr-defined]
+    app.job_runner = JobRunner(app.pipeline, app.repo)  # type: ignore[attr-defined]
 
     _seed_default_user(app.repo, cfg)
 
@@ -49,8 +51,10 @@ def create_app(config: Config | None = None) -> Flask:
     from app.routes.review import bp as review_bp
     from app.routes.export import bp as export_bp
     from app.routes.line_bot import bp as linebot_bp
+    from app.routes.jobs import bp as jobs_bp
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(jobs_bp)
     app.register_blueprint(images_bp)
     app.register_blueprint(segment_bp)
     app.register_blueprint(labels_bp)

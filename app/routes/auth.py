@@ -10,6 +10,7 @@ from functools import wraps
 
 from flask import (
     Blueprint,
+    abort,
     current_app,
     redirect,
     render_template,
@@ -33,6 +34,18 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("auth.login", next=request.path))
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def api_login_required(view):
+    """API 版登入保護：未登入直接回 401，不導向登入頁（fetch 跟隨 302 會拿到 HTML）。"""
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            abort(401, "請先登入")
         return view(*args, **kwargs)
 
     return wrapped

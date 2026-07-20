@@ -270,3 +270,52 @@ button.btn-danger:disabled {
   display: none !important;
 }
 
+
+/* ---------- 批量分割進度面板 ---------- */
+.job-panel {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: #141b26;
+  border: 1px solid #28323f;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.job-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.job-head #jobCount { color: var(--muted); margin-left: auto; }
+.job-dismiss {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.job-dismiss:hover { color: var(--text); }
+.job-bar {
+  height: 8px;
+  background: #28323f;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.job-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.job-bar-fill.done { background: var(--ok); }
+.job-bar-fill.has-fail { background: var(--danger); }
+.job-fail-list { list-style: none; margin: 8px 0 6px; padding: 0; }
+.job-fail-list:empty { display: none; }
+.job-fail-list li {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}

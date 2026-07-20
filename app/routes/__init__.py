@@ -18,3 +18,7 @@ def get_pipeline() -> Pipeline:
 
 def get_config() -> Config:
     return current_app.smart_config  # type: ignore[attr-defined]
+
+
+def get_job_runner():
+    return current_app.job_runner  # type: ignore[attr-defined]

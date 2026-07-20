@@ -42,11 +42,26 @@
           <input type="checkbox" id="selectAllImgs" /> 全選
         </label>
         <div style="display: flex; gap: 8px; margin-left: auto;">
+          <button id="segUnprocessedBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">分割全部未處理</button>
           <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
+          <button id="batchSegImgsBtn" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>批量分割</button>
           <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
           <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
         </div>
       </div>
+
+      <!-- 批量分割進度（進行中 / 結束後的失敗清單） -->
+      <div id="jobPanel" class="job-panel" hidden>
+        <div class="job-head">
+          <span id="jobTitle">批量分割中…</span>
+          <span id="jobCount"></span>
+          <button id="jobDismissBtn" class="job-dismiss" title="關閉" hidden>×</button>
+        </div>
+        <div class="job-bar"><div id="jobBarFill" class="job-bar-fill"></div></div>
+        <ul id="jobFailList" class="job-fail-list"></ul>
+        <button id="jobRetryBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" hidden>重試失敗的圖片</button>
+      </div>
+
       <div id="thumbs" class="thumbs"></div>
     </section>
 

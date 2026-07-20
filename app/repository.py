@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from app.models import ImageRecord, Segment, LabelExample, User, LineSession
+from app.models import ImageRecord, Segment, LabelExample, User, LineSession, SegmentJob
 
 
 class Repository:
@@ -26,6 +26,7 @@ class Repository:
         self.examples: dict[str, LabelExample] = {}
         self.users: dict[str, User] = {}
         self.line_sessions: dict[str, LineSession] = {}
+        self.jobs: dict[str, SegmentJob] = {}
         self._load()
 
     # ---------- 影像 ----------
@@ -265,6 +266,26 @@ class Repository:
             self.line_sessions.pop(line_user_id, None)
             self._save()
 
+    # ---------- 批量分割 job ----------
+    def add_job(self, job: SegmentJob) -> SegmentJob:
+        with self._lock:
+            self.jobs[job.id] = job
+            self._save()
+        return job
+
+    def get_job(self, job_id: str) -> SegmentJob | None:
+        return self.jobs.get(job_id)
+
+    def update_job(self, job: SegmentJob) -> SegmentJob:
+        with self._lock:
+            self.jobs[job.id] = job
+            self._save()
+        return job
+
+    def list_jobs(self) -> list[SegmentJob]:
+        """最近建立的在前，前端重整頁面後靠這個找回進行中的批量工作。"""
+        return sorted(self.jobs.values(), key=lambda j: j.created_at, reverse=True)
+
     # ---------- 統計（給準確率曲線 / 省下工時用）----------
     def stats(self) -> dict:
         segs = list(self.segments.values())
@@ -291,6 +312,7 @@ class Repository:
             "examples": [e.to_dict() for e in self.examples.values()],
             "users": [u.to_dict() for u in self.users.values()],
             "line_sessions": [s.to_dict() for s in self.line_sessions.values()],
+            "jobs": [j.to_dict() for j in self.jobs.values()],
         }
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.db_file.with_suffix(".tmp")
@@ -314,3 +336,11 @@ class Repository:
             self.line_sessions[d["line_user_id"]] = LineSession(
                 **{k: v for k, v in d.items() if k in LineSession.__dataclass_fields__}
             )
+        for d in data.get("jobs", []):
+            d.pop("total", None)  # 衍生欄位不還原
+            job = SegmentJob(**{k: v for k, v in d.items() if k in SegmentJob.__dataclass_fields__})
+            # 重啟後背景 thread 已不存在，殘留的未完成 job 標成 interrupted，
+            # 否則前端會永遠輪詢一個不會前進的進度條
+            if job.status in ("queued", "running"):
+                job.status = "interrupted"
+            self.jobs[job.id] = job

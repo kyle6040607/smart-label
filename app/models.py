@@ -106,6 +106,29 @@ class LabelExample:
 
 
 @dataclass
+class SegmentJob:
+    """批量分割工作：一次送多張圖，背景逐張處理，前端輪詢進度。
+
+    status: queued（排隊中）→ running（處理中）→ done（結束）。
+    伺服器重啟時未完成的 job 會被標成 interrupted（見 Repository._load）。
+    failed 記錄單張失敗（不中斷整批），結束後前端可拿去重試。
+    """
+
+    id: str = field(default_factory=_new_id)
+    image_ids: list[str] = field(default_factory=list)
+    prompt: str | None = None     # None = 自動分割整張；有值 = 逐張文字分割
+    status: str = "queued"        # queued / running / done / interrupted
+    done: int = 0                 # 已處理張數（含失敗的）
+    failed: list[dict] = field(default_factory=list)  # [{"image_id":..., "error":...}]
+    created_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        d = asdict(self)
+        d["total"] = len(self.image_ids)
+        return d
+
+
+@dataclass
 class LineSession:
     """LINE 使用者目前這一輪的圖片 + 提示詞暫存。
 

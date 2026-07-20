@@ -11,11 +11,15 @@ const state = {
   lastSegments: [],   // 目前畫布上的片段，供審核卡片 hover 加亮用
   imgBatchMode: false,
   segBatchMode: false,
+  jobRunning: false,  // 有批量分割進行中 → 停用批量按鈕（後端也會擋 409）
 };
 const $ = (id) => document.getElementById(id);
 
 // 原圖快取：縮圖與重繪共用同一份，避免重複下載解碼
 const imageCache = new Map();
+
+// image_id → 檔名，給批量分割失敗清單顯示用（loadThumbs 時更新）
+const imageNames = new Map();
 function loadImage(imageId) {
   if (!imageCache.has(imageId)) {
     imageCache.set(imageId, new Promise((resolve, reject) => {
@@ -132,7 +136,9 @@ async function loadThumbs() {
   // 根據批次管理狀態切換 CSS class
   box.classList.toggle("batch-active", state.imgBatchMode);
 
+  imageNames.clear();
   imgs.forEach((im) => {
+    imageNames.set(im.id, im.filename);
     const wrap = document.createElement("div");
     wrap.className = "thumb";
 
@@ -593,6 +599,8 @@ function updateImgBatchBtnState() {
   const checked = document.querySelectorAll(".thumb-chk:checked");
   const btn = $("batchDelImgsBtn");
   if (btn) btn.disabled = checked.length === 0;
+  const segBtn = $("batchSegImgsBtn");
+  if (segBtn) segBtn.disabled = checked.length === 0 || state.jobRunning;
 
   const selectAll = $("selectAllImgs");
   if (selectAll) {
@@ -616,6 +624,8 @@ function updateSegBatchBtnState() {
 function toggleImgBatchUI(isBatch) {
   state.imgBatchMode = isBatch;
   $("toggleImgBatchModeBtn").style.display = isBatch ? "none" : "block";
+  $("segUnprocessedBtn").style.display = isBatch ? "none" : "block";
+  $("batchSegImgsBtn").style.display = isBatch ? "block" : "none";
   $("batchDelImgsBtn").style.display = isBatch ? "block" : "none";
   $("cancelImgBatchBtn").style.display = isBatch ? "block" : "none";
   $("selectAllImgsLabel").style.display = isBatch ? "flex" : "none";
@@ -691,6 +701,149 @@ $("batchDelImgsBtn").onclick = async () => {
   }
 };
 
+// ---------- 批量分割 job：建立 → 輪詢進度 → 失敗清單 / 重試 ----------
+
+let jobTimer = null;       // 輪詢計時器
+let lastFinishedJob = null; // 結束的 job，給「重試失敗」用
+
+function askBatchPrompt() {
+  // 回傳 null = 使用者取消；空字串 = 自動分割整張；其他 = 文字分割 prompt
+  const p = prompt("輸入文字提示做批量文字分割（留空 = 自動分割整張）", "");
+  return p === null ? null : p.trim();
+}
+
+async function createSegmentJob(body) {
+  const res = await fetch("/api/segment_jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await responseError(res, "建立批量分割失敗");
+  return res.json();
+}
+
+function renderJob(job) {
+  const panel = $("jobPanel");
+  panel.hidden = false;
+
+  const kind = job.prompt ? `批量文字分割「${job.prompt}」` : "批量自動分割";
+  const running = job.status === "queued" || job.status === "running";
+  const failCount = job.failed.length;
+
+  state.jobRunning = running;
+  $("segUnprocessedBtn").disabled = running;
+  updateImgBatchBtnState();
+
+  if (running) {
+    $("jobTitle").textContent = `${kind}中…`;
+  } else if (job.status === "interrupted") {
+    $("jobTitle").textContent = `${kind}被中斷（伺服器重啟或內部錯誤），未完成的圖片請重新送出`;
+  } else {
+    $("jobTitle").textContent = failCount
+      ? `${kind}完成，${failCount} 張失敗`
+      : `${kind}完成 ✔`;
+  }
+  $("jobCount").textContent = `${job.done} / ${job.total}`;
+
+  const fill = $("jobBarFill");
+  fill.style.width = job.total ? `${Math.round((job.done / job.total) * 100)}%` : "0%";
+  fill.classList.toggle("done", !running && !failCount && job.status === "done");
+  fill.classList.toggle("has-fail", failCount > 0);
+
+  const ul = $("jobFailList");
+  ul.innerHTML = "";
+  job.failed.forEach((f) => {
+    const li = document.createElement("li");
+    li.textContent = `${imageNames.get(f.image_id) || f.image_id}：${f.error}`;
+    ul.appendChild(li);
+  });
+
+  $("jobDismissBtn").hidden = running;
+  $("jobRetryBtn").hidden = running || failCount === 0;
+  lastFinishedJob = running ? null : job;
+}
+
+// job 結束後重整縮圖、側欄與目前畫布上的片段
+async function refreshAfterJob() {
+  await loadThumbs();
+  await refreshSidebar();
+  if (state.currentImage) {
+    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+    await redraw(all);
+  }
+}
+
+function watchJob(jobId) {
+  clearInterval(jobTimer);
+  jobTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/segment_jobs/${jobId}`);
+      if (!res.ok) return; // 網路暫時失敗，下一輪再試
+      const job = await res.json();
+      renderJob(job);
+      if (job.status !== "queued" && job.status !== "running") {
+        clearInterval(jobTimer);
+        jobTimer = null;
+        await refreshAfterJob();
+      }
+    } catch (e) { /* 下一輪再試 */ }
+  }, 1000);
+}
+
+async function startJob(body) {
+  try {
+    const job = await createSegmentJob(body);
+    renderJob(job);
+    watchJob(job.id);
+  } catch (err) {
+    alert(err instanceof Error ? err.message : "建立批量分割失敗");
+  }
+}
+
+// 批次模式：對勾選的圖批量分割
+$("batchSegImgsBtn").onclick = async () => {
+  const ids = Array.from(document.querySelectorAll(".thumb-chk:checked")).map((c) => c.dataset.id);
+  if (!ids.length) return;
+  const p = askBatchPrompt();
+  if (p === null) return;
+  toggleImgBatchUI(false);
+  await startJob(p ? { image_ids: ids, prompt: p } : { image_ids: ids });
+};
+
+// 捷徑：分割所有還沒有任何片段的圖
+$("segUnprocessedBtn").onclick = async () => {
+  const p = askBatchPrompt();
+  if (p === null) return;
+  await startJob(p ? { scope: "unprocessed", prompt: p } : { scope: "unprocessed" });
+};
+
+// 重試：把失敗的那幾張組成新 job（沿用原 prompt）
+$("jobRetryBtn").onclick = async () => {
+  if (!lastFinishedJob || !lastFinishedJob.failed.length) return;
+  const ids = lastFinishedJob.failed.map((f) => f.image_id);
+  const body = lastFinishedJob.prompt
+    ? { image_ids: ids, prompt: lastFinishedJob.prompt }
+    : { image_ids: ids };
+  await startJob(body);
+};
+
+$("jobDismissBtn").onclick = () => {
+  $("jobPanel").hidden = true;
+  lastFinishedJob = null;
+};
+
+// 頁面載入時找回進行中的批量工作（重整不斷線）
+async function resumeActiveJob() {
+  try {
+    const jobs = await (await fetch("/api/segment_jobs")).json();
+    const active = jobs.find((j) => j.status === "queued" || j.status === "running");
+    if (active) {
+      renderJob(active);
+      watchJob(active.id);
+    }
+  } catch (e) { /* 沒有 job 或請求失敗都不影響頁面 */ }
+}
+
 // 執行遮罩批次刪除
 $("batchDelSegsBtn").onclick = async () => {
   const checked = document.querySelectorAll(".seg-chk:checked");
@@ -717,5 +870,5 @@ $("batchDelSegsBtn").onclick = async () => {
 };
 
 // 初始載入
-loadThumbs();
+loadThumbs().then(resumeActiveJob);
 refreshSidebar();
