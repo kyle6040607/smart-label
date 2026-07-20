@@ -99,12 +99,17 @@ function stopFakeProgress() {
     progressInterval = null;
   }
 }
-function updateAutoSegBtn() {
+function updateAutoSegBtn(keepText = false) {
   const btn = $("autoSegBtn");
   if (!btn) return;
   if (!state.currentImage) {
     btn.disabled = true;
     btn.textContent = "自動分割";
+    return;
+  }
+
+  if (keepText) {
+    btn.disabled = true;
     return;
   }
 
@@ -221,6 +226,15 @@ function toImageXY(e) {
   };
 }
 
+// 輔助函式：從觸控事件中取得相對於視窗的座標
+function getTouchPos(e) {
+  const touch = e.touches[0] || e.changedTouches[0];
+  return {
+    clientX: touch.clientX,
+    clientY: touch.clientY
+  };
+}
+
 $("uploadBtn").onclick = async () => {
   const files = $("fileInput").files;
   if (!files.length) return alert("先選檔案");
@@ -317,7 +331,7 @@ function selectImage(im, el) {
   el.classList.add("active");
   
   state.autoSegCompleted = false;
-  updateAutoSegBtn();
+  updateAutoSegBtn(true);
 
   $("drawBtn").disabled = false;
   $("textPromptInput").disabled = false;
@@ -424,6 +438,14 @@ $("textSegBtn").onclick = async () => {
   }
 };
 
+// 支援在文字輸入框按下 Enter 鍵直接進行分割
+$("textPromptInput").onkeydown = (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("textSegBtn").click();
+  }
+};
+
 // ---------- 模式切換：手動描邊 ----------
 $("drawBtn").onclick = () => {
   state.drawMode = !state.drawMode;
@@ -504,6 +526,59 @@ canvas.onmouseup = async () => {
   await refreshSidebar();
   promptLabel(seg);
 };
+
+// 行動端觸控事件繪圖支援
+canvas.addEventListener("touchstart", (e) => {
+  if (!state.currentImage || !state.drawMode) return;
+  e.preventDefault();
+  state.drawing = true;
+  state.points = [toImageXY(getTouchPos(e))];
+}, { passive: false });
+
+canvas.addEventListener("touchmove", (e) => {
+  if (!state.drawing) return;
+  e.preventDefault();
+  const p = toImageXY(getTouchPos(e));
+  state.points.push(p);
+  // 即時畫出正在描的線
+  ctx.strokeStyle = "#ffd93d";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const a = state.points[state.points.length - 2];
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(p.x, p.y);
+  ctx.stroke();
+}, { passive: false });
+
+canvas.addEventListener("touchend", async (e) => {
+  if (!state.drawing) return;
+  e.preventDefault();
+  state.drawing = false;
+  const points = state.points.map((p) => [p.x, p.y]);
+  state.points = [];
+  if (points.length < 3) {
+    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+    return redraw(all); // 點太少，取消
+  }
+  setSegmentationLoading(true, "儲存描邊中…");
+  try {
+    const res = await fetch(`/api/images/${state.currentImage.id}/segment_polygon`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ points }),
+    });
+    if (!res.ok) return alert("描邊失敗：" + (await res.text()));
+    const seg = await res.json();
+    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
+    await redraw(all);
+    await refreshSidebar();
+    promptLabel(seg);
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setSegmentationLoading(false);
+  }
+}, { passive: false });
 
 // ---------- 把遮罩疊回圖上：高信心綠框、低信心紅框 ----------
 // highlightId：審核卡片 hover 時，把對應的框加粗變黃
@@ -743,9 +818,24 @@ if (dropZone && fileInput && selectFileBtn && fileCountHint) {
     e.preventDefault();
     dropZone.classList.remove("dragover");
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      fileInput.files = e.dataTransfer.files;
+      const files = Array.from(e.dataTransfer.files);
+      const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+
+      if (imageFiles.length === 0) {
+        alert("拖入的檔案中沒有有效的影像檔！");
+        return;
+      }
+
+      if (imageFiles.length < files.length) {
+        alert(`已自動忽略其中的 ${files.length - imageFiles.length} 個非影像檔案。`);
+      }
+
+      const dt = new DataTransfer();
+      imageFiles.forEach((f) => dt.items.add(f));
+      fileInput.files = dt.files;
+
       const count = fileInput.files.length;
-      fileCountHint.textContent = `已拖入 ${count} 個檔案`;
+      fileCountHint.textContent = `已拖入 ${count} 個影像檔`;
     }
   };
 }
