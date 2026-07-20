@@ -11,11 +11,8 @@ const state = {
   lastSegments: [],   // 目前畫布上的片段，供審核卡片 hover 加亮用
   imgBatchMode: false,
   segBatchMode: false,
-<<<<<<< HEAD
   jobRunning: false,  // 有批量分割進行中 → 停用批量按鈕（後端也會擋 409）
-=======
   autoSegCompleted: false,
->>>>>>> origin/main
 };
 const $ = (id) => document.getElementById(id);
 
