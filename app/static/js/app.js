@@ -805,9 +805,24 @@ if (dropZone && fileInput && selectFileBtn && fileCountHint) {
     e.preventDefault();
     dropZone.classList.remove("dragover");
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      fileInput.files = e.dataTransfer.files;
+      const files = Array.from(e.dataTransfer.files);
+      const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+
+      if (imageFiles.length === 0) {
+        alert("拖入的檔案中沒有有效的影像檔！");
+        return;
+      }
+
+      if (imageFiles.length < files.length) {
+        alert(`已自動忽略其中的 ${files.length - imageFiles.length} 個非影像檔案。`);
+      }
+
+      const dt = new DataTransfer();
+      imageFiles.forEach((f) => dt.items.add(f));
+      fileInput.files = dt.files;
+
       const count = fileInput.files.length;
-      fileCountHint.textContent = `已拖入 ${count} 個檔案`;
+      fileCountHint.textContent = `已拖入 ${count} 個影像檔`;
     }
   };
 }
