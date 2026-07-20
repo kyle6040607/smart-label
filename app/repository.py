@@ -175,7 +175,7 @@ class Repository:
         """新增一張圖到 session。
 
         回傳 (session, 因逾時被清掉的舊圖 id 列表, reopened)。
-        reopened=True 代表使用者先前已輸入「傳完了」（不管是否已確認），
+        reopened=True 代表使用者先前已輸入「完成」（不管是否已確認），
         這次傳圖重新打開收圖狀態。
         """
         with self._lock:
@@ -192,7 +192,7 @@ class Repository:
             return s, expired_ids, reopened
 
     def mark_line_session_images_done(self, line_user_id: str) -> LineSession | None:
-        """使用者輸入「傳完了」，進入待確認狀態。若一張圖都沒傳，回傳 None。"""
+        """使用者輸入「完成」，進入待確認狀態。若一張圖都沒傳，回傳 None。"""
         with self._lock:
             s = self.line_sessions.get(line_user_id)
             if s is None or not s.image_ids:

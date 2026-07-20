@@ -1,30 +1,33 @@
 FROM python:3.13-slim
 
-# Python 設定
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# 安裝系統相依：git（mobile-sam 為 git 相依）與 opencv 執行所需的 libgl1、libglib2.0-0，並安裝 uv
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        git libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir uv
-
-# 工作目錄
 WORKDIR /app
 
-# 先複製相依設定
-COPY pyproject.toml ./
-COPY uv.lock ./
+# git：mobile-sam 是 git 相依，uv sync 需要它才能抓原始碼
+# libgl1 / libglib2.0-0：opencv-python 執行期需要，沒裝 import cv2 會炸
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# 安裝套件
-RUN uv sync --frozen
+COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
 
-# 複製專案
+COPY pyproject.toml uv.lock ./
+
+RUN uv sync --frozen --no-dev
+
 COPY . .
 
-# 對外開放 Flask Port
-EXPOSE 5000
+ENV PATH="/app/.venv/bin:$PATH"
 
-# 啟動 Flask
-CMD ["uv", "run", "python", "main.py"]
+EXPOSE 8080
+
+CMD exec gunicorn \
+    --bind 0.0.0.0:${PORT:-8080} \
+    --workers 1 \
+    --threads 8 \
+    --timeout 0 \
+    main:app

@@ -161,6 +161,26 @@ def delete_segment(seg_id: str):
     return jsonify({"deleted": seg_id})
 
 
+@bp.post("/segments/delete_batch")
+def delete_segments_batch():
+    """批次刪除選定的遮罩片段，連同其遮罩檔案。"""
+    repo = get_repo()
+    data = request.get_json(silent=True) or {}
+    seg_ids = data.get("segment_ids", [])
+    if not seg_ids:
+        abort(400, "無效的片段 ID 清單")
+
+    deleted_ids = []
+    for seg_id in seg_ids:
+        if repo.get_segment(seg_id):
+            mask = repo.delete_segment(seg_id)
+            if mask:
+                Path(mask).unlink(missing_ok=True)
+            deleted_ids.append(seg_id)
+
+    return jsonify({"deleted_ids": deleted_ids}), 200
+
+
 @bp.get("/segments/<seg_id>/mask")
 def segment_mask(seg_id: str):
     """回傳遮罩 PNG，給前端疊圖。"""
