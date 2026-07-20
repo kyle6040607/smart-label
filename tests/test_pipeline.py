@@ -56,19 +56,23 @@ def test_active_learning_loop(tmp_path):
     pipe.add_example_from_segment(rseg, "red")
     pipe.add_example_from_segment(bseg, "blue")
 
+    # 兩張圖都沒設 owner，落在同一個 owner_id="" 的分類器桶子裡
+    owner_id = rseg.owner_id
+    assert owner_id == bseg.owner_id == ""
+
     # 分類器就緒，統計有自動接受比例
-    assert pipe.classifier.ready
-    stats = repo.stats()
+    assert pipe.get_classifier(owner_id).ready
+    stats = repo.stats(owner_id=owner_id)
     assert stats["num_labels"] == 2
     assert 0.0 <= stats["auto_ratio"] <= 1.0
 
     # 刪掉建錯的類別：範例消失、用它標的片段退回送審
     assert rseg.human_label == "red" and rseg.reviewed
-    n = pipe.delete_label("red")
+    n = pipe.delete_label("red", owner_id)
     assert n == 1
-    assert repo.labels() == ["blue"]
+    assert repo.labels(owner_id=owner_id) == ["blue"]
     # 只剩一個類別仍可運作（單類別走相似度信心）
-    assert pipe.classifier.ready
+    assert pipe.get_classifier(owner_id).ready
     again = repo.get_segment(rseg.id)
     assert again.human_label is None and not again.reviewed
     # 重新預測後不能殘留刪掉的類別；信心是相似度分數，送審與否跟著門檻走
@@ -78,12 +82,12 @@ def test_active_learning_loop(tmp_path):
     assert again.needs_review == (again.confidence < cfg.confidence_threshold)
 
     # 範例刪光 → 分類器才真正失效，預測要被清空
-    pipe.delete_label("blue")
-    assert not pipe.classifier.ready
+    pipe.delete_label("blue", owner_id)
+    assert not pipe.get_classifier(owner_id).ready
     empty = repo.get_segment(rseg.id)
     assert empty.predicted_label is None and empty.probs == {} and empty.needs_review
     # 刪不存在的類別 → 0
-    assert pipe.delete_label("nope") == 0
+    assert pipe.delete_label("nope", owner_id) == 0
 
 
 def test_segment_text_contract_rejects_invalid_prompt(tmp_path):

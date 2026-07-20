@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flask import Blueprint, abort, jsonify, request, send_file
+from flask import Blueprint, abort, jsonify, request, send_file, session
 from PIL import Image
 from werkzeug.utils import secure_filename
 
 from app.routes import get_config, get_repo
-from app.routes.auth import api_login_required
+from app.routes.auth import api_login_required, get_current_user, owns, scope_owner_id
 from app.models import ImageRecord
 
 bp = Blueprint("images", __name__, url_prefix="/api/images")
@@ -41,9 +41,9 @@ def upload():
         f.seek(0)
         file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-        # 比對是否已有相同雜湊值的照片已上傳
+        # 比對是否已有相同雜湊值的照片已上傳（只比對自己上傳過的，不比對別人的）
         is_duplicate = False
-        for img in repo.list_images():
+        for img in repo.list_images(owner_id=session["user_id"]):
             existing_hash = getattr(img, "file_hash", "")
             # 針對歷史舊資料進行相容性雜湊值計算與補齊
             if not existing_hash and img.path and Path(img.path).exists():
@@ -63,7 +63,7 @@ def upload():
             continue
 
         name = secure_filename(f.filename)
-        rec = ImageRecord(filename=name, file_hash=file_hash)
+        rec = ImageRecord(filename=name, file_hash=file_hash, owner_id=session["user_id"])
         dest = cfg.upload_dir / f"{rec.id}_{name}"
         f.save(dest)
 
@@ -107,14 +107,15 @@ def upload():
 
 @bp.get("")
 def list_images():
-    return jsonify([i.to_dict() for i in get_repo().list_images()])
+    owner_id = scope_owner_id(get_current_user())
+    return jsonify([i.to_dict() for i in get_repo().list_images(owner_id=owner_id)])
 
 
 @bp.get("/<image_id>/file")
 def image_file(image_id: str):
     """回傳原圖，給前端 canvas 顯示。"""
     rec = get_repo().get_image(image_id)
-    if not rec:
+    if not rec or not owns(get_current_user(), rec.owner_id):
         abort(404)
     return send_file(Path(rec.path))
 
@@ -123,7 +124,8 @@ def image_file(image_id: str):
 def delete_image(image_id: str):
     """刪除一張上傳的照片，連同它的遮罩片段與檔案一起清掉。"""
     repo = get_repo()
-    if not repo.get_image(image_id):
+    rec = repo.get_image(image_id)
+    if not rec or not owns(get_current_user(), rec.owner_id):
         abort(404)
     paths = repo.delete_image(image_id)          # 先從資料層移除
     for p in paths:                              # 再刪實體檔（原圖 + 遮罩 PNG）
@@ -133,8 +135,9 @@ def delete_image(image_id: str):
 
 @bp.post("/delete_batch")
 def delete_images_batch():
-    """批次刪除照片，連同其遮罩與檔案。"""
+    """批次刪除照片，連同其遮罩與檔案。只會刪自己擁有的（admin 不受限）。"""
     repo = get_repo()
+    user = get_current_user()
     data = request.get_json(silent=True) or {}
     image_ids = data.get("image_ids", [])
     if not image_ids:
@@ -144,7 +147,8 @@ def delete_images_batch():
     deleted_ids = []
 
     for image_id in image_ids:
-        if repo.get_image(image_id):
+        rec = repo.get_image(image_id)
+        if rec and owns(user, rec.owner_id):
             paths = repo.delete_image(image_id)
             for p in paths:
                 Path(p).unlink(missing_ok=True)

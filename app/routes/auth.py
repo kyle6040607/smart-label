@@ -45,6 +45,25 @@ def api_login_required():
         return jsonify({"error": "未登入"}), 401
 
 
+def get_current_user() -> User | None:
+    """給資料擁有者檢查用：回傳目前登入的 User（api_login_required 已保證有 session）。"""
+    return get_repo().get_user(session.get("user_id"))
+
+
+def is_admin(user: User) -> bool:
+    return user.role == "admin"
+
+
+def owns(user: User, owner_id: str) -> bool:
+    """admin 可看所有人的資料；一般使用者只能碰自己的（owner_id 相符）。"""
+    return is_admin(user) or user.id == owner_id
+
+
+def scope_owner_id(user: User) -> str | None:
+    """給 list/stats 類查詢用：admin 回 None（不篩選），一般使用者回自己的 id。"""
+    return None if is_admin(user) else user.id
+
+
 @bp.get("/login")
 def login():
     if session.get("user_id"):

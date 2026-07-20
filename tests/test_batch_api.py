@@ -20,6 +20,11 @@ def client(tmp_path):
     app.config["TESTING"] = True
     with app.app_context():
         with app.test_client() as client:
+            # API 現在要求登入；用種好的預設 admin 帳號登入，批次刪除測試才能通過擁有者檢查
+            client.post("/login", data={
+                "username": cfg.default_admin_user,
+                "password": cfg.default_admin_password,
+            })
             yield client
 
 def test_delete_images_batch(client, tmp_path):

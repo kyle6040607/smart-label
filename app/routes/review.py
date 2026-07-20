@@ -4,7 +4,7 @@ from __future__ import annotations
 from flask import Blueprint, abort, jsonify, request
 
 from app.routes import get_pipeline, get_repo
-from app.routes.auth import api_login_required
+from app.routes.auth import api_login_required, get_current_user, owns, scope_owner_id
 
 bp = Blueprint("review", __name__, url_prefix="/api")
 bp.before_request(api_login_required)
@@ -12,8 +12,9 @@ bp.before_request(api_login_required)
 
 @bp.get("/review/queue")
 def review_queue():
-    """待人工審核的低信心片段（被標紅的）。"""
-    return jsonify([s.to_dict() for s in get_repo().list_review_queue()])
+    """待人工審核的低信心片段（被標紅的）。admin 看全部，一般使用者只看自己的。"""
+    owner_id = scope_owner_id(get_current_user())
+    return jsonify([s.to_dict() for s in get_repo().list_review_queue(owner_id=owner_id)])
 
 
 @bp.post("/segments/<seg_id>/review")
@@ -24,7 +25,7 @@ def review_segment(seg_id: str):
     """
     repo, pipeline = get_repo(), get_pipeline()
     seg = repo.get_segment(seg_id)
-    if not seg:
+    if not seg or not owns(get_current_user(), seg.owner_id):
         abort(404)
     data = request.get_json(force=True)
     label = (data.get("label") or "").strip()
@@ -36,5 +37,6 @@ def review_segment(seg_id: str):
 
 @bp.get("/stats")
 def stats():
-    """整體統計：自動接受比例 ≈ 省下的工時、送審數量等。"""
-    return jsonify(get_repo().stats())
+    """統計：自動接受比例 ≈ 省下的工時、送審數量等。admin 看全體，一般使用者看自己的。"""
+    owner_id = scope_owner_id(get_current_user())
+    return jsonify(get_repo().stats(owner_id=owner_id))

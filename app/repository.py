@@ -38,8 +38,11 @@ class Repository:
     def get_image(self, image_id: str) -> ImageRecord | None:
         return self.images.get(image_id)
 
-    def list_images(self) -> list[ImageRecord]:
-        return sorted(self.images.values(), key=lambda i: i.created_at)
+    def list_images(self, owner_id: str | None = None) -> list[ImageRecord]:
+        imgs = self.images.values()
+        if owner_id is not None:
+            imgs = [i for i in imgs if i.owner_id == owner_id]
+        return sorted(imgs, key=lambda i: i.created_at)
 
     def delete_image(self, image_id: str) -> list[str]:
         """刪除一張圖，連帶清掉它所有的遮罩片段紀錄。
@@ -71,15 +74,20 @@ class Repository:
     def get_segment(self, seg_id: str) -> Segment | None:
         return self.segments.get(seg_id)
 
-    def list_segments(self, image_id: str | None = None) -> list[Segment]:
+    def list_segments(self, image_id: str | None = None, owner_id: str | None = None) -> list[Segment]:
         segs = self.segments.values()
         if image_id is not None:
             segs = [s for s in segs if s.image_id == image_id]
+        if owner_id is not None:
+            segs = [s for s in segs if s.owner_id == owner_id]
         return list(segs)
 
-    def list_review_queue(self) -> list[Segment]:
+    def list_review_queue(self, owner_id: str | None = None) -> list[Segment]:
         """待人工審核的低信心片段（提案第 8 頁標紅送審）。"""
-        return [s for s in self.segments.values() if s.needs_review and not s.reviewed]
+        segs = self.segments.values()
+        if owner_id is not None:
+            segs = [s for s in segs if s.owner_id == owner_id]
+        return [s for s in segs if s.needs_review and not s.reviewed]
 
     def delete_segment(self, seg_id: str) -> str | None:
         """刪掉一個片段（切壞/不要的），回傳要刪的遮罩檔路徑。"""
@@ -103,24 +111,32 @@ class Repository:
             self._save()
         return ex
 
-    def list_examples(self) -> list[LabelExample]:
-        return list(self.examples.values())
+    def list_examples(self, owner_id: str | None = None) -> list[LabelExample]:
+        exs = self.examples.values()
+        if owner_id is not None:
+            exs = [e for e in exs if e.owner_id == owner_id]
+        return list(exs)
 
-    def labels(self) -> list[str]:
-        return sorted({ex.label for ex in self.examples.values()})
+    def labels(self, owner_id: str | None = None) -> list[str]:
+        exs = self.examples.values()
+        if owner_id is not None:
+            exs = [e for e in exs if e.owner_id == owner_id]
+        return sorted({e.label for e in exs})
 
-    def delete_label(self, label: str) -> int:
+    def delete_label(self, label: str, owner_id: str | None) -> int:
         """刪掉某類別的所有種子範例（標錯類別時用），回傳刪除的範例數。
 
+        owner_id 給定時只刪該使用者名下的；None（admin 未指定對象時）刪全部。
         連帶把用這個錯誤類別人工標過的片段退回送審——類別都錯了，
         那些標記也不該留在匯出資料裡。回訓由上層 pipeline 負責。
         """
         with self._lock:
-            ids = [eid for eid, ex in self.examples.items() if ex.label == label]
+            ids = [eid for eid, ex in self.examples.items()
+                   if ex.label == label and (owner_id is None or ex.owner_id == owner_id)]
             for eid in ids:
                 del self.examples[eid]
             for seg in self.segments.values():
-                if seg.human_label == label:
+                if seg.human_label == label and (owner_id is None or seg.owner_id == owner_id):
                     seg.human_label = None
                     seg.reviewed = False
                     seg.needs_review = True
@@ -266,8 +282,13 @@ class Repository:
             self._save()
 
     # ---------- 統計（給準確率曲線 / 省下工時用）----------
-    def stats(self) -> dict:
+    def stats(self, owner_id: str | None = None) -> dict:
         segs = list(self.segments.values())
+        if owner_id is not None:
+            segs = [s for s in segs if s.owner_id == owner_id]
+        examples = list(self.examples.values())
+        if owner_id is not None:
+            examples = [e for e in examples if e.owner_id == owner_id]
         total = len(segs)
         need_review = sum(1 for s in segs if s.needs_review)
         reviewed = sum(1 for s in segs if s.reviewed)
@@ -279,8 +300,8 @@ class Repository:
             "reviewed": reviewed,
             # 自動接受比例 ≈ 省下的人工工時（提案第 3 頁）
             "auto_ratio": round(auto_accepted / total, 3) if total else 0.0,
-            "num_examples": len(self.examples),
-            "num_labels": len(self.labels()),
+            "num_examples": len(examples),
+            "num_labels": len({e.label for e in examples}),
         }
 
     # ---------- 持久化 ----------
@@ -301,6 +322,7 @@ class Repository:
         if not self.db_file.exists():
             return
         data = json.loads(self.db_file.read_text(encoding="utf-8"))
+        # 舊資料沒有 owner_id 欄位時，dataclass 預設值 "" 會自動補上（視為無主，只有 admin 看得到）
         for d in data.get("images", []):
             self.images[d["id"]] = ImageRecord(**{k: v for k, v in d.items() if k in ImageRecord.__dataclass_fields__})
         for d in data.get("segments", []):

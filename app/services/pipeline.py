@@ -5,6 +5,8 @@
 
 也負責主動學習迴圈：人標了新範例 → 重訓分類器 → 重新預測未審片段。
 這層是 API 與各 AI 模組之間的唯一橋樑，方便日後抽換實作。
+
+分類器是「每個使用者一顆」，彼此獨立不互相共用（見 classifiers）。
 """
 from __future__ import annotations
 
@@ -41,10 +43,8 @@ class Pipeline:
             min_mask_region_area=config.sam_min_mask_region_area,
         )
         self.embedder = build_embedder(config.use_real_embedding)
-        self.classifier = FewShotClassifier(
-            kind=config.classifier_kind, k=config.knn_k, temperature=config.softmax_temperature
-        )
-        self.refit()
+        # 每個使用者各自一顆分類器，惰性建立（第一次用到才 fit）
+        self.classifiers: dict[str, FewShotClassifier] = {}
 
     # ---------- 影像 IO ----------
     @staticmethod
@@ -66,6 +66,7 @@ class Pipeline:
 
         img = self._read_rgb(image.path)
         masks = self.segmenter.segment(img)
+        classifier = self.get_classifier(image.owner_id)
 
         # 取得此圖片目前資料庫中已有的所有片段
         existing_segs = self.repo.list_segments(image.id)
@@ -99,9 +100,9 @@ class Pipeline:
                 segments.append(matched_seg)
             else:
                 # 缺失的區塊，重新建立、分類並存檔
-                seg = Segment(image_id=image.id, bbox=bbox, area=md["area"])
+                seg = Segment(image_id=image.id, owner_id=image.owner_id, bbox=bbox, area=md["area"])
                 seg.mask_path = self._save_mask(image.id, seg.id, md["mask"])
-                self._classify_segment(img, seg, md["mask"])
+                self._classify_segment(img, seg, md["mask"], classifier)
                 self.repo.add_segment(seg)
                 segments.append(seg)
         
@@ -113,9 +114,9 @@ class Pipeline:
     def segment_point(self, image: ImageRecord, point: tuple[int, int]) -> Segment:
         img = self._read_rgb(image.path)
         md = self.segmenter.segment_at(img, point)
-        seg = Segment(image_id=image.id, bbox=tuple(md["bbox"]), area=md["area"])
+        seg = Segment(image_id=image.id, owner_id=image.owner_id, bbox=tuple(md["bbox"]), area=md["area"])
         seg.mask_path = self._save_mask(image.id, seg.id, md["mask"])
-        self._classify_segment(img, seg, md["mask"])
+        self._classify_segment(img, seg, md["mask"], self.get_classifier(image.owner_id))
         self.repo.add_segment(seg)
         return seg
 
@@ -179,6 +180,7 @@ class Pipeline:
 
                 seg = Segment(
                     image_id=image.id,
+                    owner_id=image.owner_id,
                     bbox=(x1, y1, x2 - x1, y2 - y1),
                     area=int(mask.sum()),
                 )
@@ -231,6 +233,7 @@ class Pipeline:
                 for bbox in boxes
             )
 
+        classifier = self.get_classifier(image.owner_id)
         segments: list[Segment] = []
         total_boxes = len(detections)
 
@@ -255,6 +258,7 @@ class Pipeline:
 
                 seg = Segment(
                     image_id=image.id,
+                    owner_id=image.owner_id,
                     bbox=tuple(md["bbox"]),
                     area=md["area"],
                 )
@@ -267,6 +271,7 @@ class Pipeline:
                     img,
                     seg,
                     md["mask"],
+                    classifier,
                 )
 
                 # 分類器沒有預測結果時，使用 Gemini/文字解析的類別
@@ -310,17 +315,17 @@ class Pipeline:
             raise ValueError("描邊區域是空的（至少需要 3 個點）")
         bbox = (int(xs.min()), int(ys.min()),
                 int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1))
-        seg = Segment(image_id=image.id, bbox=bbox, area=int((mask > 0).sum()))
+        seg = Segment(image_id=image.id, owner_id=image.owner_id, bbox=bbox, area=int((mask > 0).sum()))
         seg.mask_path = self._save_mask(image.id, seg.id, mask)
-        self._classify_segment(img, seg, mask)
+        self._classify_segment(img, seg, mask, self.get_classifier(image.owner_id))
         self.repo.add_segment(seg)
         return seg
 
     # ---------- 對單一片段做分類 + 信心判斷 ----------
-    def _classify_segment(self, img: np.ndarray, seg: Segment, mask: np.ndarray) -> None:
+    def _classify_segment(self, img: np.ndarray, seg: Segment, mask: np.ndarray, classifier: FewShotClassifier) -> None:
         feat = self.embedder.encode(img, mask)
-        if self.classifier.ready:
-            probs = self.classifier.predict(feat)
+        if classifier.ready:
+            probs = classifier.predict(feat)
             seg.probs = probs
             seg.predicted_label = max(probs, key=probs.get) if probs else None
             seg.confidence = confidence_score(probs, self.config.confidence_strategy)
@@ -334,7 +339,8 @@ class Pipeline:
         img = self._read_rgb(self.repo.get_image(seg.image_id).path)
         mask = imread(seg.mask_path, cv2.IMREAD_GRAYSCALE)
         feat = self.embedder.encode(img, mask)
-        ex = LabelExample(label=label, feature=feat.tolist(), source_segment_id=seg.id)
+        # owner 從片段本身帶出來，不是從目前登入者──即使是 admin 幫別人標，範例還是歸屬片段真正的主人
+        ex = LabelExample(label=label, feature=feat.tolist(), source_segment_id=seg.id, owner_id=seg.owner_id)
         self.repo.add_example(ex)
 
         # 人也順手把這片段標好
@@ -343,29 +349,40 @@ class Pipeline:
         seg.needs_review = False
         self.repo.update_segment(seg)
 
-        # 主動學習迴圈：回訓 + 重新預測未審片段
-        self.refit()
-        self.reclassify_pending()
+        # 主動學習迴圈：回訓 + 重新預測未審片段（只影響同一個 owner）
+        self.refit(seg.owner_id)
+        self.reclassify_pending(seg.owner_id)
         return ex
 
-    # ---------- 刪掉標錯的類別（連帶回訓）----------
-    def delete_label(self, label: str) -> int:
-        n = self.repo.delete_label(label)
-        self.refit()
-        self.reclassify_pending()
+    # ---------- 刪掉標錯的類別（連帶回訓，只影響同一個 owner）----------
+    def delete_label(self, label: str, owner_id: str) -> int:
+        n = self.repo.delete_label(label, owner_id)
+        self.refit(owner_id)
+        self.reclassify_pending(owner_id)
         return n
 
-    # ---------- 重建分類器 ----------
-    def refit(self) -> None:
-        self.classifier.fit(self.repo.list_examples())
+    # ---------- 取得（必要時建立）某使用者的分類器 ----------
+    def get_classifier(self, owner_id: str) -> FewShotClassifier:
+        if owner_id not in self.classifiers:
+            self.refit(owner_id)
+        return self.classifiers[owner_id]
 
-    # ---------- 回訓後重新預測尚未人工審核的片段 ----------
-    def reclassify_pending(self) -> None:
+    # ---------- 重建某使用者的分類器 ----------
+    def refit(self, owner_id: str) -> None:
+        clf = FewShotClassifier(
+            kind=self.config.classifier_kind, k=self.config.knn_k, temperature=self.config.softmax_temperature
+        )
+        clf.fit(self.repo.list_examples(owner_id=owner_id))
+        self.classifiers[owner_id] = clf
+
+    # ---------- 回訓後重新預測該使用者尚未人工審核的片段 ----------
+    def reclassify_pending(self, owner_id: str) -> None:
+        classifier = self.get_classifier(owner_id)
         cache: dict[str, np.ndarray] = {}
-        for seg in self.repo.list_segments():
+        for seg in self.repo.list_segments(owner_id=owner_id):
             if seg.reviewed:
                 continue
-            if not self.classifier.ready:
+            if not classifier.ready:
                 # 範例被刪光、分類器失效 → 清掉舊預測，退回送審（別殘留 stale label）
                 seg.probs, seg.predicted_label, seg.confidence, seg.needs_review = {}, None, 0.0, True
                 self.repo.update_segment(seg)
@@ -373,5 +390,5 @@ class Pipeline:
             if seg.image_id not in cache:
                 cache[seg.image_id] = self._read_rgb(self.repo.get_image(seg.image_id).path)
             mask = imread(seg.mask_path, cv2.IMREAD_GRAYSCALE)
-            self._classify_segment(cache[seg.image_id], seg, mask)
+            self._classify_segment(cache[seg.image_id], seg, mask, classifier)
             self.repo.update_segment(seg)

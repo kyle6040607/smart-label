@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Blueprint, abort, jsonify, request, send_file, Response
 
 from app.routes import get_pipeline, get_repo
-from app.routes.auth import api_login_required
+from app.routes.auth import api_login_required, get_current_user, owns
 
 bp = Blueprint("segment", __name__, url_prefix="/api")
 bp.before_request(api_login_required)
@@ -20,7 +20,7 @@ def segment_image(image_id: str):
     """對整張圖自動切割並分類，回傳所有片段（含信心、是否送審）與完成狀態。"""
     repo, pipeline = get_repo(), get_pipeline()
     img = repo.get_image(image_id)
-    if not img:
+    if not img or not owns(get_current_user(), img.owner_id):
         abort(404)
 
     # 紀錄執行前的片段數量
@@ -75,7 +75,7 @@ def segment_point(image_id: str):
     """互動式：在使用者點擊座標切出單一物件。body: {"x": int, "y": int}"""
     repo, pipeline = get_repo(), get_pipeline()
     img = repo.get_image(image_id)
-    if not img:
+    if not img or not owns(get_current_user(), img.owner_id):
         abort(404)
     data = request.get_json(force=True)
     seg = pipeline.segment_point(img, (int(data["x"]), int(data["y"])))
@@ -87,7 +87,7 @@ def segment_text(image_id: str):
     """自然語言分割。body: {"prompt": "cat"}，回傳零到多個 Segment。"""
     repo, pipeline = get_repo(), get_pipeline()
     img = repo.get_image(image_id)
-    if not img:
+    if not img or not owns(get_current_user(), img.owner_id):
         abort(404, "找不到圖片")
 
     data = request.get_json(silent=True) or {}
@@ -136,7 +136,7 @@ def segment_polygon(image_id: str):
     """手動描邊：使用者沿邊界畫出多邊形。body: {"points": [[x,y], ...]}"""
     repo, pipeline = get_repo(), get_pipeline()
     img = repo.get_image(image_id)
-    if not img:
+    if not img or not owns(get_current_user(), img.owner_id):
         abort(404)
     data = request.get_json(force=True)
     points = [(int(x), int(y)) for x, y in data.get("points", [])]
@@ -148,14 +148,19 @@ def segment_polygon(image_id: str):
 
 @bp.get("/images/<image_id>/segments")
 def list_segments(image_id: str):
-    return jsonify([s.to_dict() for s in get_repo().list_segments(image_id)])
+    repo = get_repo()
+    img = repo.get_image(image_id)
+    if not img or not owns(get_current_user(), img.owner_id):
+        abort(404)
+    return jsonify([s.to_dict() for s in repo.list_segments(image_id)])
 
 
 @bp.delete("/segments/<seg_id>")
 def delete_segment(seg_id: str):
     """刪掉切壞/不要的片段，連同它的遮罩 PNG。"""
     repo = get_repo()
-    if not repo.get_segment(seg_id):
+    seg = repo.get_segment(seg_id)
+    if not seg or not owns(get_current_user(), seg.owner_id):
         abort(404)
     mask = repo.delete_segment(seg_id)
     if mask:
@@ -165,8 +170,9 @@ def delete_segment(seg_id: str):
 
 @bp.post("/segments/delete_batch")
 def delete_segments_batch():
-    """批次刪除選定的遮罩片段，連同其遮罩檔案。"""
+    """批次刪除選定的遮罩片段，連同其遮罩檔案。只會刪自己擁有的（admin 不受限）。"""
     repo = get_repo()
+    user = get_current_user()
     data = request.get_json(silent=True) or {}
     seg_ids = data.get("segment_ids", [])
     if not seg_ids:
@@ -174,7 +180,8 @@ def delete_segments_batch():
 
     deleted_ids = []
     for seg_id in seg_ids:
-        if repo.get_segment(seg_id):
+        seg = repo.get_segment(seg_id)
+        if seg and owns(user, seg.owner_id):
             mask = repo.delete_segment(seg_id)
             if mask:
                 Path(mask).unlink(missing_ok=True)
@@ -187,6 +194,6 @@ def delete_segments_batch():
 def segment_mask(seg_id: str):
     """回傳遮罩 PNG，給前端疊圖。"""
     seg = get_repo().get_segment(seg_id)
-    if not seg or not seg.mask_path:
+    if not seg or not seg.mask_path or not owns(get_current_user(), seg.owner_id):
         abort(404)
     return send_file(Path(seg.mask_path), mimetype="image/png")

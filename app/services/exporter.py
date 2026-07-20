@@ -72,13 +72,29 @@ def _add_image_file(z: zipfile.ZipFile, image: ImageRecord) -> str:
     return arc
 
 
+def _owned(repo: Repository, seg: Segment, owner_id: str | None) -> bool:
+    """雙重驗證：片段與所屬照片的 owner 都要對得上，防止資料不一致外洩。"""
+    if owner_id is None:
+        return True
+    if seg.owner_id != owner_id:
+        return False
+    image = repo.get_image(seg.image_id)
+    return image is not None and image.owner_id == owner_id
+
+
 # ---------- 對外入口 ----------
-def build_dataset(repo: Repository, fmt: str) -> bytes:
-    """收齊已標好的片段，打包成指定格式的 zip，回傳 bytes。"""
+def build_dataset(repo: Repository, fmt: str, owner_id: str | None = None) -> bytes:
+    """收齊已標好的片段，打包成指定格式的 zip，回傳 bytes。
+
+    owner_id 給定時只收該使用者的片段；None（如 admin）收全體。
+    """
     if fmt not in FORMATS:
         raise ValueError(f"未知格式：{fmt}（可用：{', '.join(FORMATS)}）")
 
-    labeled = [s for s in repo.list_segments() if s.final_label]
+    labeled = [
+        s for s in repo.list_segments(owner_id=owner_id)
+        if s.final_label and _owned(repo, s, owner_id)
+    ]
     labels = sorted({s.final_label for s in labeled if s.final_label})
     by_image: dict[str, list[Segment]] = {}
     for s in labeled:

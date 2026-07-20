@@ -10,7 +10,7 @@ import io
 from flask import Blueprint, abort, request, send_file
 
 from app.routes import get_repo
-from app.routes.auth import api_login_required
+from app.routes.auth import api_login_required, get_current_user, scope_owner_id
 from app.services.exporter import FORMATS, build_dataset
 
 bp = Blueprint("export", __name__, url_prefix="/api")
@@ -19,11 +19,15 @@ bp.before_request(api_login_required)
 
 @bp.get("/export")
 def export_dataset():
-    """匯出資料集 zip。?format=coco（預設）| yolo | mask"""
+    """匯出資料集 zip。?format=coco（預設）| yolo | mask
+
+    只包含自己標好的片段；admin 匯出全體資料。
+    """
     fmt = (request.args.get("format") or "coco").lower()
     if fmt not in FORMATS:
         abort(400, f"未知格式：{fmt}（可用：{', '.join(FORMATS)}）")
-    data = build_dataset(get_repo(), fmt)
+    owner_id = scope_owner_id(get_current_user())
+    data = build_dataset(get_repo(), fmt, owner_id=owner_id)
     return send_file(
         io.BytesIO(data),
         mimetype="application/zip",

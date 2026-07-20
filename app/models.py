@@ -25,6 +25,7 @@ class ImageRecord:
     width: int = 0
     height: int = 0
     file_hash: str = ""
+    owner_id: str = ""            # 上傳者的 User.id；空字串代表無主（歷史舊資料）
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +41,7 @@ class Segment:
 
     id: str = field(default_factory=_new_id)
     image_id: str = ""
+    owner_id: str = ""            # 從所屬 ImageRecord 帶下來，方便直接篩選
     mask_path: str = ""           # 遮罩檔（PNG，0/255）
     bbox: tuple[int, int, int, int] = (0, 0, 0, 0)  # x, y, w, h
     area: int = 0
@@ -99,6 +101,7 @@ class LabelExample:
     label: str = ""
     feature: list[float] = field(default_factory=list)
     source_segment_id: str | None = None
+    owner_id: str = ""            # 這個範例屬於誰的分類器
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
