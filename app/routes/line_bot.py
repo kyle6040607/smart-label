@@ -131,7 +131,7 @@ def callback():
             body,
             signature,
         )
-
+        
     except InvalidSignatureError:
         abort(400)
 
@@ -152,7 +152,7 @@ def handle_follow(event):
             "並依照你的文字需求進行 AI 影像搜尋與標註 🤖\n\n"
             "使用方式很簡單：\n\n"
             "1️⃣ 傳送一張或多張圖片 📷\n"
-            "2️⃣ 圖片全部傳完後，輸入「傳完了」\n"
+            "2️⃣ 圖片全部傳完後，輸入「完成」\n"
             "3️⃣ 確認圖片數量後，告訴我想搜尋的物件\n\n"
             "例如：\n"
             "「貓咪」\n"
@@ -485,7 +485,7 @@ def handle_image_message(event):
                 "收到新的圖片 📷\n"
                 "已重新開啟圖片上傳。\n"
                 f"目前共有 {len(session.image_ids)} 張圖片。\n"
-                "傳完後請再次輸入「傳完了」。"
+                "傳完後請再次輸入「完成」。"
             ),
         )
 
@@ -540,7 +540,7 @@ def handle_text_message(event):
             (
                 "請開始傳送圖片 📷\n\n"
                 "你可以一次傳送多張圖片。\n"
-                "全部傳完後請輸入「傳完了」。"
+                "全部傳完後請輸入「完成」。"
             ),
         )
         return
@@ -556,7 +556,7 @@ def handle_text_message(event):
             (
                 "📖 Smart Label 使用教學\n\n"
                 "1️⃣ 傳送一張或多張圖片\n"
-                "2️⃣ 圖片全部傳完後輸入「傳完了」\n"
+                "2️⃣ 圖片全部傳完後輸入「完成」\n"
                 "3️⃣ 確認圖片數量\n"
                 "4️⃣ 輸入想搜尋或標註的物件\n"
                 "5️⃣ AI 自動處理圖片 🤖\n\n"
@@ -603,7 +603,7 @@ def handle_text_message(event):
     # 使用者表示圖片已傳完
     # --------------------------------------------------------
 
-    if text == "傳完了":
+    if text == "完成":
         session = (
             repo.mark_line_session_images_done(
                 user_id
@@ -641,7 +641,7 @@ def handle_text_message(event):
         if session is None:
             reply_text(
                 event.reply_token,
-                "目前沒有待確認的圖片，請先傳圖片並輸入「傳完了」",
+                "目前沒有待確認的圖片，請先傳圖片並輸入「完成」",
             )
 
             return
@@ -691,7 +691,7 @@ def handle_text_message(event):
             event.reply_token,
             (
                 "請先傳送圖片給我 📷\n"
-                "全部傳完後輸入「傳完了」。"
+                "全部傳完後輸入「完成」。"
             ),
         )
 
