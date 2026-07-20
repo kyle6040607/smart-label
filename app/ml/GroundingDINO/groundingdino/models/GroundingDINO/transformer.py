@@ -297,7 +297,6 @@ class Transformer(nn.Module):
                 self.enc_out_bbox_embed(output_memory) + output_proposals
             )  # (bs, \sum{hw}, 4) unsigmoid
             topk = self.num_queries
-
             topk_proposals = torch.topk(topk_logits, topk, dim=1)[1]  # bs, nq
 
             # gather boxes

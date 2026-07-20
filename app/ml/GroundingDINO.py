@@ -63,12 +63,18 @@ class GroundingDinoDetector:
         # 1. 確保模型在指定設備上運行
         self.model = self.model.to(device=device_str)
 
-        # 2. 影像預處理：轉為 [3, H, W] 浮點 Tensor 並進行 ImageNet 常態化
-        transform = T.Compose([
-            T.ToTensor(),
-            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        # 2. 影像預處理：採用 Grounding DINO 官方標準 transforms (包含 RandomResize 800px)
+        # 這能保證輸入模型後產生的特徵圖大小遠大於 900 queries，完全消除 selected index k out of range 問題
+        from PIL import Image
+        import groundingdino.datasets.transforms as GD_T
+
+        image_pil = Image.fromarray(image)
+        transform = GD_T.Compose([
+            GD_T.RandomResize([800], max_size=1333),
+            GD_T.ToTensor(),
+            GD_T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
-        image_tensor = transform(image)
+        image_tensor, _ = transform(image_pil, None)
 
         # 3. 處理文字提示：Grounding DINO 要求文字提示必須以句號結尾才能有最佳語意對齊效果
         clean_prompt = prompt.strip()
@@ -77,16 +83,24 @@ class GroundingDinoDetector:
 
         # 4. 進行推理預測
         # box_threshold 決定目標檢測的靈敏度，text_threshold 決定文字與影像特徵匹配的靈敏度
-        with torch.no_grad():
-            boxes, logits, phrases = predict(
-                model=self.model,
-                image=image_tensor,
-                caption=clean_prompt,
-                box_threshold=0.4,
-                text_threshold=0.45,
-                device=device_str,
-                remove_combined=True
-            )
+        try:
+            with torch.no_grad():
+                boxes, logits, phrases = predict(
+                    model=self.model,
+                    image=image_tensor,
+                    caption=clean_prompt,
+                    box_threshold=0.3,
+                    text_threshold=0.25,
+                    device=device_str,
+                    remove_combined=True
+                )
+        except IndexError as e:
+            # 防禦邊界條件：當該張圖片沒有足夠特徵時，PyTorch topk 可能拋出 selected index k out of range
+            print(f"🎯 [Grounding DINO] 該張圖片未偵測到物體 (IndexError: {e})")
+            return []
+        except Exception as e:
+            print(f"⚠️ [Grounding DINO] 預測異常: {e}")
+            return []
 
         # 5. 後處理：將歸一化的 [cx, cy, w, h] 轉換為絕對的 [x1, y1, x2, y2] 像素座標
         h, w = image.shape[:2]

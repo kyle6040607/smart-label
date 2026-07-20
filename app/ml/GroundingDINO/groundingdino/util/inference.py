@@ -84,8 +84,9 @@ def predict(
         for logit in logits:
             max_idx = logit.argmax()
             insert_idx = bisect.bisect_left(sep_idx, max_idx)
-            right_idx = sep_idx[insert_idx]
-            left_idx = sep_idx[insert_idx - 1]
+            safe_right_idx = min(insert_idx, len(sep_idx) - 1)
+            right_idx = sep_idx[safe_right_idx]
+            left_idx = sep_idx[max(0, safe_right_idx - 1)]
             phrases.append(get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer, left_idx, right_idx).replace('.', ''))
     else:
         phrases = [
