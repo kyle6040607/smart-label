@@ -2,6 +2,20 @@
 // 流程：上傳 → 選圖 → 自動/單點分割 → 標種子 → 審核紅色低信心片段 → 看統計
 "use strict";
 
+// 全域攔截：session 過期(401)時統一導回登入頁，避免各處呼叫各自解析出格式錯誤
+const originalFetch = window.fetch;
+
+window.fetch = async (...args) => {
+    const response = await originalFetch(...args);
+
+    if (response.status === 401) {
+        window.location.replace("/login");
+        throw new Error("Session expired");
+    }
+
+    return response;
+};
+
 const state = {
   currentImage: null,
   drawMode: false,

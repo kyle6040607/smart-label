@@ -8,9 +8,11 @@ from PIL import Image
 from werkzeug.utils import secure_filename
 
 from app.routes import get_config, get_repo
+from app.routes.auth import api_login_required
 from app.models import ImageRecord
 
 bp = Blueprint("images", __name__, url_prefix="/api/images")
+bp.before_request(api_login_required)
 
 
 def _allowed(filename: str, allowed: tuple[str, ...]) -> bool:

@@ -11,6 +11,7 @@ from functools import wraps
 from flask import (
     Blueprint,
     current_app,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -36,6 +37,12 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped
+
+
+def api_login_required():
+    """給 API blueprint 當 before_request 用：未登入回 401 JSON，而非導頁。"""
+    if not session.get("user_id"):
+        return jsonify({"error": "未登入"}), 401
 
 
 @bp.get("/login")

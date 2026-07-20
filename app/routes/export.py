@@ -10,9 +10,11 @@ import io
 from flask import Blueprint, abort, request, send_file
 
 from app.routes import get_repo
+from app.routes.auth import api_login_required
 from app.services.exporter import FORMATS, build_dataset
 
 bp = Blueprint("export", __name__, url_prefix="/api")
+bp.before_request(api_login_required)
 
 
 @bp.get("/export")

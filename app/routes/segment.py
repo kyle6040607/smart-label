@@ -9,8 +9,10 @@ from pathlib import Path
 from flask import Blueprint, abort, jsonify, request, send_file, Response
 
 from app.routes import get_pipeline, get_repo
+from app.routes.auth import api_login_required
 
 bp = Blueprint("segment", __name__, url_prefix="/api")
+bp.before_request(api_login_required)
 
 
 @bp.post("/images/<image_id>/segment")

@@ -4,8 +4,10 @@ from __future__ import annotations
 from flask import Blueprint, abort, jsonify, request
 
 from app.routes import get_pipeline, get_repo
+from app.routes.auth import api_login_required
 
 bp = Blueprint("labels", __name__, url_prefix="/api")
+bp.before_request(api_login_required)
 
 
 @bp.get("/labels")
