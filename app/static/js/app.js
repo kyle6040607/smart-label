@@ -140,7 +140,11 @@ async function loadThumbs() {
     el.src = `/api/images/${im.id}/file`;
     el.title = im.filename;
     el.onclick = () => {
-      if (state.imgBatchMode) return; // 批次模式下點選圖片不切換
+      if (state.imgBatchMode) {
+        chk.checked = !chk.checked;
+        updateImgBatchBtnState();
+        return;
+      }
       selectImage(im, el);
     };
 
@@ -493,6 +497,15 @@ async function refreshSidebar() {
     const chk = li.querySelector(".seg-chk");
     chk.onclick = () => {
       updateSegBatchBtnState();
+    };
+
+    // 點擊片段預覽圖也可切換勾選狀態
+    const thumbCanvas = li.querySelector(".seg-thumb");
+    thumbCanvas.onclick = () => {
+      if (state.segBatchMode) {
+        chk.checked = !chk.checked;
+        updateSegBatchBtnState();
+      }
     };
 
     // 縮圖：以 bbox 為中心裁一塊正方形（外擴 15% 留點上下文）
