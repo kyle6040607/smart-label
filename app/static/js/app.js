@@ -99,12 +99,17 @@ function stopFakeProgress() {
     progressInterval = null;
   }
 }
-function updateAutoSegBtn() {
+function updateAutoSegBtn(keepText = false) {
   const btn = $("autoSegBtn");
   if (!btn) return;
   if (!state.currentImage) {
     btn.disabled = true;
     btn.textContent = "自動分割";
+    return;
+  }
+
+  if (keepText) {
+    btn.disabled = true;
     return;
   }
 
@@ -322,7 +327,7 @@ function selectImage(im, el) {
   el.classList.add("active");
   
   state.autoSegCompleted = false;
-  updateAutoSegBtn();
+  updateAutoSegBtn(true);
 
   $("drawBtn").disabled = false;
   $("textPromptInput").disabled = false;
@@ -426,6 +431,14 @@ $("textSegBtn").onclick = async () => {
     alert(error instanceof Error ? error.message : "文字分割失敗");
   } finally {
     setSegmentationLoading(false);
+  }
+};
+
+// 支援在文字輸入框按下 Enter 鍵直接進行分割
+$("textPromptInput").onkeydown = (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("textSegBtn").click();
   }
 };
 
