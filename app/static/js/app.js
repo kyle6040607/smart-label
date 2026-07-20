@@ -11,6 +11,7 @@ const state = {
   lastSegments: [],   // 目前畫布上的片段，供審核卡片 hover 加亮用
   imgBatchMode: false,
   segBatchMode: false,
+  autoSegCompleted: false,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -98,6 +99,23 @@ function stopFakeProgress() {
     progressInterval = null;
   }
 }
+function updateAutoSegBtn() {
+  const btn = $("autoSegBtn");
+  if (!btn) return;
+  if (!state.currentImage) {
+    btn.disabled = true;
+    btn.textContent = "自動分割";
+    return;
+  }
+
+  if (state.autoSegCompleted) {
+    btn.disabled = true;
+    btn.textContent = "✓ 已完成分割";
+  } else {
+    btn.disabled = false;
+    btn.textContent = "自動分割";
+  }
+}
 
 function setSegmentationLoading(active, message = "分割中…", showProgress = false) {
   state.segmenting = active;
@@ -118,7 +136,13 @@ function setSegmentationLoading(active, message = "分割中…", showProgress =
 
   canvas.closest(".canvas-wrap").classList.toggle("is-loading", active);
   canvas.setAttribute("aria-busy", String(active));
-  $("autoSegBtn").disabled = active || !state.currentImage;
+  
+  if (active) {
+    $("autoSegBtn").disabled = true;
+  } else {
+    updateAutoSegBtn();
+  }
+  
   $("drawBtn").disabled = active || !state.currentImage;
   $("textPromptInput").disabled = active || !state.currentImage;
   $("textSegBtn").disabled = active || !state.currentImage;
@@ -274,7 +298,7 @@ async function deleteImage(im) {
   // 若刪的是目前選中的圖，清空畫布
   if (state.currentImage && state.currentImage.id === im.id) {
     state.currentImage = null;
-    $("autoSegBtn").disabled = true;
+    updateAutoSegBtn();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
   await loadThumbs();
@@ -287,7 +311,10 @@ function selectImage(im, el) {
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
   el.classList.add("active");
-  $("autoSegBtn").disabled = false;
+  
+  state.autoSegCompleted = false;
+  updateAutoSegBtn();
+
   $("drawBtn").disabled = false;
   $("textPromptInput").disabled = false;
   $("textSegBtn").disabled = false;
@@ -307,6 +334,9 @@ function selectImage(im, el) {
       const segments = await res.json();
       if (!state.currentImage || state.currentImage.id !== im.id) return;
       await redraw(segments);
+
+      state.autoSegCompleted = (segments.length > 0);
+      updateAutoSegBtn();
     } catch (err) {
       console.error("載入已標記區塊失敗:", err);
     }
@@ -317,6 +347,7 @@ function selectImage(im, el) {
 // ---------- 自動分割整張 ----------
 $("autoSegBtn").onclick = async () => {
   if (!state.currentImage || state.segmenting) return;
+
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, "自動分割中…", true);
   startFakeProgress(10, 75);
@@ -335,13 +366,13 @@ $("autoSegBtn").onclick = async () => {
       }
     );
 
-    // 如果全部區塊原本就已經存在（無缺失且已自動分割過），彈出完成提示
-    if (data.status === "already_completed") {
-      alert("已經完成自動分割");
-    }
+
 
     await redraw(data.segments);
     await refreshSidebar();
+
+    state.autoSegCompleted = true;
+    updateAutoSegBtn();
   } catch (error) {
     console.error(error);
     alert(error instanceof Error ? error.message : "自動分割失敗");
@@ -647,6 +678,8 @@ async function refreshSidebar() {
         if (!res.ok) {
           return alert("刪除失敗：" + (await res.text()));
         }
+        state.autoSegCompleted = false;
+        updateAutoSegBtn();
         await refreshAfterSegChange();
       } catch (error) {
         console.error(error);
@@ -827,6 +860,8 @@ $("batchDelSegsBtn").onclick = async () => {
     if (!res.ok) throw new Error(await res.text());
 
     // 退出批次模式並重整
+    state.autoSegCompleted = false;
+    updateAutoSegBtn();
     toggleSegBatchUI(false);
     await refreshAfterSegChange();
   } catch (err) {
