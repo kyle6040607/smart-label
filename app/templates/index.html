@@ -13,6 +13,7 @@
       <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
     </div>
     <div class="mode-switch-wrapper">
+      <div class="mode-switch-bg"></div>
       <button id="laymanModeBtn" class="mode-btn active" type="button">素人模式</button>
       <button id="engineerModeBtn" class="mode-btn" type="button">工程師模式</button>
     </div>
@@ -56,7 +57,7 @@
       </section>
 
       <!-- 0 · 參數調整 (工程師模式) -->
-      <section id="parameterPanel" class="panel engineer-only" style="display: none; margin-top: 16px;">
+      <section id="parameterPanel" class="panel engineer-only">
         <h2>0 · 參數調整</h2>
         <div class="param-card">
           <div class="param-group">
@@ -147,7 +148,7 @@
     </aside>
 
     <!-- 4. 工程師儀表板 -->
-    <section id="chartsPanel" class="panel charts-panel engineer-only" style="grid-column: 1 / -1; display: none; margin-top: 8px;">
+    <section id="chartsPanel" class="panel charts-panel engineer-only" style="grid-column: 1 / -1;">
       <h2>工程師儀表板 · 統計圖表</h2>
       <div class="charts-container">
         <!-- 圖表 1: 自動過審 vs 手動標籤 -->

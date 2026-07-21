@@ -1015,8 +1015,13 @@ function applyMode(mode) {
   $("laymanModeBtn").classList.toggle("active", !isEng);
   $("engineerModeBtn").classList.toggle("active", isEng);
   
+  const wrapper = document.querySelector(".mode-switch-wrapper");
+  if (wrapper) {
+    wrapper.classList.toggle("eng-active", isEng);
+  }
+  
   document.querySelectorAll(".engineer-only").forEach(el => {
-    el.style.display = isEng ? "block" : "none";
+    el.classList.toggle("show", isEng);
   });
   
   if (isEng) {
@@ -1232,8 +1237,13 @@ function updateCharts(stats) {
   updateCenterText("reviewProgressChart", progressPercentText, "var(--accent)");
 }
 
-$("laymanModeBtn").onclick = () => applyMode("layman");
-$("engineerModeBtn").onclick = () => applyMode("engineer");
+const switchWrapper = document.querySelector(".mode-switch-wrapper");
+if (switchWrapper) {
+  switchWrapper.onclick = () => {
+    const mode = state.mode === "layman" ? "engineer" : "layman";
+    applyMode(mode);
+  };
+}
 
 $("confThresholdInput").oninput = (e) => {
   $("confThresholdValue").textContent = Number(e.target.value).toFixed(2);
