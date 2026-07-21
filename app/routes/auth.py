@@ -26,12 +26,26 @@ from app.services import line_login
 bp = Blueprint("auth", __name__)
 
 
+def get_authenticated_user() -> User | None:
+    """取得目前登入使用者；帳號失效時只移除登入欄位。"""
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+
+    user = get_repo().get_user(user_id)
+    if user is None:
+        # LINE OAuth 的 state / nonce 仍可能在同一個 session 中，不能整包清除。
+        session.pop("user_id", None)
+        session.pop("username", None)
+    return user
+
+
 def login_required(view):
     """保護需要登入才能看的頁面 / API，未登入導向登入頁。"""
 
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not session.get("user_id"):
+        if get_authenticated_user() is None:
             return redirect(url_for("auth.login", next=request.path))
         return view(*args, **kwargs)
 
@@ -40,7 +54,7 @@ def login_required(view):
 
 @bp.get("/login")
 def login():
-    if session.get("user_id"):
+    if get_authenticated_user() is not None:
         return redirect(url_for("index"))
     return render_template("login.html", error=None)
 

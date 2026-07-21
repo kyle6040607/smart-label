@@ -20,6 +20,11 @@ def client(tmp_path):
     app.config["TESTING"] = True
     with app.app_context():
         with app.test_client() as client:
+            user = app.repo.get_user_by_username(cfg.default_admin_user)
+            assert user is not None
+            with client.session_transaction() as sess:
+                sess["user_id"] = user.id
+                sess["username"] = user.username
             yield client
 
 def test_delete_images_batch(client, tmp_path):

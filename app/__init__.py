@@ -5,7 +5,7 @@ create_app() 建立 app、初始化 Repository 與 Pipeline，註冊 API bluepri
 """
 from __future__ import annotations
 
-from flask import Flask, render_template, session
+from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import generate_password_hash
 
 from app.config import Config, config as default_config
@@ -42,7 +42,7 @@ def create_app(config: Config | None = None) -> Flask:
 
     _seed_default_user(app.repo, cfg)
 
-    from app.routes.auth import bp as auth_bp, login_required
+    from app.routes.auth import bp as auth_bp, get_authenticated_user, login_required
     from app.routes.images import bp as images_bp
     from app.routes.segment import bp as segment_bp
     from app.routes.labels import bp as labels_bp
@@ -57,6 +57,22 @@ def create_app(config: Config | None = None) -> Flask:
     app.register_blueprint(review_bp)
     app.register_blueprint(export_bp)
     app.register_blueprint(linebot_bp)
+
+    @app.before_request
+    def require_api_login():
+        """所有 /api 路由都必須有對應到有效使用者的登入 session。"""
+        if request.path != "/api" and not request.path.startswith("/api/"):
+            return None
+
+        if get_authenticated_user() is not None:
+            return None
+
+        return jsonify(
+            {
+                "error": "authentication_required",
+                "message": "請先登入後再使用 API",
+            }
+        ), 401
 
     @app.get("/")
     @login_required
