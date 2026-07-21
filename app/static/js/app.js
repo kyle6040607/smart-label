@@ -754,15 +754,36 @@ async function refreshSidebar() {
     li.onmouseleave = () => {
       if (state.currentImage && s.image_id === state.currentImage.id) redraw(state.lastSegments);
     };
-    li.querySelector(".confirm").onclick = async () => {
-      const label = li.querySelector("input[data-seg]").value.trim();
+    const inputEl = li.querySelector("input[data-seg]");
+    const submitReview = async () => {
+      const label = inputEl.value.trim();
       if (!label) return;
-      await fetch(`/api/segments/${s.id}/review`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label }),
-      });
-      await refreshAfterSegChange();
+      
+      //  樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
+      li.style.opacity = "0.3";
+      li.style.pointerEvents = "none";
+      
+      try {
+        const res = await fetch(`/api/segments/${s.id}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label }),
+        });
+        if (!res.ok) throw new Error("審核失敗");
+        await refreshAfterSegChange();
+      } catch (err) {
+        console.error(err);
+        li.style.opacity = "1";
+        li.style.pointerEvents = "auto";
+        alert("審核失敗，請重試");
+      }
+    };
+    li.querySelector(".confirm").onclick = submitReview;
+    inputEl.onkeydown = async (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        await submitReview();
+      }
     };
     li.querySelector(".seg-del").onclick = async () => {
       try {
@@ -1081,40 +1102,100 @@ function updateCharts(stats) {
   const counts = Object.values(labelCounts);
   $("categorySub").innerHTML = `已建立類別數: <b>${stats.num_labels}</b>`;
   
-  if (categoryDistributionChartInstance) {
-    categoryDistributionChartInstance.data.labels = labels;
-    categoryDistributionChartInstance.data.datasets[0].data = counts;
-    categoryDistributionChartInstance.update();
-  } else {
-    categoryDistributionChartInstance = new Chart(categoryCtx, {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: '數量',
-          data: counts,
-          backgroundColor: 'rgba(79, 156, 255, 0.6)',
-          borderColor: 'var(--accent)',
-          borderWidth: 1,
-          borderRadius: 4
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: {
-            beginAtZero: true,
-            grid: { color: 'rgba(255, 255, 255, 0.05)' },
-            ticks: { color: 'var(--muted)', stepSize: 1 }
-          },
-          x: {
-            grid: { display: false },
-            ticks: { color: 'var(--muted)' }
+  const roygbivColors = [
+    '#ff5470', // Red
+    '#ff9f43', // Orange
+    '#ffd166', // Yellow
+    '#36d399', // Green
+    '#4f9cff', // Blue
+    '#706fd3', // Indigo
+    '#b33771'  // Violet
+  ];
+  const colors = labels.map((_, idx) => roygbivColors[idx % roygbivColors.length]);
+  
+  const cType = state.categoryChartType || "bar";
+  if (categoryDistributionChartInstance && categoryDistributionChartInstance.config.type !== cType) {
+    categoryDistributionChartInstance.destroy();
+    categoryDistributionChartInstance = null;
+  }
+  
+  if (cType === "bar") {
+    if (categoryDistributionChartInstance) {
+      categoryDistributionChartInstance.data.labels = labels;
+      categoryDistributionChartInstance.data.datasets[0].data = counts;
+      categoryDistributionChartInstance.data.datasets[0].backgroundColor = colors;
+      categoryDistributionChartInstance.update();
+    } else {
+      categoryDistributionChartInstance = new Chart(categoryCtx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: '數量',
+            data: counts,
+            backgroundColor: colors,
+            borderWidth: 1,
+            borderColor: 'var(--panel)'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: {
+              beginAtZero: true,
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: 'var(--muted)', stepSize: 1 }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { color: 'var(--muted)' }
+            }
           }
         }
-      }
+      });
+    }
+  } else {
+    // 圓餅圖
+    if (categoryDistributionChartInstance) {
+      categoryDistributionChartInstance.data.labels = labels;
+      categoryDistributionChartInstance.data.datasets[0].data = counts;
+      categoryDistributionChartInstance.data.datasets[0].backgroundColor = colors;
+      categoryDistributionChartInstance.update();
+    } else {
+      categoryDistributionChartInstance = new Chart(categoryCtx, {
+        type: 'pie',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: counts,
+            backgroundColor: colors,
+            borderWidth: 1,
+            borderColor: '#28323f'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+  }
+  
+  // 更新類別分布圖的圖例
+  const legendDiv = $("categoryLegend");
+  if (legendDiv) {
+    legendDiv.innerHTML = "";
+    labels.forEach((label, idx) => {
+      const color = colors[idx];
+      const span = document.createElement("span");
+      span.style.display = "flex";
+      span.style.alignItems = "center";
+      span.style.gap = "4px";
+      span.innerHTML = `<span style="display: inline-block; width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></span>${label}`;
+      legendDiv.appendChild(span);
     });
   }
   
@@ -1184,4 +1265,15 @@ $("saveParamsBtn").onclick = async () => {
 };
 
 // 初始套用模式
+state.categoryChartType = "bar"; // 預設為長條圖
+
+const toggleBtn = $("toggleCategoryChartTypeBtn");
+if (toggleBtn) {
+  toggleBtn.onclick = () => {
+    state.categoryChartType = state.categoryChartType === "bar" ? "pie" : "bar";
+    toggleBtn.textContent = state.categoryChartType === "bar" ? "切換為圓餅圖" : "切換為長條圖";
+    refreshSidebar();
+  };
+}
+
 applyMode(state.mode);

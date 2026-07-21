@@ -157,15 +157,23 @@
             <canvas id="laborSavingChart"></canvas>
           </div>
           <div id="laborSavingSub" class="chart-sub"></div>
+          <div class="chart-legend" style="display: flex; gap: 12px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
+            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #36d399; border-radius: 2px;"></span>自動過審</span>
+            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #4f9cff; border-radius: 2px;"></span>手動標籤</span>
+          </div>
         </div>
 
-        <!-- 圖表 2: 類別分布長條 -->
+        <!-- 圖表 2: 類別分布圖 -->
         <div class="chart-card">
-          <h3>類別分布長條圖</h3>
+          <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <h3>類別分布圖</h3>
+            <button id="toggleCategoryChartTypeBtn" type="button" class="btn-secondary" style="padding: 3px 8px; font-size: 11px; margin-top: -8px;">切換為圓餅圖</button>
+          </div>
           <div class="chart-wrapper">
             <canvas id="categoryDistributionChart"></canvas>
           </div>
           <div id="categorySub" class="chart-sub"></div>
+          <div id="categoryLegend" class="chart-legend" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;"></div>
         </div>
 
         <!-- 圖表 3: 審核進度 -->
@@ -175,6 +183,10 @@
             <canvas id="reviewProgressChart"></canvas>
           </div>
           <div id="reviewSub" class="chart-sub"></div>
+          <div class="chart-legend" style="display: flex; gap: 12px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
+            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #4f9cff; border-radius: 2px;"></span>已審核</span>
+            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #ff5470; border-radius: 2px;"></span>待人工審核</span>
+          </div>
         </div>
       </div>
     </section>
