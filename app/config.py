@@ -52,6 +52,7 @@ class Config:
     # strategy: "max_prob" | "margin" | "entropy"
     confidence_strategy: str = os.getenv("CONFIDENCE_STRATEGY", "max_prob")
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
+    yolo_world_confidence: float = float(os.getenv("YOLO_WORLD_CONFIDENCE", "0.4"))
 
     # --- few-shot 分類器（提案第 6、7 頁）---
     # classifier: "knn" | "softmax"

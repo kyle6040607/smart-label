@@ -272,6 +272,13 @@ class Repository:
         need_review = sum(1 for s in segs if s.needs_review)
         reviewed = sum(1 for s in segs if s.reviewed)
         auto_accepted = total - need_review
+
+        label_counts = {}
+        for s in segs:
+            lbl = s.final_label
+            if lbl:
+                label_counts[lbl] = label_counts.get(lbl, 0) + 1
+
         return {
             "total_segments": total,
             "auto_accepted": auto_accepted,
@@ -281,6 +288,7 @@ class Repository:
             "auto_ratio": round(auto_accepted / total, 3) if total else 0.0,
             "num_examples": len(self.examples),
             "num_labels": len(self.labels()),
+            "label_counts": label_counts,
         }
 
     # ---------- 持久化 ----------

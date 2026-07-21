@@ -188,3 +188,34 @@ def segment_mask(seg_id: str):
     if not seg or not seg.mask_path:
         abort(404)
     return send_file(Path(seg.mask_path), mimetype="image/png")
+
+
+@bp.get("/parameters")
+def get_parameters():
+    """取得當前動態參數值。"""
+    pipeline = get_pipeline()
+    return jsonify({
+        "confidence_threshold": pipeline.config.confidence_threshold,
+        "yolo_world_confidence": pipeline.config.yolo_world_confidence
+    })
+
+
+@bp.post("/parameters")
+def update_parameters():
+    """更新動態參數值，並重算未審核片段之信心送審狀態。"""
+    pipeline = get_pipeline()
+    data = request.get_json(force=True)
+    if "confidence_threshold" in data:
+        pipeline.config.confidence_threshold = float(data["confidence_threshold"])
+    if "yolo_world_confidence" in data:
+        pipeline.config.yolo_world_confidence = float(data["yolo_world_confidence"])
+    
+    pipeline.reclassify_pending()
+    
+    return jsonify({
+        "status": "success",
+        "parameters": {
+            "confidence_threshold": pipeline.config.confidence_threshold,
+            "yolo_world_confidence": pipeline.config.yolo_world_confidence
+        }
+    })

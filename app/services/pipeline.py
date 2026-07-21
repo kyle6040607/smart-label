@@ -225,6 +225,7 @@ class Pipeline:
                 img,
                 cls_name,
                 device=self.segmenter.device,
+                conf=self.config.yolo_world_confidence,
             )
             detections.extend(
                 (cls_name, bbox)

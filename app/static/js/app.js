@@ -674,6 +674,10 @@ async function refreshSidebar() {
     待審：${stats.need_review} · 已審：${stats.reviewed}<br>
     範例數：${stats.num_examples} · 類別數：${stats.num_labels}`;
 
+  if (state.mode === "engineer") {
+    updateCharts(stats);
+  }
+
   const labels = await (await fetch("/api/labels")).json();
   const ll = $("labelList");
   ll.innerHTML = "";
@@ -974,4 +978,210 @@ $("batchDelSegsBtn").onclick = async () => {
 
 // 初始載入
 loadThumbs();
-refreshSidebar();
+
+// ---------- 雙模式與參數調整初始化 ----------
+state.mode = localStorage.getItem("mode") || "layman";
+
+let laborSavingChartInstance = null;
+let categoryDistributionChartInstance = null;
+let reviewProgressChartInstance = null;
+
+function applyMode(mode) {
+  state.mode = mode;
+  localStorage.setItem("mode", mode);
+  
+  const isEng = mode === "engineer";
+  $("laymanModeBtn").classList.toggle("active", !isEng);
+  $("engineerModeBtn").classList.toggle("active", isEng);
+  
+  document.querySelectorAll(".engineer-only").forEach(el => {
+    el.style.display = isEng ? "block" : "none";
+  });
+  
+  if (isEng) {
+    loadParameters();
+  }
+  refreshSidebar();
+}
+
+async function loadParameters() {
+  try {
+    const res = await fetch("/api/parameters");
+    if (res.ok) {
+      const data = await res.json();
+      $("confThresholdInput").value = data.confidence_threshold;
+      $("confThresholdValue").textContent = Number(data.confidence_threshold).toFixed(2);
+      $("yoloConfInput").value = data.yolo_world_confidence;
+      $("yoloConfValue").textContent = Number(data.yolo_world_confidence).toFixed(2);
+    }
+  } catch (err) {
+    console.error("載入參數失敗:", err);
+  }
+}
+
+function updateCenterText(chartCanvasId, text, color) {
+  const canvas = $(chartCanvasId);
+  if (!canvas) return;
+  const wrapper = canvas.parentElement;
+  let overlay = wrapper.querySelector(".chart-center-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.className = "chart-center-overlay";
+    overlay.style.position = "absolute";
+    overlay.style.top = "50%";
+    overlay.style.left = "50%";
+    overlay.style.transform = "translate(-50%, -50%)";
+    overlay.style.fontSize = "20px";
+    overlay.style.fontWeight = "bold";
+    overlay.style.pointerEvents = "none";
+    wrapper.appendChild(overlay);
+  }
+  overlay.textContent = text;
+  overlay.style.color = color || "var(--text)";
+}
+
+function updateCharts(stats) {
+  if (typeof Chart === "undefined") return;
+  
+  // 1. 自動過審 vs 手動標籤
+  const laborSavingCtx = $("laborSavingChart").getContext("2d");
+  const totalLabeled = stats.auto_accepted + stats.reviewed;
+  const autoRatioPercent = totalLabeled ? (stats.auto_accepted / totalLabeled * 100).toFixed(0) + "%" : "0%";
+  $("laborSavingSub").innerHTML = `自動過審: <b>${stats.auto_accepted}</b> / 手動標籤: <b>${stats.reviewed}</b>`;
+  
+  if (laborSavingChartInstance) {
+    laborSavingChartInstance.data.datasets[0].data = [stats.auto_accepted, stats.reviewed];
+    laborSavingChartInstance.update();
+  } else {
+    laborSavingChartInstance = new Chart(laborSavingCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['自動過審', '手動標籤'],
+        datasets: [{
+          data: [stats.auto_accepted, stats.reviewed],
+          backgroundColor: ['#36d399', '#4f9cff'],
+          borderWidth: 1,
+          borderColor: '#28323f'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        cutout: '75%'
+      }
+    });
+  }
+  updateCenterText("laborSavingChart", autoRatioPercent, "var(--ok)");
+  
+  // 2. 類別分布
+  const categoryCtx = $("categoryDistributionChart").getContext("2d");
+  const labelCounts = stats.label_counts || {};
+  const labels = Object.keys(labelCounts);
+  const counts = Object.values(labelCounts);
+  $("categorySub").innerHTML = `已建立類別數: <b>${stats.num_labels}</b>`;
+  
+  if (categoryDistributionChartInstance) {
+    categoryDistributionChartInstance.data.labels = labels;
+    categoryDistributionChartInstance.data.datasets[0].data = counts;
+    categoryDistributionChartInstance.update();
+  } else {
+    categoryDistributionChartInstance = new Chart(categoryCtx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: '數量',
+          data: counts,
+          backgroundColor: 'rgba(79, 156, 255, 0.6)',
+          borderColor: 'var(--accent)',
+          borderWidth: 1,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+            ticks: { color: 'var(--muted)', stepSize: 1 }
+          },
+          x: {
+            grid: { display: false },
+            ticks: { color: 'var(--muted)' }
+          }
+        }
+      }
+    });
+  }
+  
+  // 3. 審核進度
+  const reviewCtx = $("reviewProgressChart").getContext("2d");
+  const totalToReview = stats.reviewed + stats.need_review;
+  const progressRatio = totalToReview ? stats.reviewed / totalToReview : 0.0;
+  const progressPercentText = (progressRatio * 100).toFixed(0) + "%";
+  $("reviewSub").innerHTML = `已審核: <b>${stats.reviewed}</b> / 待審: <b>${stats.need_review}</b>`;
+  
+  if (reviewProgressChartInstance) {
+    reviewProgressChartInstance.data.datasets[0].data = [stats.reviewed, stats.need_review];
+    reviewProgressChartInstance.update();
+  } else {
+    reviewProgressChartInstance = new Chart(reviewCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['已審核', '待人工審核'],
+        datasets: [{
+          data: [stats.reviewed, stats.need_review],
+          backgroundColor: ['#4f9cff', '#ff5470'],
+          borderWidth: 1,
+          borderColor: '#28323f'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        cutout: '75%'
+      }
+    });
+  }
+  updateCenterText("reviewProgressChart", progressPercentText, "var(--accent)");
+}
+
+$("laymanModeBtn").onclick = () => applyMode("layman");
+$("engineerModeBtn").onclick = () => applyMode("engineer");
+
+$("confThresholdInput").oninput = (e) => {
+  $("confThresholdValue").textContent = Number(e.target.value).toFixed(2);
+};
+$("yoloConfInput").oninput = (e) => {
+  $("yoloConfValue").textContent = Number(e.target.value).toFixed(2);
+};
+
+$("saveParamsBtn").onclick = async () => {
+  const confidence_threshold = parseFloat($("confThresholdInput").value);
+  const yolo_world_confidence = parseFloat($("yoloConfInput").value);
+  
+  try {
+    const res = await fetch("/api/parameters", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confidence_threshold, yolo_world_confidence })
+    });
+    if (res.ok) {
+      alert("參數儲存與重新預測成功！");
+      await refreshAfterSegChange();
+    } else {
+      alert("儲存失敗：" + (await res.text()));
+    }
+  } catch (err) {
+    console.error(err);
+    alert("儲存時發生錯誤");
+  }
+};
+
+// 初始套用模式
+applyMode(state.mode);

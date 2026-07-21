@@ -12,6 +12,10 @@
       <h1>智慧分割標記助手</h1>
       <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
     </div>
+    <div class="mode-switch-wrapper">
+      <button id="laymanModeBtn" class="mode-btn active" type="button">素人模式</button>
+      <button id="engineerModeBtn" class="mode-btn" type="button">工程師模式</button>
+    </div>
     <div class="header-actions">
       {% if display_name %}<span class="hi">{{ display_name }}</span>{% endif %}
       {% if line_bound %}
@@ -24,31 +28,51 @@
   </header>
 
   <main>
-    <!-- 1. 上傳 -->
-    <section class="panel">
-      <h2 style="margin-bottom: 8px;">1 · 上傳照片</h2>
-      <input type="file" id="fileInput" multiple accept="image/*" style="display: none;" />
-      <div id="dropZone" class="drop-zone">
-        <p>拖曳照片至此，或點選下方按鈕</p>
-        <div style="display: flex; justify-content: center; gap: 8px; align-items: center;">
-          <button id="selectFileBtn" type="button" class="btn-secondary">選擇檔案</button>
-          <button id="uploadBtn" type="button">上傳</button>
+    <div class="left-col">
+      <!-- 1. 上傳 -->
+      <section class="panel">
+        <h2 style="margin-bottom: 8px;">1 · 上傳照片</h2>
+        <input type="file" id="fileInput" multiple accept="image/*" style="display: none;" />
+        <div id="dropZone" class="drop-zone">
+          <p>拖曳照片至此，或點選下方按鈕</p>
+          <div style="display: flex; justify-content: center; gap: 8px; align-items: center;">
+            <button id="selectFileBtn" type="button" class="btn-secondary">選擇檔案</button>
+            <button id="uploadBtn" type="button">上傳</button>
+          </div>
+          <span class="hint" id="fileCountHint" style="display: block; margin-top: 8px;">尚未選擇檔案</span>
         </div>
-        <span class="hint" id="fileCountHint" style="display: block; margin-top: 8px;">尚未選擇檔案</span>
-      </div>
-      <!-- 批次管理控制條 -->
-      <div class="batch-control-bar">
-        <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
-          <input type="checkbox" id="selectAllImgs" /> 全選
-        </label>
-        <div style="display: flex; gap: 8px; margin-left: auto;">
-          <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
-          <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
-          <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
+        <!-- 批次管理控制條 -->
+        <div class="batch-control-bar">
+          <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
+            <input type="checkbox" id="selectAllImgs" /> 全選
+          </label>
+          <div style="display: flex; gap: 8px; margin-left: auto;">
+            <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
+            <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
+            <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
+          </div>
         </div>
-      </div>
-      <div id="thumbs" class="thumbs"></div>
-    </section>
+        <div id="thumbs" class="thumbs"></div>
+      </section>
+
+      <!-- 0 · 參數調整 (工程師模式) -->
+      <section id="parameterPanel" class="panel engineer-only" style="display: none; margin-top: 16px;">
+        <h2>0 · 參數調整</h2>
+        <div class="param-card">
+          <div class="param-group">
+            <label for="confThresholdInput">低信心待審門檻: <span id="confThresholdValue" class="param-val">0.60</span></label>
+            <input type="range" id="confThresholdInput" min="0.0" max="1.0" step="0.05" value="0.60" class="slider" />
+            <span class="hint" style="display: block; margin-top: 4px;">低於此值會被標紅送審</span>
+          </div>
+          <div class="param-group" style="margin-top: 16px;">
+            <label for="yoloConfInput">YOLO-World 信心度: <span id="yoloConfValue" class="param-val">0.40</span></label>
+            <input type="range" id="yoloConfInput" min="0.1" max="1.0" step="0.05" value="0.40" class="slider" />
+            <span class="hint" style="display: block; margin-top: 4px;">文字分割偵測的信心度</span>
+          </div>
+          <button id="saveParamsBtn" style="margin-top: 20px; width: 100%; display: block;">儲存並重新預測</button>
+        </div>
+      </section>
+    </div>
 
     <!-- 2. 標記畫布 -->
     <section class="panel">
@@ -121,8 +145,42 @@
         <p class="hint">只匯出已標好類別的片段（圖 + 遮罩 + 標籤）</p>
       </div>
     </aside>
+
+    <!-- 4. 工程師儀表板 -->
+    <section id="chartsPanel" class="panel charts-panel engineer-only" style="grid-column: 1 / -1; display: none; margin-top: 8px;">
+      <h2>工程師儀表板 · 統計圖表</h2>
+      <div class="charts-container">
+        <!-- 圖表 1: 自動過審 vs 手動標籤 -->
+        <div class="chart-card">
+          <h3>自動過審 vs 手動標籤</h3>
+          <div class="chart-wrapper">
+            <canvas id="laborSavingChart"></canvas>
+          </div>
+          <div id="laborSavingSub" class="chart-sub"></div>
+        </div>
+
+        <!-- 圖表 2: 類別分布長條 -->
+        <div class="chart-card">
+          <h3>類別分布長條圖</h3>
+          <div class="chart-wrapper">
+            <canvas id="categoryDistributionChart"></canvas>
+          </div>
+          <div id="categorySub" class="chart-sub"></div>
+        </div>
+
+        <!-- 圖表 3: 審核進度 -->
+        <div class="chart-card">
+          <h3>審核進度</h3>
+          <div class="chart-wrapper">
+            <canvas id="reviewProgressChart"></canvas>
+          </div>
+          <div id="reviewSub" class="chart-sub"></div>
+        </div>
+      </div>
+    </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
