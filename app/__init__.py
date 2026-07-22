@@ -37,7 +37,12 @@ def create_app(config: Config | None = None) -> Flask:
 
     # 共用單例：repo 與 pipeline 掛在 app 上，blueprint 透過 current_app 取用
     app.smart_config = cfg          # type: ignore[attr-defined]
-    app.repo = Repository(cfg.db_file)  # type: ignore[attr-defined]
+    if cfg.use_mysql:
+        from app.repository_mysql import MySQLRepository
+
+        app.repo = MySQLRepository(cfg)  # type: ignore[attr-defined]
+    else:
+        app.repo = Repository(cfg.db_file)  # type: ignore[attr-defined]
     app.pipeline = Pipeline(cfg, app.repo)  # type: ignore[attr-defined]
 
     _seed_default_user(app.repo, cfg)
