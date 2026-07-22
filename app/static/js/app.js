@@ -1282,12 +1282,22 @@ if (switchWrapper) {
   };
 }
 
-function bindNumericInputGuard(inputEl, minVal, maxVal, onUpdate) {
+function bindNumericInputGuard(inputEl, sliderEl, minVal, maxVal, onUpdate) {
   if (!inputEl) return;
+
+  let lastValidValue = parseFloat(sliderEl ? sliderEl.value : inputEl.value);
+  if (isNaN(lastValidValue)) lastValidValue = minVal;
 
   inputEl.addEventListener("keydown", (e) => {
     if (["-", "+", "e", "E"].includes(e.key)) {
       e.preventDefault();
+    }
+  });
+
+  inputEl.addEventListener("focus", () => {
+    const curVal = parseFloat(sliderEl ? sliderEl.value : inputEl.value);
+    if (!isNaN(curVal) && curVal >= minVal && curVal <= maxVal) {
+      lastValidValue = curVal;
     }
   });
 
@@ -1306,16 +1316,19 @@ function bindNumericInputGuard(inputEl, minVal, maxVal, onUpdate) {
       inputEl.value = num;
     }
 
-    onUpdate(num);
+    if (num >= minVal && num <= maxVal) {
+      lastValidValue = num;
+      onUpdate(num);
+    }
   });
 
   inputEl.addEventListener("blur", () => {
     let raw = inputEl.value;
     let num = parseFloat(raw);
-    if (isNaN(num) || num < minVal) {
-      num = minVal;
-    } else if (num > maxVal) {
-      num = maxVal;
+    if (isNaN(num) || num < minVal || num > maxVal) {
+      num = lastValidValue;
+    } else {
+      lastValidValue = num;
     }
     inputEl.value = num.toFixed(2);
     onUpdate(num);
@@ -1326,7 +1339,7 @@ $("confThresholdInput").oninput = (e) => {
   updateConfThresholdDisplay(e.target.value);
 };
 
-bindNumericInputGuard($("confThresholdValue"), 0.0, 1.0, (num) => {
+bindNumericInputGuard($("confThresholdValue"), $("confThresholdInput"), 0.0, 1.0, (num) => {
   const clamped = Math.max(0.0, Math.min(1.0, num));
   $("confThresholdInput").value = clamped;
   updateConfThresholdDisplay(clamped);
@@ -1340,7 +1353,7 @@ $("yoloConfInput").oninput = (e) => {
   updateSliderFill(e.target);
 };
 
-bindNumericInputGuard($("yoloConfValue"), 0.1, 1.0, (num) => {
+bindNumericInputGuard($("yoloConfValue"), $("yoloConfInput"), 0.1, 1.0, (num) => {
   const clamped = Math.max(0.1, Math.min(1.0, num));
   $("yoloConfInput").value = clamped;
   updateSliderFill($("yoloConfInput"));
