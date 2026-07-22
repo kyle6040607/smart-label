@@ -63,35 +63,46 @@
         <h2>0 · 參數調整</h2>
         <div class="param-card">
           <div class="param-group">
-            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; margin-bottom: 6px; color: var(--text);">
-              <label for="confThresholdInput" style="margin: 0; flex: 1;">低信心待審門檻:</label>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
+              <label for="confThresholdInput" style="margin: 0; flex: 1; font-weight: 500;">低信心待審門檻:</label>
               <div style="flex: 1; text-align: center;">
                 <input type="number" id="confThresholdValue" min="0.0" max="1.0" step="0.01" value="0.60" class="param-val-input" />
               </div>
               <div style="flex: 1; text-align: right;">
-                <span id="confThresholdHint" style="font-weight: normal; font-size: 11px;"></span>
+                <span id="confThresholdHint" style="font-weight: 500; font-size: 13px;"></span>
               </div>
             </div>
-            <input type="range" id="confThresholdInput" min="0.0" max="1.0" step="0.05" value="0.60" class="slider" />
-            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px;">
-              <span>0.00 (全自動通關)</span>
-              <span>0.60 (標準建議)</span>
-              <span>1.00 (全人工審核)</span>
+            <div class="slider-wrap">
+              <input type="range" id="confThresholdInput" min="0.0" max="1.0" step="0.05" value="0.60" class="slider" />
+              <div class="slider-tick-mark" style="left: 60%;" title="0.60 標準建議刻度"></div>
             </div>
-            <span class="hint" style="display: block; margin-top: 4px;">低於此值會被標紅送審</span>
+            <div style="position: relative; height: 22px; font-size: 13px; color: var(--muted); margin-top: 6px;">
+              <span style="position: absolute; left: 0;">0.00 (全自動通關)</span>
+              <span style="position: absolute; left: 60%; transform: translateX(-50%); color: var(--accent); font-weight: 600;">0.60 (標準建議)</span>
+              <span style="position: absolute; right: 0;">1.00 (全人工審核)</span>
+            </div>
+            <span class="hint" style="display: block; margin-top: 8px; font-size: 13px;">低於此值會被標紅送審</span>
           </div>
-          <div class="param-group" style="margin-top: 20px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; margin-bottom: 6px; color: var(--text);">
-              <label for="yoloConfInput" style="margin: 0; flex: 1;">YOLO-World 信心度:</label>
+          <div class="param-group" style="margin-top: 24px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
+              <label for="yoloConfInput" style="margin: 0; flex: 1; font-weight: 500;">YOLO-World 信心度:</label>
               <div style="flex: 1; text-align: center;">
                 <input type="number" id="yoloConfValue" min="0.1" max="1.0" step="0.01" value="0.40" class="param-val-input" />
               </div>
               <div style="flex: 1; text-align: right;">
-                <span id="yoloConfHint" style="font-weight: normal; font-size: 11px;"></span>
+                <span id="yoloConfHint" style="font-weight: 500; font-size: 13px;"></span>
               </div>
             </div>
-            <input type="range" id="yoloConfInput" min="0.1" max="1.0" step="0.05" value="0.40" class="slider" />
-            <span class="hint" style="display: block; margin-top: 4px;">文字分割偵測的信心度</span>
+            <div class="slider-wrap">
+              <input type="range" id="yoloConfInput" min="0.1" max="1.0" step="0.05" value="0.40" class="slider" />
+              <div class="slider-tick-mark" style="left: 33.33%;" title="0.40 標準建議刻度"></div>
+            </div>
+            <div style="position: relative; height: 22px; font-size: 13px; color: var(--muted); margin-top: 6px;">
+              <span style="position: absolute; left: 0;">0.10 (極高靈敏)</span>
+              <span style="position: absolute; left: 33.33%; transform: translateX(-50%); color: var(--accent); font-weight: 600;">0.40 (標準建議)</span>
+              <span style="position: absolute; right: 0;">1.00 (極高精確)</span>
+            </div>
+            <span class="hint" style="display: block; margin-top: 8px; font-size: 13px;">文字分割偵測的信心度</span>
           </div>
           <button id="saveParamsBtn" style="margin-top: 20px; width: 100%; display: block;">儲存並重新預測</button>
         </div>
