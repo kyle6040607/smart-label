@@ -93,6 +93,26 @@ class Config:
     # --- Gemini API Key ---
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
+    # --- 資料庫後端（MySQL / Cloud SQL）---
+    # DB_BACKEND: "auto"（預設，有給 MySQL 位址就用 MySQL，否則 JSON）| "json" | "mysql"
+    db_backend: str = os.getenv("DB_BACKEND", "auto")
+    mysql_host: str = os.getenv("MYSQL_HOST", "")
+    mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
+    mysql_user: str = os.getenv("MYSQL_USER", "")
+    mysql_password: str = os.getenv("MYSQL_PASSWORD", "")
+    mysql_database: str = os.getenv("MYSQL_DATABASE", "")
+    # Cloud Run / App Engine 掛 Cloud SQL 時走 unix socket：
+    # /cloudsql/<PROJECT>:<REGION>:<INSTANCE>；設了這個就不用 mysql_host
+    mysql_unix_socket: str = os.getenv("MYSQL_UNIX_SOCKET", "")
+
+    @property
+    def use_mysql(self) -> bool:
+        if self.db_backend == "mysql":
+            return True
+        if self.db_backend == "json":
+            return False
+        return bool(self.mysql_host or self.mysql_unix_socket)
+
     # --- 上傳限制 ---
     max_content_length: int = 32 * 1024 * 1024  # 32 MB
     allowed_ext: tuple[str, ...] = field(
