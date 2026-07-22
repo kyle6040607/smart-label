@@ -49,6 +49,7 @@ def create_app(config: Config | None = None) -> Flask:
     from app.routes.review import bp as review_bp
     from app.routes.export import bp as export_bp
     from app.routes.line_bot import bp as linebot_bp
+    from app.routes.liff import bp as liff_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(images_bp)
@@ -57,6 +58,7 @@ def create_app(config: Config | None = None) -> Flask:
     app.register_blueprint(review_bp)
     app.register_blueprint(export_bp)
     app.register_blueprint(linebot_bp)
+    app.register_blueprint(liff_bp)
 
     @app.before_request
     def require_api_login():
