@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>智慧分割標記助手</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 <body>
@@ -61,12 +63,33 @@
         <h2>0 · 參數調整</h2>
         <div class="param-card">
           <div class="param-group">
-            <label for="confThresholdInput">低信心待審門檻: <span id="confThresholdValue" class="param-val">0.60</span></label>
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; margin-bottom: 6px; color: var(--text);">
+              <label for="confThresholdInput" style="margin: 0; flex: 1;">低信心待審門檻:</label>
+              <div style="flex: 1; text-align: center;">
+                <input type="number" id="confThresholdValue" min="0.0" max="1.0" step="0.01" value="0.60" class="param-val-input" />
+              </div>
+              <div style="flex: 1; text-align: right;">
+                <span id="confThresholdHint" style="font-weight: normal; font-size: 11px;"></span>
+              </div>
+            </div>
             <input type="range" id="confThresholdInput" min="0.0" max="1.0" step="0.05" value="0.60" class="slider" />
+            <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px;">
+              <span>0.00 (全自動通關)</span>
+              <span>0.60 (標準建議)</span>
+              <span>1.00 (全人工審核)</span>
+            </div>
             <span class="hint" style="display: block; margin-top: 4px;">低於此值會被標紅送審</span>
           </div>
-          <div class="param-group" style="margin-top: 16px;">
-            <label for="yoloConfInput">YOLO-World 信心度: <span id="yoloConfValue" class="param-val">0.40</span></label>
+          <div class="param-group" style="margin-top: 20px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; margin-bottom: 6px; color: var(--text);">
+              <label for="yoloConfInput" style="margin: 0; flex: 1;">YOLO-World 信心度:</label>
+              <div style="flex: 1; text-align: center;">
+                <input type="number" id="yoloConfValue" min="0.1" max="1.0" step="0.01" value="0.40" class="param-val-input" />
+              </div>
+              <div style="flex: 1; text-align: right;">
+                <span id="yoloConfHint" style="font-weight: normal; font-size: 11px;"></span>
+              </div>
+            </div>
             <input type="range" id="yoloConfInput" min="0.1" max="1.0" step="0.05" value="0.40" class="slider" />
             <span class="hint" style="display: block; margin-top: 4px;">文字分割偵測的信心度</span>
           </div>
@@ -193,7 +216,7 @@
     </section>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="{{ url_for('static', filename='js/vendor/chart.umd.min.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

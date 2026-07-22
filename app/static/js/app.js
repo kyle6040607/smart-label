@@ -83,7 +83,7 @@ function startFakeProgress(startVal = 10, limitVal = 75) {
   stopFakeProgress();
   currentProgress = startVal;
   updateProgressBar(Math.round(currentProgress));
-  
+
   progressInterval = setInterval(() => {
     if (currentProgress < limitVal) {
       const increment = (limitVal - currentProgress) * 0.04;
@@ -141,13 +141,13 @@ function setSegmentationLoading(active, message = "分割中…", showProgress =
 
   canvas.closest(".canvas-wrap").classList.toggle("is-loading", active);
   canvas.setAttribute("aria-busy", String(active));
-  
+
   if (active) {
     $("autoSegBtn").disabled = true;
   } else {
     updateAutoSegBtn();
   }
-  
+
   $("drawBtn").disabled = active || !state.currentImage;
   $("textPromptInput").disabled = active || !state.currentImage;
   $("textSegBtn").disabled = active || !state.currentImage;
@@ -168,20 +168,20 @@ async function fetchWithProgress(url, options, onProgress) {
   if (!response.ok) {
     throw await responseError(response, "請求失敗");
   }
-  
+
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let finalResult = null;
-  
+
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    
+
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop();
-    
+
     for (const line of lines) {
       if (line.trim()) {
         const data = JSON.parse(line);
@@ -195,7 +195,7 @@ async function fetchWithProgress(url, options, onProgress) {
       }
     }
   }
-  
+
   if (buffer.trim()) {
     try {
       const data = JSON.parse(buffer);
@@ -210,7 +210,7 @@ async function fetchWithProgress(url, options, onProgress) {
       // ignore
     }
   }
-  
+
   if (!finalResult) {
     throw new Error("伺服器未回傳完成狀態");
   }
@@ -262,7 +262,7 @@ async function loadThumbs() {
   const imgs = await (await fetch("/api/images")).json();
   const box = $("thumbs");
   box.innerHTML = "";
-  
+
   // 根據批次管理狀態切換 CSS class
   box.classList.toggle("batch-active", state.imgBatchMode);
 
@@ -329,7 +329,7 @@ function selectImage(im, el) {
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
   el.classList.add("active");
-  
+
   state.autoSegCompleted = false;
   updateAutoSegBtn(true);
 
@@ -697,7 +697,7 @@ async function refreshSidebar() {
   const queue = await (await fetch("/api/review/queue")).json();
   const ul = $("reviewQueue");
   ul.innerHTML = "";
-  
+
   // 依據批次管理狀態切換 CSS 類別
   ul.classList.toggle("batch-active", state.segBatchMode);
 
@@ -720,7 +720,7 @@ async function refreshSidebar() {
           </div>
         </div>
       </div>`;
-    
+
     // 綁定批次勾選框事件
     const chk = li.querySelector(".seg-chk");
     chk.onclick = () => {
@@ -758,11 +758,11 @@ async function refreshSidebar() {
     const submitReview = async () => {
       const label = inputEl.value.trim();
       if (!label) return;
-      
+
       //  樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
       li.style.opacity = "0.3";
       li.style.pointerEvents = "none";
-      
+
       try {
         const res = await fetch(`/api/segments/${s.id}/review`, {
           method: "POST",
@@ -951,7 +951,7 @@ $("batchDelImgsBtn").onclick = async () => {
     });
 
     if (!res.ok) throw new Error(await res.text());
-    
+
     // 如果刪除的照片包含當前選擇的圖片，清空畫布
     if (state.currentImage && ids.includes(state.currentImage.id)) {
       state.currentImage = null;
@@ -1007,27 +1007,63 @@ let laborSavingChartInstance = null;
 let categoryDistributionChartInstance = null;
 let reviewProgressChartInstance = null;
 
+function getCssVar(varName, fallback = '') {
+  if (typeof window === "undefined" || !document.documentElement) return fallback;
+  const val = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  return val || fallback; 
+}
+
 function applyMode(mode) {
   state.mode = mode;
   localStorage.setItem("mode", mode);
-  
+
   const isEng = mode === "engineer";
   $("laymanModeBtn").classList.toggle("active", !isEng);
   $("engineerModeBtn").classList.toggle("active", isEng);
-  
+
   const wrapper = document.querySelector(".mode-switch-wrapper");
   if (wrapper) {
     wrapper.classList.toggle("eng-active", isEng);
   }
-  
+
   document.querySelectorAll(".engineer-only").forEach(el => {
     el.classList.toggle("show", isEng);
   });
-  
+
   if (isEng) {
     loadParameters();
   }
   refreshSidebar();
+}
+
+function updateSliderFill(sliderEl) {
+  if (!sliderEl) return;
+  const min = parseFloat(sliderEl.min) || 0;
+  const max = parseFloat(sliderEl.max) || 1;
+  const val = parseFloat(sliderEl.value) || 0;
+  const percent = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+  sliderEl.style.background = `linear-gradient(90deg, #4f9cff 0%, #36d399 ${percent}%, #1b2636 ${percent}%, #1b2636 100%)`;
+}
+
+function updateConfThresholdDisplay(val) {
+  const num = Number(val);
+  const inputVal = $("confThresholdValue");
+  if (inputVal && document.activeElement !== inputVal) {
+    inputVal.value = isNaN(num) ? "" : num.toFixed(2);
+  }
+  updateSliderFill($("confThresholdInput"));
+  const hint = $("confThresholdHint");
+  if (hint) {
+    if (num === 0) {
+      hint.textContent = "（全自動通關）";
+      hint.style.color = getCssVar("--ok", "#36d399");
+    } else if (num === 1) {
+      hint.textContent = "（全人工審核）";
+      hint.style.color = getCssVar("--accent", "#4f9cff");
+    } else {
+      hint.textContent = "";
+    }
+  }
 }
 
 async function loadParameters() {
@@ -1036,9 +1072,10 @@ async function loadParameters() {
     if (res.ok) {
       const data = await res.json();
       $("confThresholdInput").value = data.confidence_threshold;
-      $("confThresholdValue").textContent = Number(data.confidence_threshold).toFixed(2);
+      updateConfThresholdDisplay(data.confidence_threshold);
       $("yoloConfInput").value = data.yolo_world_confidence;
-      $("yoloConfValue").textContent = Number(data.yolo_world_confidence).toFixed(2);
+      $("yoloConfValue").value = Number(data.yolo_world_confidence).toFixed(2);
+      updateSliderFill($("yoloConfInput"));
     }
   } catch (err) {
     console.error("載入參數失敗:", err);
@@ -1063,18 +1100,18 @@ function updateCenterText(chartCanvasId, text, color) {
     wrapper.appendChild(overlay);
   }
   overlay.textContent = text;
-  overlay.style.color = color || "var(--text)";
+  overlay.style.color = color || getCssVar("--text", "#f3f4f6");
 }
 
 function updateCharts(stats) {
   if (typeof Chart === "undefined") return;
-  
+
   // 1. 自動過審 vs 手動標籤
   const laborSavingCtx = $("laborSavingChart").getContext("2d");
   const totalLabeled = stats.auto_accepted + stats.reviewed;
   const autoRatioPercent = totalLabeled ? (stats.auto_accepted / totalLabeled * 100).toFixed(0) + "%" : "0%";
   $("laborSavingSub").innerHTML = `自動過審: <b>${stats.auto_accepted}</b> / 手動標籤: <b>${stats.reviewed}</b>`;
-  
+
   if (laborSavingChartInstance) {
     laborSavingChartInstance.data.datasets[0].data = [stats.auto_accepted, stats.reviewed];
     laborSavingChartInstance.update();
@@ -1098,15 +1135,15 @@ function updateCharts(stats) {
       }
     });
   }
-  updateCenterText("laborSavingChart", autoRatioPercent, "var(--ok)");
-  
+  updateCenterText("laborSavingChart", autoRatioPercent, getCssVar("--ok", "#36d399"));
+
   // 2. 類別分布
   const categoryCtx = $("categoryDistributionChart").getContext("2d");
   const labelCounts = stats.label_counts || {};
   const labels = Object.keys(labelCounts);
   const counts = Object.values(labelCounts);
   $("categorySub").innerHTML = `已建立類別數: <b>${stats.num_labels}</b>`;
-  
+
   const roygbivColors = [
     '#ff5470', // Red
     '#ff9f43', // Orange
@@ -1117,13 +1154,13 @@ function updateCharts(stats) {
     '#b33771'  // Violet
   ];
   const colors = labels.map((_, idx) => roygbivColors[idx % roygbivColors.length]);
-  
+
   const cType = state.categoryChartType || "bar";
   if (categoryDistributionChartInstance && categoryDistributionChartInstance.config.type !== cType) {
     categoryDistributionChartInstance.destroy();
     categoryDistributionChartInstance = null;
   }
-  
+
   if (cType === "bar") {
     if (categoryDistributionChartInstance) {
       categoryDistributionChartInstance.data.labels = labels;
@@ -1188,7 +1225,7 @@ function updateCharts(stats) {
       });
     }
   }
-  
+
   // 更新類別分布圖的圖例
   const legendDiv = $("categoryLegend");
   if (legendDiv) {
@@ -1203,14 +1240,14 @@ function updateCharts(stats) {
       legendDiv.appendChild(span);
     });
   }
-  
+
   // 3. 審核進度
   const reviewCtx = $("reviewProgressChart").getContext("2d");
   const totalToReview = stats.reviewed + stats.need_review;
   const progressRatio = totalToReview ? stats.reviewed / totalToReview : 0.0;
   const progressPercentText = (progressRatio * 100).toFixed(0) + "%";
   $("reviewSub").innerHTML = `已審核: <b>${stats.reviewed}</b> / 待審: <b>${stats.need_review}</b>`;
-  
+
   if (reviewProgressChartInstance) {
     reviewProgressChartInstance.data.datasets[0].data = [stats.reviewed, stats.need_review];
     reviewProgressChartInstance.update();
@@ -1245,17 +1282,80 @@ if (switchWrapper) {
   };
 }
 
+function bindNumericInputGuard(inputEl, minVal, maxVal, onUpdate) {
+  if (!inputEl) return;
+
+  inputEl.addEventListener("keydown", (e) => {
+    if (["-", "+", "e", "E"].includes(e.key)) {
+      e.preventDefault();
+    }
+  });
+
+  inputEl.addEventListener("input", () => {
+    let raw = inputEl.value;
+    if (raw === "") return;
+    let num = parseFloat(raw);
+    if (isNaN(num)) return;
+
+    if (num > maxVal) {
+      num = maxVal;
+      inputEl.value = num;
+    }
+    if (num < 0) {
+      num = 0;
+      inputEl.value = num;
+    }
+
+    onUpdate(num);
+  });
+
+  inputEl.addEventListener("blur", () => {
+    let raw = inputEl.value;
+    let num = parseFloat(raw);
+    if (isNaN(num) || num < minVal) {
+      num = minVal;
+    } else if (num > maxVal) {
+      num = maxVal;
+    }
+    inputEl.value = num.toFixed(2);
+    onUpdate(num);
+  });
+}
+
 $("confThresholdInput").oninput = (e) => {
-  $("confThresholdValue").textContent = Number(e.target.value).toFixed(2);
-};
-$("yoloConfInput").oninput = (e) => {
-  $("yoloConfValue").textContent = Number(e.target.value).toFixed(2);
+  updateConfThresholdDisplay(e.target.value);
 };
 
+bindNumericInputGuard($("confThresholdValue"), 0.0, 1.0, (num) => {
+  const clamped = Math.max(0.0, Math.min(1.0, num));
+  $("confThresholdInput").value = clamped;
+  updateConfThresholdDisplay(clamped);
+});
+
+$("yoloConfInput").oninput = (e) => {
+  const val = Number(e.target.value).toFixed(2);
+  if (document.activeElement !== $("yoloConfValue")) {
+    $("yoloConfValue").value = val;
+  }
+  updateSliderFill(e.target);
+};
+
+bindNumericInputGuard($("yoloConfValue"), 0.1, 1.0, (num) => {
+  const clamped = Math.max(0.1, Math.min(1.0, num));
+  $("yoloConfInput").value = clamped;
+  updateSliderFill($("yoloConfInput"));
+});
+
 $("saveParamsBtn").onclick = async () => {
-  const confidence_threshold = parseFloat($("confThresholdInput").value);
-  const yolo_world_confidence = parseFloat($("yoloConfInput").value);
-  
+  let confidence_threshold = parseFloat($("confThresholdValue").value);
+  if (isNaN(confidence_threshold)) {
+    confidence_threshold = parseFloat($("confThresholdInput").value);
+  }
+  let yolo_world_confidence = parseFloat($("yoloConfValue").value);
+  if (isNaN(yolo_world_confidence)) {
+    yolo_world_confidence = parseFloat($("yoloConfInput").value);
+  }
+
   try {
     const res = await fetch("/api/parameters", {
       method: "POST",

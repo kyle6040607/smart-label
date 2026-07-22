@@ -26,7 +26,8 @@ class Repository:
         self.examples: dict[str, LabelExample] = {}
         self.users: dict[str, User] = {}
         self.line_sessions: dict[str, LineSession] = {}
-        self._load()
+        self.parameters: dict[str, float] = {}
+        self._load() 
 
     # ---------- 影像 ----------
     def add_image(self, img: ImageRecord) -> ImageRecord:
@@ -299,6 +300,7 @@ class Repository:
             "examples": [e.to_dict() for e in self.examples.values()],
             "users": [u.to_dict() for u in self.users.values()],
             "line_sessions": [s.to_dict() for s in self.line_sessions.values()],
+            "parameters": self.parameters,
         }
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.db_file.with_suffix(".tmp")
@@ -322,3 +324,13 @@ class Repository:
             self.line_sessions[d["line_user_id"]] = LineSession(
                 **{k: v for k, v in d.items() if k in LineSession.__dataclass_fields__}
             )
+        self.parameters = data.get("parameters", {})
+
+    def get_parameters(self) -> dict[str, float]:
+        with self._lock:
+            return dict(self.parameters)
+
+    def set_parameter(self, key: str, value: float) -> None:
+        with self._lock:
+            self.parameters[key] = value
+            self._save()

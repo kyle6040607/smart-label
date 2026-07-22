@@ -203,15 +203,39 @@ def get_parameters():
 @bp.post("/parameters")
 def update_parameters():
     """更新動態參數值，並重算未審核片段之信心送審狀態。"""
-    pipeline = get_pipeline()
-    data = request.get_json(force=True)
+    repo, pipeline = get_repo(), get_pipeline()
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "無效的 JSON 請求"}), 400
+
     if "confidence_threshold" in data:
-        pipeline.config.confidence_threshold = float(data["confidence_threshold"])
+        raw_val = data["confidence_threshold"]
+        if isinstance(raw_val, bool):
+            return jsonify({"error": "confidence_threshold 必須為有效的數字"}), 400
+        try:
+            val = float(raw_val)
+            if not (0.0 <= val <= 1.0):
+                return jsonify({"error": "confidence_threshold 必須為 0.0 至 1.0 之間的數字"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "confidence_threshold 必須為有效的數字"}), 400
+        pipeline.config.confidence_threshold = val
+        repo.set_parameter("confidence_threshold", val)
+
     if "yolo_world_confidence" in data:
-        pipeline.config.yolo_world_confidence = float(data["yolo_world_confidence"])
-    
+        raw_val = data["yolo_world_confidence"]
+        if isinstance(raw_val, bool):
+            return jsonify({"error": "yolo_world_confidence 必須為有效的數字"}), 400
+        try:
+            val = float(raw_val)
+            if not (0.0 <= val <= 1.0):
+                return jsonify({"error": "yolo_world_confidence 必須為 0.0 至 1.0 之間的數字"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "yolo_world_confidence 必須為有效的數字"}), 400
+        pipeline.config.yolo_world_confidence = val
+        repo.set_parameter("yolo_world_confidence", val)
+
     pipeline.reclassify_pending()
-    
+
     return jsonify({
         "status": "success",
         "parameters": {

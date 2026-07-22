@@ -98,3 +98,39 @@ def test_reclassify_pending_on_parameter_update(client, tmp_path):
     
     seg_updated = repo.get_segment("seg1")
     assert seg_updated.needs_review is False
+
+def test_parameters_validation(client):
+    # Test invalid string input -> 400
+    res = client.post("/api/parameters", json={"confidence_threshold": "invalid"})
+    assert res.status_code == 400
+    assert "error" in res.get_json()
+
+    # Test boolean input -> 400
+    res = client.post("/api/parameters", json={"confidence_threshold": True})
+    assert res.status_code == 400
+
+    # Test out of range input (> 1.0) -> 400
+    res = client.post("/api/parameters", json={"confidence_threshold": 1.5})
+    assert res.status_code == 400
+
+    # Test out of range input (< 0.0) -> 400
+    res = client.post("/api/parameters", json={"yolo_world_confidence": -0.2})
+    assert res.status_code == 400
+
+def test_parameters_persistence(client, tmp_path):
+    # Post parameter update
+    res = client.post("/api/parameters", json={
+        "confidence_threshold": 0.75,
+        "yolo_world_confidence": 0.25
+    })
+    assert res.status_code == 200
+
+    # Re-initialize app with same db_file path
+    cfg = Config(
+        base_dir=tmp_path, data_dir=tmp_path, upload_dir=tmp_path / "up",
+        mask_dir=tmp_path / "mask", db_file=tmp_path / "store.json",
+    )
+    new_app = create_app(cfg)
+    assert new_app.pipeline.config.confidence_threshold == 0.75
+    assert new_app.pipeline.config.yolo_world_confidence == 0.25
+
