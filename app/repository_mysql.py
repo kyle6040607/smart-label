@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS images (
     created_at DOUBLE NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS parameters (
+    `key` VARCHAR(64) PRIMARY KEY,
+    value FLOAT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS segments (
     id VARCHAR(32) PRIMARY KEY,
     image_id VARCHAR(32) NOT NULL,
@@ -476,6 +481,17 @@ class MySQLRepository:
     def clear_line_session(self, line_user_id: str) -> None:
         with self._tx() as cur:
             cur.execute("DELETE FROM line_sessions WHERE line_user_id=%s", (line_user_id,))
+
+    # ---------- 參數設定 ----------
+    def get_parameters(self) -> dict[str, float]:
+        with self._tx() as cur:
+            cur.execute("SELECT `key`, value FROM parameters")
+            rows = cur.fetchall()
+        return {r["key"]: float(r["value"]) for r in rows}
+
+    def set_parameter(self, key: str, value: float) -> None:
+        with self._tx() as cur:
+            cur.execute("REPLACE INTO parameters (`key`, value) VALUES (%s, %s)", (key, value))
 
     # ---------- 統計 ----------
     def stats(self) -> dict:
