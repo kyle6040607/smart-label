@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS images (
     created_at DOUBLE NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS parameters (
+    `key` VARCHAR(64) PRIMARY KEY,
+    value FLOAT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS segments (
     id VARCHAR(32) PRIMARY KEY,
     image_id VARCHAR(32) NOT NULL,
@@ -216,7 +221,20 @@ class MySQLRepository:
             cur.execute("SELECT mask_path FROM segments WHERE image_id=%s", (image_id,))
             paths += [r["mask_path"] for r in cur.fetchall()]
             cur.execute("DELETE FROM segments WHERE image_id=%s", (image_id,))
-            cur.execute("DELETE FROM images WHERE id=%s", (image_id,))
+        return [p for p in paths if p]
+
+    def delete_images_batch(self, image_ids: list[str]) -> list[str]:
+        """批次刪除多張圖，單一 Transaction 完成。"""
+        if not image_ids:
+            return []
+        with self._tx() as cur:
+            fmt = ",".join(["%s"] * len(image_ids))
+            cur.execute(f"SELECT path FROM images WHERE id IN ({fmt}) FOR UPDATE", tuple(image_ids))
+            paths = [r["path"] for r in cur.fetchall() if r.get("path")]
+            cur.execute(f"SELECT mask_path FROM segments WHERE image_id IN ({fmt})", tuple(image_ids))
+            paths += [r["mask_path"] for r in cur.fetchall() if r.get("mask_path")]
+            cur.execute(f"DELETE FROM segments WHERE image_id IN ({fmt})", tuple(image_ids))
+            cur.execute(f"DELETE FROM images WHERE id IN ({fmt})", tuple(image_ids))
         return [p for p in paths if p]
 
     # ---------- 遮罩片段 ----------
@@ -264,6 +282,17 @@ class MySQLRepository:
                 return None
             cur.execute("DELETE FROM segments WHERE id=%s", (seg_id,))
         return r["mask_path"] or None
+
+    def delete_segments_batch(self, seg_ids: list[str]) -> list[str]:
+        """批次刪除多個遮罩片段，單一 Transaction 完成。"""
+        if not seg_ids:
+            return []
+        with self._tx() as cur:
+            fmt = ",".join(["%s"] * len(seg_ids))
+            cur.execute(f"SELECT mask_path FROM segments WHERE id IN ({fmt}) FOR UPDATE", tuple(seg_ids))
+            paths = [r["mask_path"] for r in cur.fetchall() if r.get("mask_path")]
+            cur.execute(f"DELETE FROM segments WHERE id IN ({fmt})", tuple(seg_ids))
+        return [p for p in paths if p]
 
     def update_segment(self, seg: Segment) -> Segment:
         with self._tx() as cur:
@@ -452,6 +481,17 @@ class MySQLRepository:
     def clear_line_session(self, line_user_id: str) -> None:
         with self._tx() as cur:
             cur.execute("DELETE FROM line_sessions WHERE line_user_id=%s", (line_user_id,))
+
+    # ---------- 參數設定 ----------
+    def get_parameters(self) -> dict[str, float]:
+        with self._tx() as cur:
+            cur.execute("SELECT `key`, value FROM parameters")
+            rows = cur.fetchall()
+        return {r["key"]: float(r["value"]) for r in rows}
+
+    def set_parameter(self, key: str, value: float) -> None:
+        with self._tx() as cur:
+            cur.execute("REPLACE INTO parameters (`key`, value) VALUES (%s, %s)", (key, value))
 
     # ---------- 統計 ----------
     def stats(self) -> dict:
