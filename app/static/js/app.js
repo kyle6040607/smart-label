@@ -459,6 +459,7 @@ $("drawBtn").onclick = () => {
 // ---------- 單點分割（一般模式：點 canvas）----------
 canvas.onclick = async (e) => {
   if (!state.currentImage || state.drawMode || state.segmenting) return;
+  if (state.mode === "layman") return;
   const { x, y } = toImageXY(e);
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, "單點分割中…");
@@ -1025,6 +1026,8 @@ function applyMode(mode) {
   if (wrapper) {
     wrapper.classList.toggle("eng-active", isEng);
   }
+
+  document.body.classList.toggle("layman-mode", !isEng);
 
   document.querySelectorAll(".engineer-only").forEach(el => {
     el.classList.toggle("show", isEng);

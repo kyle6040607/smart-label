@@ -114,17 +114,17 @@
       <h2>2 · 標記 / 分割</h2>
       <div class="toolbar">
         <div class="tool-group">
-          <button id="autoSegBtn" disabled>自動分割整張</button>
+          <button id="autoSegBtn" class="layman-hide" disabled>自動分割整張</button>
           <div class="text-seg-wrap">
             <input type="text" id="textPromptInput" placeholder="輸入文字搜尋物件（如：飛機）" disabled />
             <button id="textSegBtn" disabled class="btn-link text-seg-btn">🔍 文字分割</button>
           </div>
         </div>
-        <div class="tool-group">
+        <div class="tool-group layman-hide">
           <button id="drawBtn" disabled>✏️ 手動描邊</button>
         </div>
       </div>
-      <div class="tool-status">
+      <div class="tool-status layman-hide">
         <span class="status-icon">💡</span>
         <span id="modeHint">點物件做單點分割</span>
       </div>
