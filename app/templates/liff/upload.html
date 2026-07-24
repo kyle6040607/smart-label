@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>建立標註任務</title>
+    <link rel="stylesheet" href="/static/css/liff.css">
+</head>
+
+<body>
+    
+    <main class="container">
+        
+        <section class="card">
+            <h1>建立標註任務</h1>
+
+            <p>正在確認 LINE 使用者資訊</p>
+
+            <div id="status" class="status">
+                LIFF 初始化中......
+            </div>
+
+            <div id="profile" style="display:none; margin-top: 20px;">
+                <img
+                    id="profile-image"
+                    alt="LINE 使用者頭像"
+                    style="
+                        display: none;
+                        width: 72px;
+                        height: 72px;
+                        margin-bottom: 12px;
+                        border-radius: 50%;
+                        object-fit: cover;
+                    "
+                >
+                <p>
+                    您好，<strong id="display-name"></strong>
+                </p>
+            </div>    
+        </section>
+    </main>
+
+    <!-- LINE 官方 LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <meta id="liff-data" data-liff-id="{{ liff_id }}">
+    <script>
+        // 透過 dataset 抓取 HTML 上的變數
+        const liffData = document.getElementById("liff-data");
+        const LIFF_ID = liffData.dataset.liffId;
+
+        const statusElement = document.getElementById("status");
+        const profileElement = document.getElementById("profile");
+        const displayNameElement = document.getElementById("display-name");
+        const profileImageElement = document.getElementById("profile-image");
+
+        async function initializeLiff() {
+            try {
+                if (!LIFF_ID) {
+                    throw new Error("找不到 LIFF_ID，請檢查 .env 設定");
+                }
+
+                await liff.init({
+                    liffId: LIFF_ID,
+                    // 使用一般瀏覽器開啟時，自動進入 LINE 登入流程
+                    withLoginOnExternalBrowser: true,
+                });
+
+                if(!liff.isLoggedIn()) {
+                    liff.login();
+                    return;
+                }
+
+                const profile = await liff.getProfile();
+                displayNameElement.textContent = profile.displayName;
+                
+                if(profile.pictureUrl) {
+                    profileImageElement.src = profile.pictureUrl;
+                    profileImageElement.style.display = "block";
+                }
+
+                profileElement.style.display = "block";
+                statusElement.textContent = "LIFF 初始化成功";
+
+            } catch (error) {
+                console.error("LIFF 初始化失敗:", error);
+                statusElement.textContent = `LIFF 初始化失敗:${error.message}`;
+            }
+        }
+
+        initializeLiff();
+    </script>
+</body>
+</html>
