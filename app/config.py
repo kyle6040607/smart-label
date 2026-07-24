@@ -94,6 +94,18 @@ class Config:
     # --- Gemini API Key ---
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
+    # --- Email 驗證碼（SMTP）---
+    # 未設定 SMTP_HOST 時走開發模式：驗證碼直接印在伺服器 log，不寄信。
+    # Gmail 範例：SMTP_HOST=smtp.gmail.com、SMTP_PORT=587、
+    #            SMTP_USER=你的 Gmail、SMTP_PASSWORD=應用程式密碼（16 碼）
+    smtp_host: str = os.getenv("SMTP_HOST", "")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user: str = os.getenv("SMTP_USER", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    mail_from: str = os.getenv("MAIL_FROM", "") or os.getenv("SMTP_USER", "")
+    otp_ttl_seconds: int = int(os.getenv("OTP_TTL_SECONDS", "600"))     # 驗證碼有效 10 分鐘
+    otp_max_attempts: int = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))    # 最多嘗試 5 次
+
     # --- 資料庫後端（MySQL / Cloud SQL）---
     # DB_BACKEND: "auto"（預設，有給 MySQL 位址就用 MySQL，否則 JSON）| "json" | "mysql"
     db_backend: str = os.getenv("DB_BACKEND", "auto")
