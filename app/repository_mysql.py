@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(32) PRIMARY KEY,
     username VARCHAR(64) NOT NULL DEFAULT '',
     password_hash VARCHAR(255) NOT NULL DEFAULT '',
+    email VARCHAR(255) NOT NULL DEFAULT '',
+    email_verified TINYINT(1) NOT NULL DEFAULT 0,
+    otp_hash VARCHAR(255) NOT NULL DEFAULT '',
+    otp_expires DOUBLE NOT NULL DEFAULT 0,
+    otp_attempts INT NOT NULL DEFAULT 0,
     role VARCHAR(16) NOT NULL DEFAULT 'user',
     created_at DOUBLE NOT NULL,
     line_user_id VARCHAR(64) NULL,
@@ -116,6 +121,11 @@ def _row_to_example(r: dict) -> LabelExample:
 def _row_to_user(r: dict) -> User:
     return User(
         id=r["id"], username=r["username"], password_hash=r["password_hash"],
+        email=r.get("email", ""),
+        email_verified=bool(r.get("email_verified", 0)),
+        otp_hash=r.get("otp_hash", ""),
+        otp_expires=r.get("otp_expires", 0.0),
+        otp_attempts=r.get("otp_attempts", 0),
         role=r["role"], created_at=r["created_at"],
         line_user_id=r["line_user_id"], display_name=r["display_name"],
         avatar_url=r["avatar_url"],
@@ -181,6 +191,18 @@ class MySQLRepository:
             for stmt in _SCHEMA.split(";"):
                 if stmt.strip():
                     cur.execute(stmt)
+            # 既有資料表的欄位遷移：舊表缺欄位時補上
+            migrations = [
+                ("email", "VARCHAR(255) NOT NULL DEFAULT '' AFTER password_hash"),
+                ("email_verified", "TINYINT(1) NOT NULL DEFAULT 0 AFTER email"),
+                ("otp_hash", "VARCHAR(255) NOT NULL DEFAULT '' AFTER email_verified"),
+                ("otp_expires", "DOUBLE NOT NULL DEFAULT 0 AFTER otp_hash"),
+                ("otp_attempts", "INT NOT NULL DEFAULT 0 AFTER otp_expires"),
+            ]
+            for column, ddl in migrations:
+                cur.execute(f"SHOW COLUMNS FROM users LIKE '{column}'")
+                if cur.fetchone() is None:
+                    cur.execute(f"ALTER TABLE users ADD COLUMN {column} {ddl}")
 
     # ---------- 影像 ----------
     def add_image(self, img: ImageRecord) -> ImageRecord:
@@ -307,10 +329,13 @@ class MySQLRepository:
     # ---------- 使用者 / 登入 ----------
     def _write_user(self, cur, user: User) -> None:
         cur.execute(
-            "REPLACE INTO users (id, username, password_hash, role, created_at,"
+            "REPLACE INTO users (id, username, password_hash, email, email_verified,"
+            " otp_hash, otp_expires, otp_attempts, role, created_at,"
             " line_user_id, display_name, avatar_url)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (user.id, user.username, user.password_hash, user.role,
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (user.id, user.username, user.password_hash, user.email,
+             int(user.email_verified), user.otp_hash, user.otp_expires,
+             user.otp_attempts, user.role,
              user.created_at, user.line_user_id, user.display_name, user.avatar_url),
         )
 

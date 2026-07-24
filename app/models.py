@@ -76,6 +76,11 @@ class User:
     id: str = field(default_factory=_new_id)
     username: str = ""
     password_hash: str = ""       # werkzeug scrypt/pbkdf2 雜湊，非明文；LINE-only 帳號留空
+    email: str = ""               # 註冊信箱；LINE-only 帳號可為空
+    email_verified: bool = False  # Email 是否已通過驗證碼驗證
+    otp_hash: str = ""            # 驗證碼雜湊（sha256），不存明碼
+    otp_expires: float = 0.0      # 驗證碼到期時間（epoch 秒）
+    otp_attempts: int = 0         # 已嘗試次數，達上限須重寄
     role: str = "user"            # 預留：user / admin
     created_at: float = field(default_factory=time.time)
 

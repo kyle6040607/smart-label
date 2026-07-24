@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>登入 · 智慧分割標記助手</title>
+  <title>Email 驗證 · 智慧分割標記助手</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   <style>
     .login-wrap {
@@ -16,7 +16,6 @@
       padding: 24px;
       overflow: hidden;
     }
-    /* 背景漸層光暈 */
     .login-wrap::before,
     .login-wrap::after {
       content: "";
@@ -76,30 +75,27 @@
       text-align: center;
     }
 
-    .login-card label {
-      display: block;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--muted);
-      margin: 16px 0 6px;
-    }
-    .login-card input {
+    .code-input {
       width: 100%;
-      padding: 12px 14px;
+      padding: 14px;
       background: rgba(15,20,25,0.7);
       border: 1px solid #28323f;
       border-radius: 10px;
       color: var(--text);
-      font-size: 14px;
+      font-size: 24px;
+      text-align: center;
+      letter-spacing: 12px;
+      font-variant-numeric: tabular-nums;
       transition: border-color 0.15s, box-shadow 0.15s;
     }
-    .login-card input::placeholder { color: #55606f; }
-    .login-card input:focus {
+    .code-input::placeholder { color: #55606f; letter-spacing: 4px; font-size: 14px; }
+    .code-input:focus {
       outline: none;
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(79,156,255,0.18);
     }
-    .login-card button {
+
+    .login-card button[type="submit"] {
       width: 100%;
       margin-top: 24px;
       padding: 12px;
@@ -113,8 +109,8 @@
       transition: transform 0.12s, box-shadow 0.15s, filter 0.15s;
       box-shadow: 0 8px 20px rgba(79,156,255,0.32);
     }
-    .login-card button:hover { filter: brightness(1.06); box-shadow: 0 10px 26px rgba(79,156,255,0.42); }
-    .login-card button:active { transform: translateY(1px); }
+    .login-card button[type="submit"]:hover { filter: brightness(1.06); }
+    .login-card button[type="submit"]:active { transform: translateY(1px); }
 
     .login-error {
       margin-top: 16px;
@@ -125,85 +121,78 @@
       color: var(--danger);
       font-size: 13px;
     }
-    .login-divider {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin: 22px 0 4px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .login-divider::before,
-    .login-divider::after {
-      content: "";
-      flex: 1;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, #28323f, transparent);
-    }
-    .line-login-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      width: 100%;
-      margin-top: 14px;
-      padding: 12px;
-      background: #06C755;
-      color: #fff;
+    .login-ok {
+      margin-top: 16px;
+      padding: 10px 12px;
+      background: rgba(6, 199, 85, 0.12);
+      border: 1px solid #06C755;
       border-radius: 10px;
-      font-size: 15px;
-      font-weight: 600;
-      text-decoration: none;
-      transition: transform 0.12s, box-shadow 0.15s, filter 0.15s;
-      box-shadow: 0 8px 20px rgba(6,199,85,0.28);
+      color: #06C755;
+      font-size: 13px;
     }
-    .line-login-btn:hover { filter: brightness(1.05); box-shadow: 0 10px 26px rgba(6,199,85,0.4); }
-    .line-login-btn:active { transform: translateY(1px); }
-    .line-login-btn svg { width: 20px; height: 20px; }
+
+    .resend-btn {
+      width: 100%;
+      margin-top: 12px;
+      padding: 11px;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #28323f;
+      border-radius: 10px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .resend-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    .login-footer {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .login-footer a { color: var(--accent); text-decoration: none; }
+    .login-footer a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <div class="login-wrap">
-    <form class="login-card" method="post" action="{{ url_for('auth.do_login') }}">
+    <div class="login-card">
       <div class="login-logo">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <path d="M3 15l5-5 4 4 3-3 6 6" />
-          <circle cx="8.5" cy="8.5" r="1.5" />
+          <rect x="2" y="4" width="20" height="16" rx="2" />
+          <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
         </svg>
       </div>
-      <h1>智慧分割標記助手</h1>
-      <p class="subtitle">請登入以繼續</p>
+      <h1>輸入驗證碼</h1>
+      <p class="subtitle">驗證碼已寄到 {{ masked_email }}<br />10 分鐘內有效</p>
 
-      {% if request.args.get('next') %}
-      <input type="hidden" name="next" value="{{ request.args.get('next') }}" />
-      {% endif %}
+      <form method="post" action="{{ url_for('auth.do_verify') }}">
+        <input class="code-input" name="code" type="text" inputmode="numeric"
+               pattern="\d{6}" maxlength="6" placeholder="6 位數驗證碼"
+               autocomplete="one-time-code" autofocus required />
 
-      <label for="username">帳號</label>
-      <input id="username" name="username" type="text" autocomplete="username" placeholder="請輸入帳號" autofocus required />
+        {% if error %}
+        <div class="login-error">{{ error }}</div>
+        {% endif %}
+        {% if resent %}
+        <div class="login-ok">新的驗證碼已寄出 ✉️</div>
+        {% endif %}
 
-      <label for="password">密碼</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="請輸入密碼" required />
+        <button type="submit">驗證</button>
+      </form>
 
-      {% if error %}
-      <div class="login-error">{{ error }}</div>
-      {% endif %}
+      <form method="post" action="{{ url_for('auth.resend_code') }}">
+        <button class="resend-btn" type="submit">重寄驗證碼</button>
+      </form>
 
-      <button type="submit">登入</button>
-
-      <div class="login-footer" style="margin-top: 16px; text-align: center; font-size: 13px; color: var(--muted);">
-        還沒有帳號？<a href="{{ url_for('auth.register') }}" style="color: var(--accent); text-decoration: none;">註冊帳號</a>
+      <div class="login-footer">
+        信箱填錯了？<a href="{{ url_for('auth.register') }}">重新註冊</a>
+        <span style="margin: 0 6px; opacity: 0.4;">|</span>
+        <a href="{{ url_for('auth.login') }}">回登入頁</a>
       </div>
-
-      <div class="login-divider"><span>或</span></div>
-      <a class="line-login-btn" href="{{ url_for('auth.line_start') }}">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M12 2C6.48 2 2 5.69 2 10.23c0 4.07 3.55 7.48 8.35 8.12.32.07.77.21.88.49.1.25.06.64.03.9l-.14.85c-.04.25-.2.98.86.53s5.7-3.36 7.78-5.75C21.28 13.68 22 12.03 22 10.23 22 5.69 17.52 2 12 2z"/>
-        </svg>
-        使用 LINE 登入
-      </a>
-    </form>
+    </div>
   </div>
 </body>
 </html>
