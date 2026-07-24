@@ -236,27 +236,139 @@ function getTouchPos(e) {
 }
 
 $("uploadBtn").onclick = async () => {
-  const files = $("fileInput").files;
+  const fileInputEl = $("fileInput");
+  const files = Array.from(fileInputEl.files);
   if (!files.length) return alert("先選檔案");
-  const fd = new FormData();
-  for (const f of files) fd.append("files", f);
-  const res = await fetch("/api/images", { method: "POST", body: fd });
-  if (!res.ok) {
-    const text = await res.text();
-    let errorMsg = text;
-    try {
-      const json = JSON.parse(text);
-      errorMsg = json.error || json.message || text;
-    } catch (e) { }
-    return alert("上傳失敗：" + errorMsg);
+
+  const uploadBtn = $("uploadBtn");
+  const selectFileBtn = $("selectFileBtn");
+  const fileCountHint = $("fileCountHint");
+
+  uploadBtn.disabled = true;
+  if (selectFileBtn) selectFileBtn.disabled = true;
+
+  const BATCH_SIZE_LIMIT = 15 * 1024 * 1024; // 15 MB 每批動態容量上限
+  const BATCH_COUNT_LIMIT = 50;               // 單批最多 50 張
+
+  let uploadedCount = 0;
+  let uploadedBytes = 0;
+  const totalFiles = files.length;
+  const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
+
+  const sendBatch = async (batch) => {
+    const fd = new FormData();
+    for (const f of batch) fd.append("files", f);
+    const res = await fetch("/api/images", { method: "POST", body: fd });
+    if (!res.ok) {
+      const text = await res.text();
+      let errorMsg = text;
+      try {
+        const json = JSON.parse(text);
+        errorMsg = json.error || json.message || text;
+      } catch (e) { }
+      throw new Error(errorMsg);
+    }
+    const createdImages = await res.json();
+    uploadedCount += batch.length;
+    uploadedBytes += batch.reduce((acc, f) => acc + f.size, 0);
+
+    // 增量渲染：直接將這批剛創好的照片 append 到縮圖區
+    if (Array.isArray(createdImages) && createdImages.length > 0) {
+      appendThumbs(createdImages);
+    }
+
+    if (fileCountHint) {
+      const mbUploaded = (uploadedBytes / (1024 * 1024)).toFixed(1);
+      const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
+      fileCountHint.textContent = `上傳中… (${uploadedCount}/${totalFiles} 張 · ${mbUploaded}/${mbTotal} MB)`;
+    }
+  };
+
+  try {
+    let currentBatch = [];
+    let currentBatchSize = 0;
+
+    for (const f of files) {
+      if (currentBatch.length > 0 && (currentBatchSize + f.size > BATCH_SIZE_LIMIT || currentBatch.length >= BATCH_COUNT_LIMIT)) {
+        await sendBatch(currentBatch);
+        currentBatch = [];
+        currentBatchSize = 0;
+      }
+      currentBatch.push(f);
+      currentBatchSize += f.size;
+    }
+
+    if (currentBatch.length > 0) {
+      await sendBatch(currentBatch);
+    }
+
+    // 清除選擇的檔案與提示
+    fileInputEl.value = "";
+    if (fileCountHint) {
+      fileCountHint.textContent = "尚未選擇檔案";
+    }
+  } catch (err) {
+    alert(`上傳中斷（已成功上傳 ${uploadedCount}/${totalFiles} 張）：${err.message}`);
+  } finally {
+    uploadBtn.disabled = false;
+    if (selectFileBtn) selectFileBtn.disabled = false;
   }
-  // 清除選擇的檔案與提示
-  $("fileInput").value = "";
-  if ($("fileCountHint")) {
-    $("fileCountHint").textContent = "尚未選擇檔案";
-  }
-  await loadThumbs();
 };
+
+function createThumbElement(im) {
+  const wrap = document.createElement("div");
+  wrap.className = "thumb";
+
+  const el = document.createElement("img");
+  el.src = `/api/images/${im.id}/file`;
+  el.title = im.filename;
+  el.onclick = () => {
+    if (state.imgBatchMode) {
+      chk.checked = !chk.checked;
+      updateImgBatchBtnState();
+      return;
+    }
+    selectImage(im, el);
+  };
+
+  // 批次管理勾選框
+  const chk = document.createElement("input");
+  chk.type = "checkbox";
+  chk.className = "thumb-chk";
+  chk.dataset.id = im.id;
+  chk.onclick = (e) => {
+    e.stopPropagation();
+    updateImgBatchBtnState();
+  };
+
+  const del = document.createElement("button");
+  del.className = "thumb-del";
+  del.textContent = "×";
+  del.title = "刪除這張";
+  del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
+
+  wrap.append(chk, el, del);
+  return wrap;
+}
+
+function appendThumbs(newImages) {
+  const box = $("thumbs");
+  if (!box || !newImages || !newImages.length) return;
+
+  const fragment = document.createDocumentFragment();
+  newImages.forEach((im) => {
+    // 防呆：避開重複加入
+    if (box.querySelector(`.thumb-chk[data-id="${im.id}"]`)) return;
+    const wrap = createThumbElement(im);
+    fragment.appendChild(wrap);
+  });
+  box.appendChild(fragment);
+
+  if (!state.imgBatchMode) {
+    $("selectAllImgs").checked = false;
+    updateImgBatchBtnState();
+  }
+}
 
 async function loadThumbs() {
   const imgs = await (await fetch("/api/images")).json();
@@ -266,47 +378,7 @@ async function loadThumbs() {
   // 根據批次管理狀態切換 CSS class
   box.classList.toggle("batch-active", state.imgBatchMode);
 
-  imgs.forEach((im) => {
-    const wrap = document.createElement("div");
-    wrap.className = "thumb";
-
-    const el = document.createElement("img");
-    el.src = `/api/images/${im.id}/file`;
-    el.title = im.filename;
-    el.onclick = () => {
-      if (state.imgBatchMode) {
-        chk.checked = !chk.checked;
-        updateImgBatchBtnState();
-        return;
-      }
-      selectImage(im, el);
-    };
-
-    // 批次管理勾選框
-    const chk = document.createElement("input");
-    chk.type = "checkbox";
-    chk.className = "thumb-chk";
-    chk.dataset.id = im.id;
-    chk.onclick = (e) => {
-      e.stopPropagation();
-      updateImgBatchBtnState();
-    };
-
-    const del = document.createElement("button");
-    del.className = "thumb-del";
-    del.textContent = "×";
-    del.title = "刪除這張";
-    del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
-
-    wrap.append(chk, el, del);
-    box.appendChild(wrap);
-  });
-
-  // 非批次模式下，重設勾選狀態
-  if (!state.imgBatchMode) {
-    $("selectAllImgs").checked = false;
-    updateImgBatchBtnState();
-  }
+  appendThumbs(imgs);
 }
 
 async function deleteImage(im) {
@@ -944,6 +1016,11 @@ $("batchDelImgsBtn").onclick = async () => {
 
   if (!confirm(`確定要批次刪除選取的 ${ids.length} 張照片嗎？這會同時清除與其相關的遮罩。`)) return;
 
+  const btn = $("batchDelImgsBtn");
+  const originalText = btn.textContent;
+  btn.textContent = "刪除中…";
+  btn.disabled = true;
+
   try {
     const res = await fetch("/api/images/delete_batch", {
       method: "POST",
@@ -952,6 +1029,15 @@ $("batchDelImgsBtn").onclick = async () => {
     });
 
     if (!res.ok) throw new Error(await res.text());
+
+    // 增量 DOM 移除：直接將已被刪除的照片縮圖元素從畫面清掉（0ms 延遲）
+    ids.forEach((id) => {
+      const chk = document.querySelector(`.thumb-chk[data-id="${id}"]`);
+      if (chk) {
+        const thumb = chk.closest(".thumb");
+        if (thumb) thumb.remove();
+      }
+    });
 
     // 如果刪除的照片包含當前選擇的圖片，清空畫布
     if (state.currentImage && ids.includes(state.currentImage.id)) {
@@ -964,10 +1050,18 @@ $("batchDelImgsBtn").onclick = async () => {
     }
 
     // 退出批次模式並重整
-    toggleImgBatchUI(false);
+    state.imgBatchMode = false;
+    $("toggleImgBatchModeBtn").style.display = "block";
+    $("batchDelImgsBtn").style.display = "none";
+    $("cancelImgBatchBtn").style.display = "none";
+    $("selectAllImgsLabel").style.display = "none";
+    $("thumbs").classList.remove("batch-active");
     await refreshSidebar();
   } catch (err) {
     alert("批次刪除失敗: " + err.message);
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
   }
 };
 
@@ -979,6 +1073,11 @@ $("batchDelSegsBtn").onclick = async () => {
 
   if (!confirm(`確定要批次刪除選取的 ${ids.length} 個遮罩片段嗎？`)) return;
 
+  const btn = $("batchDelSegsBtn");
+  const originalText = btn.textContent;
+  btn.textContent = "刪除中…";
+  btn.disabled = true;
+
   try {
     const res = await fetch("/api/segments/delete_batch", {
       method: "POST",
@@ -988,13 +1087,30 @@ $("batchDelSegsBtn").onclick = async () => {
 
     if (!res.ok) throw new Error(await res.text());
 
+    // 增量 DOM 移除：直接移除清單項目
+    ids.forEach((id) => {
+      const chk = document.querySelector(`.seg-chk[data-id="${id}"]`);
+      if (chk) {
+        const li = chk.closest("li");
+        if (li) li.remove();
+      }
+    });
+
     // 退出批次模式並重整
     state.autoSegCompleted = false;
     updateAutoSegBtn();
-    toggleSegBatchUI(false);
+    state.segBatchMode = false;
+    $("toggleSegBatchModeBtn").style.display = "block";
+    $("batchDelSegsBtn").style.display = "none";
+    $("cancelSegBatchBtn").style.display = "none";
+    $("selectAllSegsLabel").style.display = "none";
+    $("reviewQueue").classList.remove("batch-active");
     await refreshAfterSegChange();
   } catch (err) {
     alert("批次刪除失敗: " + err.message);
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
   }
 };
 

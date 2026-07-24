@@ -115,7 +115,7 @@ class Config:
         return bool(self.mysql_host or self.mysql_unix_socket)
 
     # --- 上傳限制 ---
-    max_content_length: int = 32 * 1024 * 1024  # 32 MB
+    max_content_length: int = int(os.getenv("MAX_CONTENT_LENGTH", str(64 * 1024 * 1024)))
     allowed_ext: tuple[str, ...] = field(
         default_factory=lambda: ("png", "jpg", "jpeg", "bmp", "webp")
     )
