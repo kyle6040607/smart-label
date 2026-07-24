@@ -45,6 +45,13 @@ def create_app(config: Config | None = None) -> Flask:
         app.repo = Repository(cfg.db_file)  # type: ignore[attr-defined]
     app.pipeline = Pipeline(cfg, app.repo)  # type: ignore[attr-defined]
 
+    # 還原持久化的參數設定
+    saved_params = app.repo.get_parameters()
+    if "confidence_threshold" in saved_params:
+        app.pipeline.config.confidence_threshold = float(saved_params["confidence_threshold"])
+    if "yolo_world_confidence" in saved_params:
+        app.pipeline.config.yolo_world_confidence = float(saved_params["yolo_world_confidence"])
+
     _seed_default_user(app.repo, cfg)
 
     from app.routes.auth import bp as auth_bp, get_authenticated_user, login_required

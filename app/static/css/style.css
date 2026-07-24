@@ -391,3 +391,264 @@ button.btn-danger:disabled {
   }
 }
 
+/* 雙模式切換器 */
+.mode-switch-wrapper {
+  display: flex;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #28323f;
+  border-radius: 20px;
+  padding: 3px;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  width: fit-content;
+}
+.mode-switch-bg {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  background: var(--accent);
+  border-radius: 17px;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 1;
+}
+.mode-btn {
+  background: transparent !important;
+  color: var(--muted);
+  border: 0;
+  border-radius: 17px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.25s ease;
+  position: relative;
+  z-index: 2;
+  width: 100px;
+  text-align: center;
+}
+.mode-btn:hover {
+  color: var(--text);
+}
+.mode-btn.active {
+  color: #fff;
+}
+.mode-switch-wrapper.eng-active .mode-switch-bg {
+  transform: translateX(100%);
+}
+
+/* 左側欄排版 */
+.left-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 參數滑動條 */
+.param-card {
+  padding: 4px;
+}
+.param-group label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+/* 移除數字輸入框上下箭頭 (Spinner Buttons) */
+.param-val-input::-webkit-outer-spin-button,
+.param-val-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.param-val-input[type=number] {
+  -moz-appearance: textfield;
+}
+
+.param-val {
+  font-family: 'Outfit', 'Inter', system-ui, sans-serif;
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 17px;
+}
+.param-val-input {
+  font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  color: #4f9cff;
+  font-size: 17px;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.9));
+  border: 1px solid rgba(79, 156, 255, 0.3);
+  border-radius: 8px;
+  padding: 4px 10px;
+  width: 80px;
+  text-align: center;
+  outline: none;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  font-variant-numeric: tabular-nums;
+}
+.param-val-input:hover {
+  border-color: rgba(79, 156, 255, 0.6);
+  background: linear-gradient(135deg, rgba(35, 48, 68, 0.8), rgba(20, 30, 48, 0.95));
+}
+.param-val-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(79, 156, 255, 0.4), inset 0 2px 4px rgba(0, 0, 0, 0.4);
+  background: linear-gradient(135deg, rgba(40, 56, 80, 0.9), rgba(25, 36, 56, 0.98));
+}
+
+.slider-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 14px 0 6px 0;
+}
+.slider-wrap .slider {
+  margin: 0;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+}
+.slider-tick-mark {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  box-shadow: 0 0 8px rgba(79, 156, 255, 0.9);
+  z-index: 1;
+}
+
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: #1b2636;
+  outline: none;
+  margin: 12px 0 8px 0;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ffffff, #d4e5ff);
+  border: 2px solid var(--accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 0 10px rgba(79, 156, 255, 0.5);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.slider::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+  border-color: #36d399;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5), 0 0 16px rgba(54, 211, 153, 0.7);
+}
+
+.slider::-webkit-slider-thumb:active {
+  transform: scale(1.35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6), 0 0 20px rgba(79, 156, 255, 0.9);
+}
+
+.slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #ffffff, #d4e5ff);
+  border: 2px solid var(--accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 0 10px rgba(79, 156, 255, 0.5);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.slider::-moz-range-thumb:hover {
+  transform: scale(1.25);
+  border-color: #36d399;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5), 0 0 16px rgba(54, 211, 153, 0.7);
+}
+
+/* 下方圖表區 */
+.charts-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.chart-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid #28323f;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.chart-card h3 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  width: 100%;
+  text-align: left;
+}
+.chart-wrapper {
+  position: relative;
+  width: 100%;
+  height: 160px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.chart-sub {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* 專業模式區塊的展開與淡入動畫 */
+.engineer-only {
+  opacity: 0;
+  transform: translateY(20px);
+  pointer-events: none;
+  transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+              transform 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+              max-height 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+              margin-top 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+              padding-top 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+              padding-bottom 0.5s cubic-bezier(0.4, 0, 0.2, 1), 
+              border-color 0.5s ease;
+  max-height: 0;
+  overflow: hidden;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border-color: transparent !important;
+  background: transparent !important;
+}
+
+.engineer-only.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+  max-height: 1000px;
+  margin-top: 16px !important;
+  padding-top: 16px !important;
+  padding-bottom: 16px !important;
+  border-color: #28323f !important;
+  background: var(--panel) !important;
+}
+

@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>智慧分割標記助手</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 <body>
@@ -11,6 +13,11 @@
     <div>
       <h1>智慧分割標記助手</h1>
       <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
+    </div>
+    <div class="mode-switch-wrapper">
+      <div class="mode-switch-bg"></div>
+      <button id="laymanModeBtn" class="mode-btn active" type="button">素人模式</button>
+      <button id="engineerModeBtn" class="mode-btn" type="button">工程師模式</button>
     </div>
     <div class="header-actions">
       {% if display_name %}<span class="hi">{{ display_name }}</span>{% endif %}
@@ -24,31 +31,83 @@
   </header>
 
   <main>
-    <!-- 1. 上傳 -->
-    <section class="panel">
-      <h2 style="margin-bottom: 8px;">1 · 上傳照片</h2>
-      <input type="file" id="fileInput" multiple accept="image/*" style="display: none;" />
-      <div id="dropZone" class="drop-zone">
-        <p>拖曳照片至此，或點選下方按鈕</p>
-        <div style="display: flex; justify-content: center; gap: 8px; align-items: center;">
-          <button id="selectFileBtn" type="button" class="btn-secondary">選擇檔案</button>
-          <button id="uploadBtn" type="button">上傳</button>
+    <div class="left-col">
+      <!-- 1. 上傳 -->
+      <section class="panel">
+        <h2 style="margin-bottom: 8px;">1 · 上傳照片</h2>
+        <input type="file" id="fileInput" multiple accept="image/*" style="display: none;" />
+        <div id="dropZone" class="drop-zone">
+          <p>拖曳照片至此，或點選下方按鈕</p>
+          <div style="display: flex; justify-content: center; gap: 8px; align-items: center;">
+            <button id="selectFileBtn" type="button" class="btn-secondary">選擇檔案</button>
+            <button id="uploadBtn" type="button">上傳</button>
+          </div>
+          <span class="hint" id="fileCountHint" style="display: block; margin-top: 8px;">尚未選擇檔案</span>
         </div>
-        <span class="hint" id="fileCountHint" style="display: block; margin-top: 8px;">尚未選擇檔案</span>
-      </div>
-      <!-- 批次管理控制條 -->
-      <div class="batch-control-bar">
-        <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
-          <input type="checkbox" id="selectAllImgs" /> 全選
-        </label>
-        <div style="display: flex; gap: 8px; margin-left: auto;">
-          <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
-          <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
-          <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
+        <!-- 批次管理控制條 -->
+        <div class="batch-control-bar">
+          <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
+            <input type="checkbox" id="selectAllImgs" /> 全選
+          </label>
+          <div style="display: flex; gap: 8px; margin-left: auto;">
+            <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
+            <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
+            <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
+          </div>
         </div>
-      </div>
-      <div id="thumbs" class="thumbs"></div>
-    </section>
+        <div id="thumbs" class="thumbs"></div>
+      </section>
+
+      <!-- 0 · 參數調整 (工程師模式) -->
+      <section id="parameterPanel" class="panel engineer-only">
+        <h2>0 · 參數調整</h2>
+        <div class="param-card">
+          <div class="param-group">
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
+              <label for="confThresholdInput" style="margin: 0; flex: 1; font-weight: 500;">低信心待審門檻:</label>
+              <div style="flex: 1; text-align: center;">
+                <input type="number" id="confThresholdValue" min="0.0" max="1.0" step="0.01" value="0.60" class="param-val-input" />
+              </div>
+              <div style="flex: 1; text-align: right;">
+                <span id="confThresholdHint" style="font-weight: 500; font-size: 13px;"></span>
+              </div>
+            </div>
+            <div class="slider-wrap">
+              <input type="range" id="confThresholdInput" min="0.0" max="1.0" step="0.05" value="0.60" class="slider" />
+              <div class="slider-tick-mark" style="left: 60%;" title="0.60 標準建議刻度"></div>
+            </div>
+            <div style="position: relative; height: 22px; font-size: 13px; color: var(--muted); margin-top: 6px;">
+              <span style="position: absolute; left: 0;">0.00 (全自動通關)</span>
+              <span style="position: absolute; left: 60%; transform: translateX(-50%); color: var(--accent); font-weight: 600;">0.60 (標準建議)</span>
+              <span style="position: absolute; right: 0;">1.00 (全人工審核)</span>
+            </div>
+            <span class="hint" style="display: block; margin-top: 8px; font-size: 13px;">低於此值會被標紅送審</span>
+          </div>
+          <div class="param-group" style="margin-top: 24px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
+              <label for="yoloConfInput" style="margin: 0; flex: 1; font-weight: 500;">YOLO-World 信心度:</label>
+              <div style="flex: 1; text-align: center;">
+                <input type="number" id="yoloConfValue" min="0.1" max="1.0" step="0.01" value="0.40" class="param-val-input" />
+              </div>
+              <div style="flex: 1; text-align: right;">
+                <span id="yoloConfHint" style="font-weight: 500; font-size: 13px;"></span>
+              </div>
+            </div>
+            <div class="slider-wrap">
+              <input type="range" id="yoloConfInput" min="0.1" max="1.0" step="0.05" value="0.40" class="slider" />
+              <div class="slider-tick-mark" style="left: 33.33%;" title="0.40 標準建議刻度"></div>
+            </div>
+            <div style="position: relative; height: 22px; font-size: 13px; color: var(--muted); margin-top: 6px;">
+              <span style="position: absolute; left: 0;">0.10 (極高靈敏)</span>
+              <span style="position: absolute; left: 33.33%; transform: translateX(-50%); color: var(--accent); font-weight: 600;">0.40 (標準建議)</span>
+              <span style="position: absolute; right: 0;">1.00 (極高精確)</span>
+            </div>
+            <span class="hint" style="display: block; margin-top: 8px; font-size: 13px;">文字分割偵測的信心度</span>
+          </div>
+          <button id="saveParamsBtn" style="margin-top: 20px; width: 100%; display: block;">儲存並重新預測</button>
+        </div>
+      </section>
+    </div>
 
     <!-- 2. 標記畫布 -->
     <section class="panel">
@@ -121,8 +180,54 @@
         <p class="hint">只匯出已標好類別的片段（圖 + 遮罩 + 標籤）</p>
       </div>
     </aside>
+
+    <!-- 4. 工程師儀表板 -->
+    <section id="chartsPanel" class="panel charts-panel engineer-only" style="grid-column: 1 / -1;">
+      <h2>工程師儀表板 · 統計圖表</h2>
+      <div class="charts-container">
+        <!-- 圖表 1: 自動過審 vs 手動標籤 -->
+        <div class="chart-card">
+          <h3>自動過審 vs 手動標籤</h3>
+          <div class="chart-wrapper">
+            <canvas id="laborSavingChart"></canvas>
+          </div>
+          <div id="laborSavingSub" class="chart-sub"></div>
+          <div class="chart-legend" style="display: flex; gap: 12px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
+            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #36d399; border-radius: 2px;"></span>自動過審</span>
+            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #4f9cff; border-radius: 2px;"></span>手動標籤</span>
+          </div>
+        </div>
+
+        <!-- 圖表 2: 類別分布圖 -->
+        <div class="chart-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <h3>類別分布圖</h3>
+            <button id="toggleCategoryChartTypeBtn" type="button" class="btn-secondary" style="padding: 3px 8px; font-size: 11px; margin-top: -8px;">切換為圓餅圖</button>
+          </div>
+          <div class="chart-wrapper">
+            <canvas id="categoryDistributionChart"></canvas>
+          </div>
+          <div id="categorySub" class="chart-sub"></div>
+          <div id="categoryLegend" class="chart-legend" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;"></div>
+        </div>
+
+        <!-- 圖表 3: 審核進度 -->
+        <div class="chart-card">
+          <h3>審核進度</h3>
+          <div class="chart-wrapper">
+            <canvas id="reviewProgressChart"></canvas>
+          </div>
+          <div id="reviewSub" class="chart-sub"></div>
+          <div class="chart-legend" style="display: flex; gap: 12px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
+            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #4f9cff; border-radius: 2px;"></span>已審核</span>
+            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #ff5470; border-radius: 2px;"></span>待人工審核</span>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
+  <script src="{{ url_for('static', filename='js/vendor/chart.umd.min.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

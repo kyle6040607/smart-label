@@ -188,3 +188,58 @@ def segment_mask(seg_id: str):
     if not seg or not seg.mask_path:
         abort(404)
     return send_file(Path(seg.mask_path), mimetype="image/png")
+
+
+@bp.get("/parameters")
+def get_parameters():
+    """取得當前動態參數值。"""
+    pipeline = get_pipeline()
+    return jsonify({
+        "confidence_threshold": pipeline.config.confidence_threshold,
+        "yolo_world_confidence": pipeline.config.yolo_world_confidence
+    })
+
+
+@bp.post("/parameters")
+def update_parameters():
+    """更新動態參數值，並重算未審核片段之信心送審狀態。"""
+    repo, pipeline = get_repo(), get_pipeline()
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "無效的 JSON 請求"}), 400
+
+    if "confidence_threshold" in data:
+        raw_val = data["confidence_threshold"]
+        if isinstance(raw_val, bool):
+            return jsonify({"error": "confidence_threshold 必須為有效的數字"}), 400
+        try:
+            val = float(raw_val)
+            if not (0.0 <= val <= 1.0):
+                return jsonify({"error": "confidence_threshold 必須為 0.0 至 1.0 之間的數字"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "confidence_threshold 必須為有效的數字"}), 400
+        pipeline.config.confidence_threshold = val
+        repo.set_parameter("confidence_threshold", val)
+
+    if "yolo_world_confidence" in data:
+        raw_val = data["yolo_world_confidence"]
+        if isinstance(raw_val, bool):
+            return jsonify({"error": "yolo_world_confidence 必須為有效的數字"}), 400
+        try:
+            val = float(raw_val)
+            if not (0.0 <= val <= 1.0):
+                return jsonify({"error": "yolo_world_confidence 必須為 0.0 至 1.0 之間的數字"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "yolo_world_confidence 必須為有效的數字"}), 400
+        pipeline.config.yolo_world_confidence = val
+        repo.set_parameter("yolo_world_confidence", val)
+
+    pipeline.reclassify_pending()
+
+    return jsonify({
+        "status": "success",
+        "parameters": {
+            "confidence_threshold": pipeline.config.confidence_threshold,
+            "yolo_world_confidence": pipeline.config.yolo_world_confidence
+        }
+    })
