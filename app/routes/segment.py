@@ -170,15 +170,11 @@ def delete_segments_batch():
     if not seg_ids:
         abort(400, "無效的片段 ID 清單")
 
-    deleted_ids = []
-    for seg_id in seg_ids:
-        if repo.get_segment(seg_id):
-            mask = repo.delete_segment(seg_id)
-            if mask:
-                Path(mask).unlink(missing_ok=True)
-            deleted_ids.append(seg_id)
+    paths = repo.delete_segments_batch(seg_ids)
+    for p in paths:
+        Path(p).unlink(missing_ok=True)
 
-    return jsonify({"deleted_ids": deleted_ids}), 200
+    return jsonify({"deleted_ids": seg_ids}), 200
 
 
 @bp.get("/segments/<seg_id>/mask")

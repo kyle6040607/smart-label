@@ -652,3 +652,12 @@ button.btn-danger:disabled {
   background: var(--panel) !important;
 }
 
+/* 素人模式下隱藏的元素與游標設定 */
+body.layman-mode .layman-hide {
+  display: none !important;
+}
+
+body.layman-mode canvas {
+  cursor: default;
+}
+
