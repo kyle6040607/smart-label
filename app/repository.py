@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from app.models import ImageRecord, Segment, LabelExample, User, LineSession
+from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User, LineSession
 
 
 class Repository:

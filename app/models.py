@@ -30,6 +30,36 @@ class ImageRecord:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+@dataclass
+class AnnotationTask:
+    """由 LIFF 建立的圖片標註與訓練任務。"""
+
+    id: str = field(default_factory=_new_id)
+
+    # 任務輸入
+    user_id: str = ""
+    line_user_id: str = ""   # LIFF 驗證取得的 LINE 使用者 ID
+    prompt: str = ""
+    image_ids: list[str] = field(default_factory=list)
+
+    # pending / processing / completed / failed
+    status: str = "pending"
+
+    # 任務完成後產生的檔案
+    dataset_zip_path: str = ""
+    best_model_path: str = ""
+
+    # 下載網址使用的隨機憑證
+    download_token: str = field(
+        default_factory=lambda: uuid.uuid4().hex
+    )
+
+    error_message: str = ""
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 @dataclass
 class Segment:
