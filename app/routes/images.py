@@ -138,15 +138,8 @@ def delete_images_batch():
     if not image_ids:
         abort(400, "無效的圖片 ID 清單")
 
-    removed_files_count = 0
-    deleted_ids = []
+    paths = repo.delete_images_batch(image_ids)
+    for p in paths:
+        Path(p).unlink(missing_ok=True)
 
-    for image_id in image_ids:
-        if repo.get_image(image_id):
-            paths = repo.delete_image(image_id)
-            for p in paths:
-                Path(p).unlink(missing_ok=True)
-            removed_files_count += len(paths)
-            deleted_ids.append(image_id)
-
-    return jsonify({"deleted_ids": deleted_ids, "files_removed": removed_files_count}), 200
+    return jsonify({"deleted_ids": image_ids, "files_removed": len(paths)}), 200

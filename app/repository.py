@@ -62,6 +62,24 @@ class Repository:
             self._save()
         return [p for p in paths if p]
 
+    def delete_images_batch(self, image_ids: list[str]) -> list[str]:
+        """批次刪除多張圖與對應的遮罩片段，並在最後一次性存檔。"""
+        paths = []
+        with self._lock:
+            for image_id in image_ids:
+                img = self.images.pop(image_id, None)
+                if img is None:
+                    continue
+                if img.path:
+                    paths.append(img.path)
+                seg_ids = [s.id for s in self.segments.values() if s.image_id == image_id]
+                for seg_id in seg_ids:
+                    seg = self.segments.pop(seg_id, None)
+                    if seg and seg.mask_path:
+                        paths.append(seg.mask_path)
+            self._save()
+        return [p for p in paths if p]
+
     # ---------- 遮罩片段 ----------
     def add_segment(self, seg: Segment) -> Segment:
         with self._lock:
@@ -90,6 +108,17 @@ class Repository:
                 return None
             self._save()
         return seg.mask_path or None
+
+    def delete_segments_batch(self, seg_ids: list[str]) -> list[str]:
+        """批次刪除多個遮罩片段，並在最後一次性存檔。"""
+        paths = []
+        with self._lock:
+            for seg_id in seg_ids:
+                seg = self.segments.pop(seg_id, None)
+                if seg and seg.mask_path:
+                    paths.append(seg.mask_path)
+            self._save()
+        return [p for p in paths if p]
 
     def update_segment(self, seg: Segment) -> Segment:
         with self._lock:
