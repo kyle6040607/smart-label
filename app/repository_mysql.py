@@ -204,6 +204,17 @@ class MySQLRepository:
                 if cur.fetchone() is None:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {column} {ddl}")
 
+            # 確保 parameters 資料表結構正確
+            cur.execute("SHOW COLUMNS FROM parameters LIKE 'key'")
+            if cur.fetchone() is None:
+                cur.execute("DROP TABLE IF EXISTS parameters")
+                cur.execute("""
+                    CREATE TABLE parameters (
+                        `key` VARCHAR(64) PRIMARY KEY,
+                        value FLOAT NOT NULL DEFAULT 0
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+
     # ---------- 影像 ----------
     def add_image(self, img: ImageRecord) -> ImageRecord:
         with self._tx() as cur:

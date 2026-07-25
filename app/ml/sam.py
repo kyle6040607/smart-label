@@ -150,6 +150,17 @@ class SamSegmenter:
         print(f"指定架構: {model_type}")
         print(f"配置設備: {self.device}")
 
+        import os
+        import urllib.request
+
+        # 若權重檔不存在，自動自官方 GitHub 下載權重檔
+        if not os.path.exists(checkpoint):
+            os.makedirs(os.path.dirname(checkpoint) or ".", exist_ok=True)
+            print(f"找不到權重檔 {checkpoint}，正在自動下載 MobileSAM 權重...")
+            url = "https://raw.githubusercontent.com/ChaoningZhang/MobileSAM/master/weights/mobile_sam.pt"
+            urllib.request.urlretrieve(url, checkpoint)
+            print(f"MobileSAM 權重下載完成：{checkpoint}")
+
         self.sam = sam_model_registry[model_type](checkpoint=checkpoint)
         self.sam.to(device=self.device)
         self.sam.eval()
