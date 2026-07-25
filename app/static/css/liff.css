@@ -42,3 +42,99 @@ p {
     background-color: #eef7ee;
     color: #257942;
 }
+
+#profile {
+    display: none;
+    margin-top: 20px;
+}
+
+#profile-image {
+    display: none;
+    width: 72px;
+    height: 72px;
+    margin-bottom: 12px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.form-group {
+    margin-top: 24px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+}
+
+#prompt {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #d9dee5;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 16px;
+    resize: vertical;
+}
+
+#prompt:focus {
+    outline: 2px solid #06c755;
+    border-color: transparent;
+}
+
+#prompt-count {
+    margin-top: 6px;
+    text-align: right;
+    color: #666;
+    font-size: 14px;
+}
+
+.submit-button {
+    width: 100%;
+    margin-top: 16px;
+    padding: 14px 20px;
+    border: none;
+    border-radius: 8px;
+    background-color: #06c755;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.submit-button:hover {
+    opacity: 0.9;
+}
+
+
+.upload-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 100%;
+    padding: 12px 20px;
+
+    border: none;
+    border-radius: 8px;
+
+    background-color: #06c755;
+    color: #ffffff;
+
+    font-size: 16px;
+    font-weight: bold;
+    text-align: center;
+    text-decoration: none;
+
+    cursor: pointer;
+    user-select: none;
+}
+
+.upload-button:hover {
+    opacity: 0.9;
+}
+
+.upload-button:active {
+    transform: scale(0.98);
+}
+
