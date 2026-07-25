@@ -12,7 +12,7 @@ from flask import (
 
 from werkzeug.utils import secure_filename
 
-from app.models import User, ImageRecord
+from app.models import AnnotationTask, ImageRecord
 from app.routes import get_config, get_repo
 from app.services import line_login
 
@@ -158,20 +158,10 @@ def upload_task():
     display_name = profile.get("name", "")
     avatar_url = profile.get("picture", "")
 
-    # 找到或建立內部使用者
+    # 查詢這位 LINE 使用者是否已綁定 Web 帳號
     user = repo.get_user_by_line_id(line_user_id)
 
-    if user is None:
-        user = repo.add_user(
-            User(
-                username=f"line_{line_user_id[:10]}",
-                line_user_id=line_user_id,
-                display_name=display_name,
-                avatar_url=avatar_url,
-                role="user",
-            )
-        )
-    else:
+    if user is not None:
         profile_changed = False
 
         if display_name and user.display_name != display_name:
@@ -185,7 +175,16 @@ def upload_task():
         if profile_changed:
             repo.update_user(user)
 
+    web_user_id = user.id if user is not None else ""
+
+    response_display_name = (
+        user.display_name or user.username
+        if user is not None
+        else display_name
+    )
+
     upload_dir = cfg.upload_dir
+
     upload_dir.mkdir(
         parents=True,
         exist_ok=True,
@@ -231,11 +230,22 @@ def upload_task():
             "height": image_record.height,
         })
 
+    task = AnnotationTask(
+        user_id=web_user_id,
+        line_user_id=line_user_id,
+        prompt=prompt,
+        image_ids=[image_info["image_id"] for image_info in saved_images],
+    )
+
+    repo.add_task(task)
+
     return jsonify({
         "ok": True,
-        "message": "圖片儲存成功",
-        "user_id": user.id,
-        "display_name": user.display_name or user.username,
+        "message": "標註任務建立成功",
+        "task_id": task.id,
+        "task_status": task.status,
+        "user_id": web_user_id,
+        "display_name": response_display_name,
         "prompt": prompt,
         "image_count": len(saved_images),
         "images": saved_images,
