@@ -9,6 +9,7 @@ MYSQL_DATABASE（Cloud Run 以外的環境用 TCP 即可），然後：
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -43,21 +44,44 @@ def main() -> None:
             dst._write_segment(cur, seg)  # noqa: SLF001
         for user in src.users.values():
             dst._write_user(cur, user)  # noqa: SLF001
-        import json as _json
         for ex in src.examples.values():
             cur.execute(
                 "REPLACE INTO examples (id, label, feature, source_segment_id, created_at)"
                 " VALUES (%s, %s, %s, %s, %s)",
-                (ex.id, ex.label, _json.dumps(ex.feature),
+                (ex.id, ex.label, json.dumps(ex.feature),
                  ex.source_segment_id, ex.created_at),
+            )
+        for task in src.tasks.values():
+            cur.execute(
+                """
+                REPLACE INTO annotation_tasks (
+                    id, user_id, line_user_id, prompt, image_ids, status,
+                    dataset_zip_path, best_model_path, download_token,
+                    error_message, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    task.id, task.user_id, task.line_user_id, task.prompt,
+                    json.dumps(task.image_ids), task.status,
+                    task.dataset_zip_path, task.best_model_path,
+                    task.download_token, task.error_message,
+                    task.created_at, task.updated_at,
+                ),
             )
         for s in src.line_sessions.values():
             dst._write_session(cur, s)  # noqa: SLF001
+        for key, value in src.parameters.items():
+            cur.execute(
+                "REPLACE INTO parameters (`key`, value) VALUES (%s, %s)",
+                (key, value),
+            )
 
     print(
         f"遷移完成：images={len(src.images)} segments={len(src.segments)}"
         f" examples={len(src.examples)} users={len(src.users)}"
-        f" line_sessions={len(src.line_sessions)}"
+        f" tasks={len(src.tasks)} line_sessions={len(src.line_sessions)}"
+        f" parameters={len(src.parameters)}"
     )
 
 
