@@ -159,24 +159,9 @@ def upload_task():
         }), 401
 
     display_name = profile.get("name", "")
-    avatar_url = profile.get("picture", "")
 
     # 查詢這位 LINE 使用者是否已綁定 Web 帳號
     user = repo.get_user_by_line_id(line_user_id)
-
-    if user is not None:
-        profile_changed = False
-
-        if display_name and user.display_name != display_name:
-            user.display_name = display_name
-            profile_changed = True
-
-        if avatar_url and user.avatar_url != avatar_url:
-            user.avatar_url = avatar_url
-            profile_changed = True
-
-        if profile_changed:
-            repo.update_user(user)
 
     web_user_id = user.id if user is not None else ""
 
