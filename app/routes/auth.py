@@ -389,11 +389,23 @@ def line_callback():
         owner = repo.get_user_by_line_id(line_user_id)
         if owner is not None and (current is None or owner.id != current.id):
             return render_template("login.html", error="這個 LINE 帳號已綁定其他帳號"), 409
+
         if current is not None:
             current.line_user_id = line_user_id
-            current.display_name = current.display_name or display_name
-            current.avatar_url = avatar_url or current.avatar_url
+            current.display_name = (
+                current.display_name or display_name
+            )
+            current.avatar_url = (
+                avatar_url or current.avatar_url
+            )
+
             repo.update_user(current)
+
+            repo.assign_tasks_to_user(
+                line_user_id=line_user_id,
+                user_id=current.id,
+            )
+
             return redirect(url_for("index"))
 
     # 3-b) 登入模式：找已綁定的帳號，沒有就自動建立一個 LINE-only 帳號
@@ -408,6 +420,11 @@ def line_callback():
                 role="user",
             )
         )
+
+    repo.assign_tasks_to_user(
+        line_user_id=line_user_id,
+        user_id=user.id,
+    )
 
     session.clear()
     session["user_id"] = user.id

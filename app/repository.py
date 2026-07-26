@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 
-from app.models import ImageRecord, Segment, LabelExample, User, LineSession
+from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User, LineSession
 
 
 class Repository:
@@ -25,6 +25,7 @@ class Repository:
         self.segments: dict[str, Segment] = {}
         self.examples: dict[str, LabelExample] = {}
         self.users: dict[str, User] = {}
+        self.tasks: dict[str, AnnotationTask] = {}
         self.line_sessions: dict[str, LineSession] = {}
         self.parameters: dict[str, float] = {}
         self._load() 
@@ -79,6 +80,57 @@ class Repository:
                         paths.append(seg.mask_path)
             self._save()
         return [p for p in paths if p]
+
+    # ---------- 標註任務 ----------
+    # 建立任務
+    def add_task(
+        self,
+        task: AnnotationTask,
+    ) -> AnnotationTask:
+        with self._lock:
+            self.tasks[task.id] = task
+            self._save()
+
+        return task
+    # 依ID 取回任務
+    def get_task(
+        self,
+        task_id: str,
+    ) -> AnnotationTask | None:
+        return self.tasks.get(task_id)
+    # 背景執行
+    def update_task(
+        self,
+        task: AnnotationTask,
+    ) -> AnnotationTask:
+        with self._lock:
+            task.updated_at = time.time()
+            self.tasks[task.id] = task
+            self._save()
+
+        return task
+    # 讓 LIFF 任務在 Web 綁定 LINE 後自動歸戶
+    def assign_tasks_to_user(
+        self,
+        line_user_id: str,
+        user_id: str,
+    ) -> int:
+        assigned_count = 0
+
+        with self._lock:
+            for task in self.tasks.values():
+                if (
+                    task.line_user_id == line_user_id
+                    and not task.user_id
+                ):
+                    task.user_id = user_id
+                    task.updated_at = time.time()
+                    assigned_count += 1
+
+            if assigned_count > 0:
+                self._save()
+
+        return assigned_count
 
     # ---------- 遮罩片段 ----------
     def add_segment(self, seg: Segment) -> Segment:
@@ -328,6 +380,7 @@ class Repository:
             "segments": [s.to_dict() for s in self.segments.values()],
             "examples": [e.to_dict() for e in self.examples.values()],
             "users": [u.to_dict() for u in self.users.values()],
+            "tasks": [task.to_dict() for task in self.tasks.values()],
             "line_sessions": [s.to_dict() for s in self.line_sessions.values()],
             "parameters": self.parameters,
         }
@@ -349,6 +402,9 @@ class Repository:
             self.examples[d["id"]] = LabelExample(**{k: v for k, v in d.items() if k in LabelExample.__dataclass_fields__})
         for d in data.get("users", []):
             self.users[d["id"]] = User(**{k: v for k, v in d.items() if k in User.__dataclass_fields__})
+        for d in data.get("tasks", []):
+            task = AnnotationTask(**{key: value for key, value in d.items() if key in AnnotationTask.__dataclass_fields__})
+            self.tasks[task.id] = task
         for d in data.get("line_sessions", []):
             self.line_sessions[d["line_user_id"]] = LineSession(
                 **{k: v for k, v in d.items() if k in LineSession.__dataclass_fields__}

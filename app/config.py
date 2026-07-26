@@ -80,6 +80,9 @@ class Config:
     line_channel_secret: str = os.getenv("LINE_CHANNEL_SECRET", "")
     line_channel_access_token: str = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 
+    # --- LIFF ---
+    liff_id: str = os.getenv("LIFF_ID", "").strip()
+
     # --- LINE Login（登入用，是另一個獨立的 LINE Login channel）---
     line_login_channel_id: str = os.getenv("LINE_LOGIN_CHANNEL_ID", "")
     line_login_channel_secret: str = os.getenv("LINE_LOGIN_CHANNEL_SECRET", "")

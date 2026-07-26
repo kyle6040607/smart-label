@@ -24,7 +24,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from app.config import Config
-from app.models import ImageRecord, Segment, LabelExample, User, LineSession
+from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User, LineSession
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS images (
@@ -84,6 +84,28 @@ CREATE TABLE IF NOT EXISTS users (
     INDEX idx_users_line_user_id (line_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS annotation_tasks (
+    id VARCHAR(32) PRIMARY KEY,
+    user_id VARCHAR(32) NOT NULL DEFAULT '',
+    line_user_id VARCHAR(64) NOT NULL DEFAULT '',
+    prompt TEXT NOT NULL,
+    image_ids JSON NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    dataset_zip_path VARCHAR(512) NOT NULL DEFAULT '',
+    best_model_path VARCHAR(512) NOT NULL DEFAULT '',
+    download_token VARCHAR(64) NOT NULL,
+    error_message TEXT NOT NULL,
+    created_at DOUBLE NOT NULL,
+    updated_at DOUBLE NOT NULL,
+    INDEX idx_annotation_tasks_user_id (user_id),
+    INDEX idx_annotation_tasks_line_user_id (line_user_id),
+    UNIQUE INDEX uq_annotation_tasks_download_token (
+        download_token
+    )
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS line_sessions (
     line_user_id VARCHAR(64) PRIMARY KEY,
     image_ids JSON NOT NULL,
@@ -136,6 +158,23 @@ def _row_to_user(r: dict) -> User:
         avatar_url=r["avatar_url"],
     )
 
+def _row_to_task(
+    row: dict,
+) -> AnnotationTask:
+    return AnnotationTask(
+        id=row["id"],
+        user_id=row["user_id"],
+        line_user_id=row["line_user_id"],
+        prompt=row["prompt"],
+        image_ids=json.loads(row["image_ids"]),
+        status=row["status"],
+        dataset_zip_path=row["dataset_zip_path"],
+        best_model_path=row["best_model_path"],
+        download_token=row["download_token"],
+        error_message=row["error_message"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
 
 def _row_to_session(r: dict) -> LineSession:
     return LineSession(
@@ -254,6 +293,7 @@ class MySQLRepository:
             cur.execute("SELECT mask_path FROM segments WHERE image_id=%s", (image_id,))
             paths += [r["mask_path"] for r in cur.fetchall()]
             cur.execute("DELETE FROM segments WHERE image_id=%s", (image_id,))
+            cur.execute("DELETE FROM images WHERE id=%s", (image_id,))
         return [p for p in paths if p]
 
     def delete_images_batch(self, image_ids: list[str]) -> list[str]:
@@ -365,6 +405,134 @@ class MySQLRepository:
                 (label,),
             )
         return deleted
+
+    # ---------- 標註任務 ----------
+    def add_task(self, task: AnnotationTask, ) -> AnnotationTask:
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO annotation_tasks (
+                    id,
+                    user_id,
+                    line_user_id,
+                    prompt,
+                    image_ids,
+                    status,
+                    dataset_zip_path,
+                    best_model_path,
+                    download_token,
+                    error_message,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s
+                )
+                """,
+                (
+                    task.id,
+                    task.user_id,
+                    task.line_user_id,
+                    task.prompt,
+                    json.dumps(task.image_ids),
+                    task.status,
+                    task.dataset_zip_path,
+                    task.best_model_path,
+                    task.download_token,
+                    task.error_message,
+                    task.created_at,
+                    task.updated_at,
+                ),
+            )
+
+        return task
+
+    def get_task(
+        self,
+        task_id: str,
+    ) -> AnnotationTask | None:
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (task_id,),
+            )
+
+            row = cursor.fetchone()
+
+        return _row_to_task(row) if row else None
+
+    def update_task(
+        self,
+        task: AnnotationTask,
+    ) -> AnnotationTask:
+        task.updated_at = time.time()
+
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET
+                    user_id = %s,
+                    line_user_id = %s,
+                    prompt = %s,
+                    image_ids = %s,
+                    status = %s,
+                    dataset_zip_path = %s,
+                    best_model_path = %s,
+                    download_token = %s,
+                    error_message = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (
+                    task.user_id,
+                    task.line_user_id,
+                    task.prompt,
+                    json.dumps(task.image_ids),
+                    task.status,
+                    task.dataset_zip_path,
+                    task.best_model_path,
+                    task.download_token,
+                    task.error_message,
+                    task.updated_at,
+                    task.id,
+                ),
+            )
+
+        return task
+
+    def assign_tasks_to_user(
+        self,
+        line_user_id: str,
+        user_id: str,
+    ) -> int:
+        updated_at = time.time()
+
+        with self._tx() as cursor:
+            assigned_count = cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET
+                    user_id = %s,
+                    updated_at = %s
+                WHERE line_user_id = %s
+                  AND user_id = ''
+                """,
+                (
+                    user_id,
+                    updated_at,
+                    line_user_id,
+                ),
+            )
+
+        return assigned_count
 
     # ---------- 使用者 / 登入 ----------
     def _write_user(self, cur, user: User) -> None:

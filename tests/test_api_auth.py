@@ -5,6 +5,8 @@ import pytest
 
 from app import create_app
 from app.config import Config
+from app.models import AnnotationTask
+from app.services import line_login
 
 
 @pytest.fixture
@@ -117,3 +119,130 @@ def test_line_callback_remains_public(app):
     response = app.test_client().post("/callback")
 
     assert response.status_code == 400
+
+
+def test_line_binding_claims_unowned_liff_tasks(
+    app,
+    monkeypatch,
+):
+    client = app.test_client()
+    repo = app.repo
+
+    user = repo.get_user_by_username(
+        app.smart_config.default_admin_user
+    )
+
+    assert user is not None
+
+    task = AnnotationTask(
+        line_user_id="U-line-binding-test",
+        prompt="請標註貓咪",
+        image_ids=["image-1"],
+    )
+
+    repo.add_task(task)
+
+    monkeypatch.setattr(
+        line_login,
+        "exchange_token",
+        lambda *args: {
+            "id_token": "fake-id-token",
+        },
+    )
+
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-line-binding-test",
+            "name": "LINE 測試使用者",
+            "picture": "https://example.com/avatar.png",
+        },
+    )
+
+    with client.session_transaction() as session:
+        session["user_id"] = user.id
+        session["username"] = user.username
+        session["line_oauth_state"] = "test-state"
+        session["line_oauth_nonce"] = "test-nonce"
+        session["line_oauth_bind"] = True
+
+    response = client.get(
+        "/login/line/callback"
+        "?state=test-state"
+        "&code=test-code"
+    )
+
+    assert response.status_code == 302
+
+    updated_user = repo.get_user(user.id)
+    updated_task = repo.get_task(task.id)
+
+    assert updated_user is not None
+    assert updated_task is not None
+
+    assert (
+        updated_user.line_user_id
+        == "U-line-binding-test"
+    )
+
+    assert updated_task.user_id == user.id
+
+def test_line_login_claims_unowned_liff_tasks(
+    app,
+    monkeypatch,
+):
+    client = app.test_client()
+    repo = app.repo
+
+    task = AnnotationTask(
+        line_user_id="U-direct-line-login",
+        prompt="請標註狗狗",
+        image_ids=["image-2"],
+    )
+
+    repo.add_task(task)
+
+    monkeypatch.setattr(
+        line_login,
+        "exchange_token",
+        lambda *args: {
+            "id_token": "fake-id-token",
+        },
+    )
+
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-direct-line-login",
+            "name": "LINE 直接登入使用者",
+            "picture": "",
+        },
+    )
+
+    with client.session_transaction() as session:
+        session["line_oauth_state"] = "test-state"
+        session["line_oauth_nonce"] = "test-nonce"
+        session["line_oauth_bind"] = False
+
+    response = client.get(
+        "/login/line/callback"
+        "?state=test-state"
+        "&code=test-code"
+    )
+
+    assert response.status_code == 302
+
+    user = repo.get_user_by_line_id(
+        "U-direct-line-login"
+    )
+
+    loaded_task = repo.get_task(task.id)
+
+    assert user is not None
+    assert loaded_task is not None
+    assert loaded_task.user_id == user.id
+
+    with client.session_transaction() as session:
+        assert session["user_id"] == user.id
