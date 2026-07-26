@@ -99,6 +99,20 @@ class Repository:
     ) -> AnnotationTask | None:
         return self.tasks.get(task_id)
 
+    def list_tasks_by_line_user_id(
+        self,
+        line_user_id: str,
+    ) -> list[AnnotationTask]:
+        """依更新時間由新到舊取得 LINE 使用者的任務。"""
+        return sorted(
+            [
+                task
+                for task in self.tasks.values()
+                if task.line_user_id == line_user_id
+            ],
+            key=lambda task: task.updated_at,
+            reverse=True,
+        )
     def claim_next_pending_task(
         self,
     ) -> AnnotationTask | None:
@@ -429,7 +443,12 @@ class Repository:
         for d in data.get("users", []):
             self.users[d["id"]] = User(**{k: v for k, v in d.items() if k in User.__dataclass_fields__})
         for d in data.get("tasks", []):
-            task = AnnotationTask(**{key: value for key, value in d.items() if key in AnnotationTask.__dataclass_fields__})
+            task_data = { key: value for key, value in d.items() if key in AnnotationTask.__dataclass_fields__}
+            task = AnnotationTask(**task_data)
+            if ("processed_image_ids" not in d and task.status == "completed"):
+                task.processed_image_ids = list( task.image_ids )
+            if ( "dataset_version" not in d and task.status == "completed" and task.dataset_zip_path):
+                task.dataset_version = 1
             self.tasks[task.id] = task
         for d in data.get("line_sessions", []):
             self.line_sessions[d["line_user_id"]] = LineSession(

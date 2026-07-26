@@ -13,14 +13,38 @@ def process_task(
     output_dir: Path,
 ) -> AnnotationTask:
     """執行單一 LIFF 標註任務並產生 YOLO ZIP。"""
+    processed_image_ids = set(task.processed_image_ids)
+    pending_image_ids = [
+        image_id
+        for image_id in task.image_ids
+        if image_id not in processed_image_ids
+    ]
+
+    if not pending_image_ids:
+        raise ValueError("任務沒有尚未處理的圖片")
+
     segment_count = 0
-    for image_id in task.image_ids:
+    for image_id in pending_image_ids:
         image = repo.get_image(image_id)
 
         if image is None:
             raise ValueError(
                 f"找不到任務圖片：{image_id}"
             )
+        existing_segments = repo.list_segments(image_id)
+        #重試時先清掉未完成圖片的舊 segments 和 mask 檔，不會重複累加。
+        if existing_segments:
+            mask_paths = repo.delete_segments_batch(
+                [
+                    segment.id
+                    for segment in existing_segments
+                ]
+            )
+
+            for mask_path in mask_paths:
+                Path(mask_path).unlink(
+                    missing_ok=True
+                )
 
         segments = pipeline.segment_text(
             image,
@@ -45,9 +69,18 @@ def process_task(
         exist_ok=True,
     )
 
-    zip_path = task_dir / "dataset.zip"
-    zip_path.write_bytes(zip_bytes)
+    next_dataset_version = task.dataset_version + 1
+    zip_path = task_dir / f"dataset_v{next_dataset_version}.zip"
+    temporary_zip_path = zip_path.with_suffix(".tmp")
 
+    temporary_zip_path.write_bytes(zip_bytes)
+    temporary_zip_path.replace(zip_path)
+
+    task.processed_image_ids = list(dict.fromkeys([
+        *task.processed_image_ids,
+        *pending_image_ids,
+    ]))
+    task.dataset_version = next_dataset_version
     task.dataset_zip_path = str(zip_path)
     task.status = "completed"
     task.error_message = ""

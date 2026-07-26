@@ -13,121 +13,18 @@ const imageCountElement =document.getElementById("image-count");
 const promptElement =document.getElementById("prompt");
 const promptCountElement =document.getElementById("prompt-count");
 const submitButtonElement =document.getElementById("submit-button");
-const taskResultElement =document.getElementById("task-result");
-const taskResultMessageElement =document.getElementById("task-result-message");
-const downloadLinkElement =document.getElementById("download-link");
-const TASK_POLL_INTERVAL_MS = 3000;
-let taskPollingVersion = 0;
+const selectedImageFiles = new Map();
 
-// 建立輪詢函式與初始畫面
-function wait(milliseconds) {
-    return new Promise(
-        (resolve) => {
-            window.setTimeout(
-                resolve,
-                milliseconds
-            );
-        }
-    );
+
+function getImageFileKey(file) {
+    return [
+        file.name,
+        file.size,
+        file.type,
+        file.lastModified,
+    ].join(":");
 }
 
-
-async function pollTaskStatus(statusUrl) {
-    const pollingVersion =
-        ++taskPollingVersion;
-
-    taskResultElement.hidden = false;
-
-    taskResultMessageElement.textContent =
-        "任務正在排隊等待處理...";
-
-    downloadLinkElement.hidden = true;
-    downloadLinkElement.removeAttribute(
-        "href"
-    );
-    while (
-        pollingVersion ===
-        taskPollingVersion
-    ) {
-        try {
-            const response = await fetch(
-                statusUrl,
-                {
-                    cache: "no-store",
-                }
-            );
-
-            const result =
-                await response.json();
-
-            if (!response.ok) {
-                taskResultMessageElement.textContent =
-                    result.message ||
-                    "無法查詢任務狀態";
-
-                if (
-                    response.status >= 400
-                    && response.status < 500
-                ) {
-                    return;
-                }
-
-                throw new Error(
-                    result.message ||
-                    "無法查詢任務狀態"
-                );
-            }
-
-            taskResultMessageElement.textContent =
-                result.message ||
-                "任務正在處理";
-
-            if (
-                result.task_status ===
-                "completed"
-            ) {
-                statusElement.textContent =
-                    "標註任務已完成";
-
-                downloadLinkElement.href =
-                    result.download_url;
-
-                downloadLinkElement.hidden =
-                    false;
-
-                return;
-            }
-
-            if (
-                result.task_status ===
-                "failed"
-            ) {
-                statusElement.textContent =
-                    "標註任務處理失敗";
-
-                taskResultMessageElement.textContent =
-                    result.error_message ||
-                    result.message ||
-                    "處理任務時發生錯誤";
-
-                return;
-            }
-
-        } catch (error) {
-            console.warn(
-                "查詢任務狀態失敗：",
-                error
-            );
-
-            taskResultMessageElement.textContent =
-                "任務仍在處理，正在重新連線...";
-        }
-
-        await wait(
-            TASK_POLL_INTERVAL_MS
-        );
-    }
-}
 // URL 與 LINE 登入輔助函式
 function getCleanRedirectUri() {
     /*
@@ -337,52 +234,43 @@ async function initializeLiff() {
 // 圖片選擇
 // ========================================
 
-imageInputElement.addEventListener(
-    "change",
-    () => {
-        const files = Array.from(imageInputElement.files);
+imageInputElement.addEventListener("change", () => {
+    const newFiles = Array.from(imageInputElement.files);
+    const allowedTypes = ["image/jpeg", "image/png"];
 
-        imageCountElement.classList.remove("error-message");
+    if (newFiles.length === 0) {
+        return;
+    }
 
-        if (files.length === 0) {
-            imageCountElement.textContent =
-                "尚未選擇圖片";
+    const invalidFiles = newFiles.filter(
+        (file) => !allowedTypes.includes(file.type)
+    );
 
-            return;
-        }
-
-        const allowedTypes = ["image/jpeg","image/png",];
-
-        const invalidFiles = files.filter(
-            (file) => {
-                return !allowedTypes.includes(
-                    file.type
-                );
-            }
-        );
-
-        if (invalidFiles.length > 0) {
-            imageInputElement.value = "";
-
-            imageCountElement.textContent =
-                "檔案格式錯誤，只能選擇 JPG、JPEG 或 PNG";
-
-            imageCountElement.classList.add(
-                "error-message"
-            );
-
-            return;
-        }
-
+    if (invalidFiles.length > 0) {
+        imageInputElement.value = "";
         imageCountElement.textContent =
-            `已選擇 ${files.length} 張圖片`;
+            "檔案格式錯誤，只能選擇 JPG、JPEG 或 PNG";
+        imageCountElement.classList.add("error-message");
+        return;
+    }
 
-        console.log(
-            "選擇的圖片：",
-            files
+    for (const file of newFiles) {
+        selectedImageFiles.set(
+            getImageFileKey(file),
+            file
         );
     }
-);
+
+    imageInputElement.value = "";
+    imageCountElement.classList.remove("error-message");
+    imageCountElement.textContent =
+        `已累加選擇 ${selectedImageFiles.size} 張圖片`;
+
+    console.log(
+        "目前累加的圖片：",
+        Array.from(selectedImageFiles.values())
+    );
+});
 
 
 // ========================================
@@ -410,7 +298,7 @@ taskFormElement.addEventListener(
     async (event) => {
         event.preventDefault();
 
-        const files = Array.from(imageInputElement.files);
+        const files = Array.from(selectedImageFiles.values());
 
         const prompt =promptElement.value.trim();
 
@@ -601,24 +489,19 @@ taskFormElement.addEventListener(
                 result
             );
 
-            statusElement.textContent =
-                `上傳成功，收到 ${result.image_count} 張圖片，任務已建立`;
+            taskFormElement.style.display = "none";
 
-            void pollTaskStatus(result.status_url);
-            /*
-             * 清空表單，方便建立下一個任務。
-             */
-            taskFormElement.reset();
+            if (liff.isInClient()) {
+                statusElement.textContent =
+                    `已建立 ${result.image_count} 張圖片的標註任務，正在關閉頁面...`;
 
-            imageCountElement.textContent =
-                "尚未選擇圖片";
-
-            imageCountElement.classList.remove(
-                "error-message"
-            );
-
-            promptCountElement.textContent =
-                "0 / 200";
+                window.setTimeout(() => {
+                    liff.closeWindow();
+                }, 1200);
+            } else {
+                statusElement.textContent =
+                    `已建立 ${result.image_count} 張圖片的標註任務，可以關閉此頁面`;
+            }
 
         } catch (error) {
             console.error(

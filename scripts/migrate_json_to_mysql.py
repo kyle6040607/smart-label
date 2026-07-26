@@ -55,15 +55,17 @@ def main() -> None:
             cur.execute(
                 """
                 REPLACE INTO annotation_tasks (
-                    id, user_id, line_user_id, prompt, image_ids, status,
+                    id, user_id, line_user_id, prompt, image_ids, processed_image_ids, dataset_version,
+                    notified_dataset_version, status,
                     dataset_zip_path, best_model_path, download_token,
                     error_message, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     task.id, task.user_id, task.line_user_id, task.prompt,
-                    json.dumps(task.image_ids), task.status,
+                    json.dumps(task.image_ids),json.dumps(task.processed_image_ids),
+                    task.dataset_version, task.notified_dataset_version, task.status,
                     task.dataset_zip_path, task.best_model_path,
                     task.download_token, task.error_message,
                     task.created_at, task.updated_at,

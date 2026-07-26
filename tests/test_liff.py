@@ -225,3 +225,65 @@ def test_liff_task_status_returns_download_url(
     assert failed_result is not None
     assert failed_result["task_status"] == "failed"
     assert failed_result["error_message"] == "測試失敗原因"
+
+def test_liff_task_list_only_returns_verified_user_tasks(
+    app,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-task-owner",
+            "name": "任務擁有者",
+        },
+    )
+
+    own_task = app.repo.add_task(
+        AnnotationTask(
+            line_user_id="U-task-owner",
+            prompt="cat",
+            image_ids=["own-image"],
+            processed_image_ids=["own-image"],
+            status="completed",
+            dataset_zip_path="dataset.zip",
+            dataset_version=1,
+        )
+    )
+
+    app.repo.add_task(
+        AnnotationTask(
+            line_user_id="U-other-user",
+            prompt="dog",
+            image_ids=["other-image"],
+        )
+    )
+
+    client = app.test_client()
+
+    response = client.post(
+        "/liff/tasks",
+        json={
+            "id_token": "fake-id-token",
+        },
+    )
+
+    assert response.status_code == 200
+
+    result = response.get_json()
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["task_count"] == 1
+
+    task_result = result["tasks"][0]
+
+    assert task_result["task_id"] == own_task.id
+    assert task_result["prompt"] == "cat"
+    assert task_result["image_count"] == 1
+    assert task_result["processed_image_count"] == 1
+    assert task_result["dataset_version"] == 1
+    assert task_result["can_add_images"] is True
+    assert "download_url" in task_result
+    assert "line_user_id" not in task_result
+    assert "download_token" not in task_result

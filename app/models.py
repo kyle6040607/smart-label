@@ -41,6 +41,14 @@ class AnnotationTask:
     line_user_id: str = ""   # LIFF 驗證取得的 LINE 使用者 ID
     prompt: str = ""
     image_ids: list[str] = field(default_factory=list)
+    # 已經完成標註的圖片，追加照片時不會重複處理
+    processed_image_ids: list[str] = field(default_factory=list)
+
+    # 最新完成的資料集版本；0 表示尚未產生 ZIP
+    dataset_version: int = 0
+
+    # 最後一次成功發送 LINE 通知的版本
+    notified_dataset_version: int = 0
 
     # pending / processing / completed / failed
     status: str = "pending"

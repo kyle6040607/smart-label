@@ -69,12 +69,14 @@ def test_process_task_creates_yolo_zip(tmp_path):
     )
 
     zip_path = (
-        cfg.data_dir/ "tasks"/ task.id/ "dataset.zip"
+        cfg.data_dir / "tasks" / task.id / "dataset_v1.zip"
     )
 
     assert updated_task.status == "completed"
     assert updated_task.error_message == ""
     assert updated_task.dataset_zip_path == str(zip_path)
+    assert updated_task.dataset_version == 1
+    assert updated_task.processed_image_ids == [image.id]
     assert zip_path.exists()
 
     saved_task = repo.get_task(task.id)
@@ -134,5 +136,64 @@ def test_process_task_rejects_empty_detection(tmp_path):
         tmp_path
         / "tasks"
         / task.id
-        / "dataset.zip"
+        / "dataset_v1.zip"
     ).exists()
+def test_process_task_only_processes_new_images(
+    tmp_path,
+    monkeypatch,
+):
+    class RecordingPipeline:
+        def __init__(self):
+            self.image_ids = []
+
+        def segment_text(self, image, prompt):
+            self.image_ids.append(image.id)
+            return [object()]
+
+    dataset_image_ids = []
+
+    def fake_build_dataset(repo, fmt, image_ids=None):
+        dataset_image_ids.append(set(image_ids or set()))
+        return f"version-{len(dataset_image_ids)}".encode()
+
+    monkeypatch.setattr(
+        "app.services.task_processor.build_dataset",
+        fake_build_dataset,
+    )
+
+    repo = Repository(tmp_path / "store.json")
+    pipeline = RecordingPipeline()
+
+    first_image = repo.add_image(
+        ImageRecord(filename="first.jpg")
+    )
+    second_image = repo.add_image(
+        ImageRecord(filename="second.jpg")
+    )
+
+    task = repo.add_task(
+        AnnotationTask(
+            prompt="cat",
+            image_ids=[first_image.id],
+            status="processing",
+        )
+    )
+
+    output_dir = tmp_path / "tasks"
+
+    first_result = process_task(
+        repo,
+        pipeline,
+        task,
+        output_dir,
+    )
+
+    first_zip = (
+        output_dir
+        / task.id
+        / "dataset_v1.zip"
+    )
+
+    assert pipeline.image_ids == [first_image.id]
+    assert first_result.dataset_version == 1
+    assert first_result.processed_image_ids

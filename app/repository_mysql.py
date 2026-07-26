@@ -90,6 +90,9 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
     line_user_id VARCHAR(64) NOT NULL DEFAULT '',
     prompt TEXT NOT NULL,
     image_ids JSON NOT NULL,
+    processed_image_ids JSON NOT NULL,
+    dataset_version INT NOT NULL DEFAULT 0,
+    notified_dataset_version INT NOT NULL DEFAULT 0,
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
     dataset_zip_path VARCHAR(512) NOT NULL DEFAULT '',
     best_model_path VARCHAR(512) NOT NULL DEFAULT '',
@@ -167,6 +170,9 @@ def _row_to_task(
         line_user_id=row["line_user_id"],
         prompt=row["prompt"],
         image_ids=json.loads(row["image_ids"]),
+        processed_image_ids=json.loads(row["processed_image_ids"]),
+        dataset_version=int(row["dataset_version"]),
+        notified_dataset_version=int(row["notified_dataset_version"]),
         status=row["status"],
         dataset_zip_path=row["dataset_zip_path"],
         best_model_path=row["best_model_path"],
@@ -247,7 +253,76 @@ class MySQLRepository:
                 cur.execute(f"SHOW COLUMNS FROM users LIKE '{column}'")
                 if cur.fetchone() is None:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {column} {ddl}")
+            # 舊任務補上已處理圖片欄位
+            cur.execute(
+                "SHOW COLUMNS FROM annotation_tasks "
+                "LIKE 'processed_image_ids'"
+            )
+            processed_image_column = cur.fetchone()
 
+            if processed_image_column is None:
+                cur.execute(
+                    "ALTER TABLE annotation_tasks "
+                    "ADD COLUMN processed_image_ids JSON NULL "
+                    "AFTER image_ids"
+                )
+
+            cur.execute(
+                """
+                UPDATE annotation_tasks
+                SET processed_image_ids = CASE
+                    WHEN status = 'completed' THEN image_ids
+                    ELSE JSON_ARRAY()
+                END
+                WHERE processed_image_ids IS NULL
+                """
+            )
+
+            if (
+                processed_image_column is None
+                or processed_image_column["Null"] == "YES"
+            ):
+                cur.execute(
+                    "ALTER TABLE annotation_tasks "
+                    "MODIFY COLUMN processed_image_ids JSON NOT NULL"
+                )
+
+            # 舊任務補上資料集與通知版本欄位
+            task_version_migrations = [
+                (
+                    "dataset_version",
+                    "INT NOT NULL DEFAULT 0 "
+                    "AFTER processed_image_ids",
+                ),
+                (
+                    "notified_dataset_version",
+                    "INT NOT NULL DEFAULT 0 "
+                    "AFTER dataset_version",
+                ),
+            ]
+
+            for column, ddl in task_version_migrations:
+                cur.execute(
+                    "SHOW COLUMNS FROM annotation_tasks "
+                    f"LIKE '{column}'"
+                )
+
+                if cur.fetchone() is None:
+                    cur.execute(
+                        "ALTER TABLE annotation_tasks "
+                        f"ADD COLUMN {column} {ddl}"
+                    )
+
+            # 舊的已完成 ZIP 視為第 1 版
+            cur.execute(
+                """
+                UPDATE annotation_tasks
+                SET dataset_version = 1
+                WHERE status = 'completed'
+                  AND dataset_zip_path <> ''
+                  AND dataset_version = 0
+                """
+            )
             # 確保 parameters 資料表結構正確
             cur.execute("SHOW COLUMNS FROM parameters LIKE 'key'")
             if cur.fetchone() is None:
@@ -416,6 +491,9 @@ class MySQLRepository:
                     line_user_id,
                     prompt,
                     image_ids,
+                    processed_image_ids,
+                    dataset_version,
+                    notified_dataset_version,
                     status,
                     dataset_zip_path,
                     best_model_path,
@@ -427,7 +505,8 @@ class MySQLRepository:
                 VALUES (
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s
+                    %s, %s, %s, %s,
+                    %s, %s, %s
                 )
                 """,
                 (
@@ -436,6 +515,9 @@ class MySQLRepository:
                     task.line_user_id,
                     task.prompt,
                     json.dumps(task.image_ids),
+                    json.dumps(task.processed_image_ids),
+                    task.dataset_version,
+                    task.notified_dataset_version,
                     task.status,
                     task.dataset_zip_path,
                     task.best_model_path,
@@ -466,6 +548,29 @@ class MySQLRepository:
             row = cursor.fetchone()
 
         return _row_to_task(row) if row else None
+
+    def list_tasks_by_line_user_id(
+        self,
+        line_user_id: str,
+    ) -> list[AnnotationTask]:
+        """依更新時間由新到舊取得 LINE 使用者的任務。"""
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE line_user_id = %s
+                ORDER BY updated_at DESC
+                """,
+                (line_user_id,),
+            )
+
+            rows = cursor.fetchall()
+
+        return [
+            _row_to_task(row)
+            for row in rows
+        ]
 
     def claim_next_pending_task(
         self,
@@ -526,6 +631,9 @@ class MySQLRepository:
                     line_user_id = %s,
                     prompt = %s,
                     image_ids = %s,
+                    processed_image_ids = %s,
+                    dataset_version = %s,
+                    notified_dataset_version = %s,
                     status = %s,
                     dataset_zip_path = %s,
                     best_model_path = %s,
@@ -539,6 +647,9 @@ class MySQLRepository:
                     task.line_user_id,
                     task.prompt,
                     json.dumps(task.image_ids),
+                    json.dumps(task.processed_image_ids),
+                    task.dataset_version,
+                    task.notified_dataset_version,
                     task.status,
                     task.dataset_zip_path,
                     task.best_model_path,
