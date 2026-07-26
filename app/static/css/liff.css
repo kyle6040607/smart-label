@@ -138,3 +138,37 @@ p {
     transform: scale(0.98);
 }
 
+.task-result {
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 8px;
+    background-color: #eef7ee;
+}
+
+.task-result p {
+    margin: 0;
+    color: #257942;
+}
+
+.download-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin-top: 12px;
+    padding: 14px 20px;
+    border-radius: 8px;
+    background-color: #06c755;
+    color: #ffffff;
+    font-weight: bold;
+    text-decoration: none;
+}
+
+.download-button:hover {
+    opacity: 0.9;
+}
+
+.task-result[hidden],
+.download-button[hidden] {
+    display: none;
+}

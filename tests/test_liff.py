@@ -165,3 +165,63 @@ def test_liff_task_download_checks_token_and_status(
     assert "attachment" in success_response.headers[
         "Content-Disposition"
     ]
+
+def test_liff_task_status_returns_download_url(
+    app,
+):
+    client = app.test_client()
+
+    task = app.repo.add_task(
+        AnnotationTask(
+            status="pending",
+        )
+    )
+
+    invalid_response = client.get(
+        f"/liff/tasks/{task.id}/status"
+        "?token=wrong-token"
+    )
+    assert invalid_response.status_code == 403
+
+    pending_response = client.get(
+        f"/liff/tasks/{task.id}/status"
+        f"?token={task.download_token}"
+    )
+    pending_result = pending_response.get_json()
+
+    assert pending_response.status_code == 200
+    assert pending_result is not None
+    assert pending_result["task_status"] == "pending"
+    assert "download_url" not in pending_result
+
+    task.status = "completed"
+    app.repo.update_task(task)
+
+    completed_response = client.get(
+        f"/liff/tasks/{task.id}/status"
+        f"?token={task.download_token}"
+    )
+    completed_result = completed_response.get_json()
+
+    assert completed_response.status_code == 200
+    assert completed_result is not None
+    assert completed_result["task_status"] == "completed"
+    assert completed_result["download_url"] == (
+        f"/liff/tasks/{task.id}/download"
+        f"?token={task.download_token}"
+    )
+
+    task.status = "failed"
+    task.error_message = "測試失敗原因"
+    app.repo.update_task(task)
+
+    failed_response = client.get(
+        f"/liff/tasks/{task.id}/status"
+        f"?token={task.download_token}"
+    )
+    failed_result = failed_response.get_json()
+
+    assert failed_response.status_code == 200
+    assert failed_result is not None
+    assert failed_result["task_status"] == "failed"
+    assert failed_result["error_message"] == "測試失敗原因"

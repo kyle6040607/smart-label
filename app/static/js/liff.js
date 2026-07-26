@@ -13,7 +13,121 @@ const imageCountElement =document.getElementById("image-count");
 const promptElement =document.getElementById("prompt");
 const promptCountElement =document.getElementById("prompt-count");
 const submitButtonElement =document.getElementById("submit-button");
+const taskResultElement =document.getElementById("task-result");
+const taskResultMessageElement =document.getElementById("task-result-message");
+const downloadLinkElement =document.getElementById("download-link");
+const TASK_POLL_INTERVAL_MS = 3000;
+let taskPollingVersion = 0;
 
+// 建立輪詢函式與初始畫面
+function wait(milliseconds) {
+    return new Promise(
+        (resolve) => {
+            window.setTimeout(
+                resolve,
+                milliseconds
+            );
+        }
+    );
+}
+
+
+async function pollTaskStatus(statusUrl) {
+    const pollingVersion =
+        ++taskPollingVersion;
+
+    taskResultElement.hidden = false;
+
+    taskResultMessageElement.textContent =
+        "任務正在排隊等待處理...";
+
+    downloadLinkElement.hidden = true;
+    downloadLinkElement.removeAttribute(
+        "href"
+    );
+    while (
+        pollingVersion ===
+        taskPollingVersion
+    ) {
+        try {
+            const response = await fetch(
+                statusUrl,
+                {
+                    cache: "no-store",
+                }
+            );
+
+            const result =
+                await response.json();
+
+            if (!response.ok) {
+                taskResultMessageElement.textContent =
+                    result.message ||
+                    "無法查詢任務狀態";
+
+                if (
+                    response.status >= 400
+                    && response.status < 500
+                ) {
+                    return;
+                }
+
+                throw new Error(
+                    result.message ||
+                    "無法查詢任務狀態"
+                );
+            }
+
+            taskResultMessageElement.textContent =
+                result.message ||
+                "任務正在處理";
+
+            if (
+                result.task_status ===
+                "completed"
+            ) {
+                statusElement.textContent =
+                    "標註任務已完成";
+
+                downloadLinkElement.href =
+                    result.download_url;
+
+                downloadLinkElement.hidden =
+                    false;
+
+                return;
+            }
+
+            if (
+                result.task_status ===
+                "failed"
+            ) {
+                statusElement.textContent =
+                    "標註任務處理失敗";
+
+                taskResultMessageElement.textContent =
+                    result.error_message ||
+                    result.message ||
+                    "處理任務時發生錯誤";
+
+                return;
+            }
+
+        } catch (error) {
+            console.warn(
+                "查詢任務狀態失敗：",
+                error
+            );
+
+            taskResultMessageElement.textContent =
+                "任務仍在處理，正在重新連線...";
+        }
+
+        await wait(
+            TASK_POLL_INTERVAL_MS
+        );
+    }
+}
 // URL 與 LINE 登入輔助函式
 function getCleanRedirectUri() {
     /*
@@ -488,8 +602,9 @@ taskFormElement.addEventListener(
             );
 
             statusElement.textContent =
-                `上傳成功，收到 ${result.image_count} 張圖片`;
+                `上傳成功，收到 ${result.image_count} 張圖片，任務已建立`;
 
+            void pollTaskStatus(result.status_url);
             /*
              * 清空表單，方便建立下一個任務。
              */

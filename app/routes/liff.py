@@ -10,6 +10,7 @@ from flask import (
     render_template,
     request,
     send_file,
+    url_for,
 )
 
 from werkzeug.utils import secure_filename
@@ -246,6 +247,7 @@ def upload_task():
         "message": "標註任務建立成功",
         "task_id": task.id,
         "task_status": task.status,
+        "status_url": url_for("liff.task_status", task_id=task.id, token=task.download_token,),
         "user_id": web_user_id,
         "display_name": response_display_name,
         "prompt": prompt,
@@ -253,6 +255,58 @@ def upload_task():
         "images": saved_images,
     }), 201
 
+@bp.get("/tasks/<task_id>/status")
+def task_status(task_id: str):
+    """使用任務 token 查詢 LIFF 任務處理狀態。"""
+
+    repo = get_repo()
+    task = repo.get_task(task_id)
+
+    if task is None:
+        return jsonify({
+            "ok": False,
+            "message": "找不到標註任務",
+        }), 404
+
+    token = request.args.get("token", "",)
+
+    if (
+        not token
+        or not secrets.compare_digest(
+            token,
+            task.download_token,
+        )
+    ):
+        return jsonify({
+            "ok": False,
+            "message": "查詢憑證無效",
+        }), 403
+
+    result = {
+        "ok": True,
+        "task_id": task.id,
+        "task_status": task.status,
+    }
+
+    if task.status == "completed":
+        result["message"] = "標註完成，可以下載 ZIP"
+        result["download_url"] = url_for(
+            "liff.download_task_dataset",
+            task_id=task.id,
+            token=task.download_token,
+        )
+    elif task.status == "failed":
+        result["message"] = "標註任務失敗"
+        result["error_message"] = (
+            task.error_message
+            or "處理任務時發生錯誤"
+        )
+    elif task.status == "processing":
+        result["message"] = "正在執行圖片標註"
+    else:
+        result["message"] = "任務正在排隊等待處理"
+
+    return jsonify(result)
 
 @bp.get("/tasks/<task_id>/download")
 def download_task_dataset(task_id: str):
