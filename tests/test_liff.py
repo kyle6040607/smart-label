@@ -6,6 +6,7 @@ from PIL import Image
 
 from app import create_app
 from app.config import Config
+from app.models import AnnotationTask
 from app.services import line_login
 
 
@@ -106,3 +107,61 @@ def test_liff_upload_creates_annotation_task(
     assert image_record.width == 20
     assert image_record.height == 10
     assert Path(image_record.path).exists()
+
+def test_liff_task_download_checks_token_and_status(
+    app,
+    tmp_path,
+):
+    client = app.test_client()
+
+    task = AnnotationTask(
+        status="pending",
+    )
+    zip_path = (
+        tmp_path
+        / "tasks"
+        / task.id
+        / "dataset.zip"
+    )
+    task.dataset_zip_path = str(zip_path)
+    app.repo.add_task(task)
+
+    invalid_token_response = client.get(
+        f"/liff/tasks/{task.id}/download"
+        "?token=wrong-token"
+    )
+    assert invalid_token_response.status_code == 403
+
+    pending_response = client.get(
+        f"/liff/tasks/{task.id}/download"
+        f"?token={task.download_token}"
+    )
+    assert pending_response.status_code == 409
+
+    task.status = "completed"
+    app.repo.update_task(task)
+
+    missing_file_response = client.get(
+        f"/liff/tasks/{task.id}/download"
+        f"?token={task.download_token}"
+    )
+    assert missing_file_response.status_code == 404
+
+    zip_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    zip_path.write_bytes(
+        b"test-zip-content"
+    )
+
+    success_response = client.get(
+        f"/liff/tasks/{task.id}/download"
+        f"?token={task.download_token}"
+    )
+
+    assert success_response.status_code == 200
+    assert success_response.data == b"test-zip-content"
+    assert "attachment" in success_response.headers[
+        "Content-Disposition"
+    ]

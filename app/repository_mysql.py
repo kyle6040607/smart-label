@@ -467,6 +467,50 @@ class MySQLRepository:
 
         return _row_to_task(row) if row else None
 
+    def claim_next_pending_task(
+        self,
+    ) -> AnnotationTask | None:
+        updated_at = time.time()
+
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+                """
+            )
+
+            row = cursor.fetchone()
+
+            if row is None:
+                return None
+
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET
+                    status = %s,
+                    error_message = '',
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (
+                    "processing",
+                    updated_at,
+                    row["id"],
+                ),
+            )
+
+            row["status"] = "processing"
+            row["error_message"] = ""
+            row["updated_at"] = updated_at
+
+        return _row_to_task(row)
+
     def update_task(
         self,
         task: AnnotationTask,

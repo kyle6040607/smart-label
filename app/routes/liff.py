@@ -1,4 +1,5 @@
 import os
+import secrets
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -8,6 +9,7 @@ from flask import (
     jsonify,
     render_template,
     request,
+    send_file,
 )
 
 from werkzeug.utils import secure_filename
@@ -250,3 +252,66 @@ def upload_task():
         "image_count": len(saved_images),
         "images": saved_images,
     }), 201
+
+
+@bp.get("/tasks/<task_id>/download")
+def download_task_dataset(task_id: str):
+    """使用任務的隨機 token 下載 YOLO ZIP。"""
+
+    repo = get_repo()
+    task = repo.get_task(task_id)
+
+    if task is None:
+        return jsonify({
+            "ok": False,
+            "message": "找不到標註任務",
+        }), 404
+
+    token = request.args.get(
+        "token",
+        "",
+    )
+
+    if (
+        not token
+        or not secrets.compare_digest(
+            token,
+            task.download_token,
+        )
+    ):
+        return jsonify({
+            "ok": False,
+            "message": "下載憑證無效",
+        }), 403
+
+    if task.status != "completed":
+        return jsonify({
+            "ok": False,
+            "message": "標註任務尚未完成",
+            "task_status": task.status,
+        }), 409
+
+    if not task.dataset_zip_path:
+        return jsonify({
+            "ok": False,
+            "message": "任務沒有可下載的 ZIP",
+        }), 404
+
+    zip_path = Path(
+        task.dataset_zip_path
+    )
+
+    if not zip_path.is_file():
+        return jsonify({
+            "ok": False,
+            "message": "ZIP 檔案不存在",
+        }), 404
+
+    return send_file(
+        zip_path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=(
+            f"smart_label_{task.id}_yolo.zip"
+        ),
+    )

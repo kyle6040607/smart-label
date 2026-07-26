@@ -98,6 +98,32 @@ class Repository:
         task_id: str,
     ) -> AnnotationTask | None:
         return self.tasks.get(task_id)
+
+    def claim_next_pending_task(
+        self,
+    ) -> AnnotationTask | None:
+        with self._lock:
+            pending_tasks = [
+                task
+                for task in self.tasks.values()
+                if task.status == "pending"
+            ]
+
+            if not pending_tasks:
+                return None
+
+            task = min(
+                pending_tasks,
+                key=lambda item: item.created_at,
+            )
+
+            task.status = "processing"
+            task.error_message = ""
+            task.updated_at = time.time()
+
+            self._save()
+
+            return task
     # 背景執行
     def update_task(
         self,

@@ -82,6 +82,7 @@ class Config:
 
     # --- LIFF ---
     liff_id: str = os.getenv("LIFF_ID", "").strip()
+    public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8080",).strip().rstrip("/")
 
     # --- LINE Login（登入用，是另一個獨立的 LINE Login channel）---
     line_login_channel_id: str = os.getenv("LINE_LOGIN_CHANNEL_ID", "")

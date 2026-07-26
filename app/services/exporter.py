@@ -73,12 +73,28 @@ def _add_image_file(z: zipfile.ZipFile, image: ImageRecord) -> str:
 
 
 # ---------- 對外入口 ----------
-def build_dataset(repo: Repository, fmt: str) -> bytes:
+def build_dataset(
+    repo: Repository,
+    fmt: str,
+    image_ids: set[str] | None = None,
+) -> bytes:
     """收齊已標好的片段，打包成指定格式的 zip，回傳 bytes。"""
     if fmt not in FORMATS:
-        raise ValueError(f"未知格式：{fmt}（可用：{', '.join(FORMATS)}）")
+        raise ValueError(
+            f"未知格式：{fmt}（可用：{', '.join(FORMATS)}）"
+        )
 
-    labeled = [s for s in repo.list_segments() if s.final_label]
+    labeled = [
+        segment
+        for segment in repo.list_segments()
+        if (
+            segment.final_label
+            and (
+                image_ids is None
+                or segment.image_id in image_ids
+            )
+        )
+    ]
     labels = sorted({s.final_label for s in labeled if s.final_label})
     by_image: dict[str, list[Segment]] = {}
     for s in labeled:

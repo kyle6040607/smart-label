@@ -90,3 +90,31 @@ def test_export_empty(tmp_path):
     repo = Repository(cfg.db_file)
     coco = json.loads(_zip(build_dataset(repo, "coco")).read("annotations.json"))
     assert coco["images"] == [] and coco["annotations"] == []
+
+def test_export_yolo_filters_by_image_ids(tmp_path):
+    repo = _setup(tmp_path)
+    image_id = repo.list_images()[0].id
+
+    included = _zip(
+        build_dataset(
+            repo,
+            "yolo",
+            image_ids={image_id},
+        )
+    )
+    excluded = _zip(
+        build_dataset(
+            repo,
+            "yolo",
+            image_ids={"other-task-image"},
+        )
+    )
+
+    assert any(
+        name.startswith("images/")
+        for name in included.namelist()
+    )
+    assert not any(
+        name.startswith("images/")
+        for name in excluded.namelist()
+    )
