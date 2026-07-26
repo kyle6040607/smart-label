@@ -23,6 +23,22 @@ function formatUpdatedAt(timestamp) {
 }
 
 
+function openDownloadInExternalBrowser(downloadUrl) {
+    const url = new URL(downloadUrl, window.location.origin);
+    url.searchParams.set("openExternalBrowser", "1");
+
+    if (liff.isInClient()) {
+        liff.openWindow({
+            url: url.toString(),
+            external: true,
+        });
+        return;
+    }
+
+    window.location.href = url.toString();
+}
+
+
 function createTaskCard(task) {
     const card = taskCardTemplate.content.firstElementChild.cloneNode(true);
     const promptElement = card.querySelector(".task-prompt");
@@ -52,6 +68,10 @@ function createTaskCard(task) {
     if (task.download_url) {
         downloadElement.href = task.download_url;
         downloadElement.hidden = false;
+        downloadElement.addEventListener("click", (event) => {
+            event.preventDefault();
+            openDownloadInExternalBrowser(task.download_url);
+        });
     }
 
     return card;

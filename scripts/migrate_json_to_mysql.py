@@ -71,8 +71,6 @@ def main() -> None:
                     task.created_at, task.updated_at,
                 ),
             )
-        for s in src.line_sessions.values():
-            dst._write_session(cur, s)  # noqa: SLF001
         for key, value in src.parameters.items():
             cur.execute(
                 "REPLACE INTO parameters (`key`, value) VALUES (%s, %s)",
@@ -82,7 +80,7 @@ def main() -> None:
     print(
         f"遷移完成：images={len(src.images)} segments={len(src.segments)}"
         f" examples={len(src.examples)} users={len(src.users)}"
-        f" tasks={len(src.tasks)} line_sessions={len(src.line_sessions)}"
+        f" tasks={len(src.tasks)}"
         f" parameters={len(src.parameters)}"
     )
 

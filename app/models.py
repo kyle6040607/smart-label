@@ -30,6 +30,7 @@ class ImageRecord:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+
 @dataclass
 class AnnotationTask:
     """由 LIFF 建立的圖片標註與訓練任務。"""
@@ -143,26 +144,6 @@ class LabelExample:
     feature: list[float] = field(default_factory=list)
     source_segment_id: str | None = None
     created_at: float = field(default_factory=time.time)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
-class LineSession:
-    """LINE 使用者目前這一輪的圖片 + 提示詞暫存。
-
-    使用者可傳多張圖片累加進 image_ids，輸入「傳完了」後 images_done
-    設為 True，才能接受 prompt；圖文都到齊才觸發 pipeline 處理。
-    圖片本身走既有的 ImageRecord 流程存檔，這裡只存 id（外鍵）。
-    """
-
-    line_user_id: str = ""
-    image_ids: list[str] = field(default_factory=list)
-    images_done: bool = False     # 使用者輸入「傳完了」
-    confirmed: bool = False       # 使用者輸入「確認」
-    prompt: str | None = None
-    updated_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
