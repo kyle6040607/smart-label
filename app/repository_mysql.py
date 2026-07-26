@@ -348,6 +348,7 @@ class MySQLRepository:
             cur.execute("SELECT mask_path FROM segments WHERE image_id=%s", (image_id,))
             paths += [r["mask_path"] for r in cur.fetchall()]
             cur.execute("DELETE FROM segments WHERE image_id=%s", (image_id,))
+            cur.execute("DELETE FROM images WHERE id=%s", (image_id,))
         return [p for p in paths if p]
 
     def delete_images_batch(self, image_ids: list[str]) -> list[str]:
