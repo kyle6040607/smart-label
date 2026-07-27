@@ -34,7 +34,7 @@
 - 任務清單只回傳該 LINE 使用者自己的任務。
 - 狀態查詢與 ZIP 下載必須驗證任務的隨機 token。
 """
-import os
+import io
 import secrets
 from pathlib import Path
 
@@ -52,7 +52,7 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 from app.models import AnnotationTask, ImageRecord
-from app.routes import get_config, get_repo
+from app.routes import get_config, get_repo, get_storage
 from app.services import line_login
 
 
@@ -219,6 +219,7 @@ def upload_task():
 
     cfg = get_config()
     repo = get_repo()
+    storage = get_storage()
 
     validated_images = []
 
@@ -240,9 +241,12 @@ def upload_task():
             )
         try:
             image.stream.seek(0)
+            image_bytes = image.stream.read()
 
-            with Image.open(image.stream) as uploaded_image:
-                uploaded_image.verify()
+            with Image.open(io.BytesIO(image_bytes)) as uploaded_image:
+                uploaded_image.load()
+                width = uploaded_image.width
+                height = uploaded_image.height
 
         except (UnidentifiedImageError, OSError):
             image.stream.seek(0)
@@ -257,7 +261,15 @@ def upload_task():
             )
 
         image.stream.seek(0)
-        validated_images.append((image, extension))
+        validated_images.append(
+            (
+                image,
+                extension,
+                image_bytes,
+                width,
+                height,
+            )
+        )
 
     display_name = profile.get("name", "")
 
@@ -270,13 +282,15 @@ def upload_task():
         user.display_name or user.username if user is not None else display_name
     )
 
-    upload_dir = cfg.upload_dir
-
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     saved_images = []
 
-    for image, extension in validated_images:
+    for (
+        image,
+        extension,
+        image_bytes,
+        width,
+        height,
+    ) in validated_images:
         safe_original_filename = secure_filename(image.filename)
 
         if not safe_original_filename:
@@ -286,15 +300,13 @@ def upload_task():
 
         saved_filename = f"{image_record.id}.{extension}"
 
-        save_path = upload_dir / saved_filename
-
-        image.save(save_path)
-
-        with Image.open(save_path) as saved_image:
-            image_record.width = saved_image.width
-            image_record.height = saved_image.height
-
-        image_record.path = str(save_path)
+        image_record.width = width
+        image_record.height = height
+        image_record.path = storage.save_bytes(
+            f"images/{saved_filename}",
+            image_bytes,
+            image.mimetype or "application/octet-stream",
+        )
 
         repo.add_image(image_record)
 
@@ -408,13 +420,12 @@ def download_task_dataset(task_id: str):
     if not task.dataset_zip_path:
         return jsonify({"ok": False, "message": "任務沒有可下載的 ZIP"}), 404
 
-    zip_path = Path(task.dataset_zip_path)
-
-    if not zip_path.is_file():
+    storage = get_storage()
+    if not storage.exists(task.dataset_zip_path):
         return jsonify({"ok": False, "message": "ZIP 檔案不存在"}), 404
 
     return send_file(
-        zip_path,
+        io.BytesIO(storage.read_bytes(task.dataset_zip_path)),
         mimetype="application/zip",
         as_attachment=True,
         download_name=f"smart_label_{task.id}_yolo.zip",

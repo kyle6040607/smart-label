@@ -4,6 +4,7 @@ from app.models import AnnotationTask
 from app.repository import Repository
 from app.services.exporter import build_dataset
 from app.services.pipeline import Pipeline
+from app.storage import LocalStorage, StorageService
 
 
 def process_task(
@@ -13,6 +14,17 @@ def process_task(
     output_dir: Path,
 ) -> AnnotationTask:
     """執行單一 LIFF 標註任務並產生 YOLO ZIP。"""
+    storage = getattr(pipeline, "storage", None)
+    if storage is None:
+        storage = StorageService(
+            local=LocalStorage(
+                data_dir=output_dir.parent,
+                upload_dir=output_dir.parent / "uploads",
+                mask_dir=output_dir.parent / "masks",
+                dataset_dir=output_dir,
+            )
+        )
+
     processed_image_ids = set(task.processed_image_ids)
     pending_image_ids = [
         image_id
@@ -42,9 +54,7 @@ def process_task(
             )
 
             for mask_path in mask_paths:
-                Path(mask_path).unlink(
-                    missing_ok=True
-                )
+                storage.delete(mask_path)
 
         segments = pipeline.segment_text(
             image,
@@ -61,27 +71,25 @@ def process_task(
         repo,
         "yolo",
         image_ids=set(task.image_ids),
-    )
-
-    task_dir = output_dir / task.id
-    task_dir.mkdir(
-        parents=True,
-        exist_ok=True,
+        storage=storage,
     )
 
     next_dataset_version = task.dataset_version + 1
-    zip_path = task_dir / f"dataset_v{next_dataset_version}.zip"
-    temporary_zip_path = zip_path.with_suffix(".tmp")
-
-    temporary_zip_path.write_bytes(zip_bytes)
-    temporary_zip_path.replace(zip_path)
+    dataset_reference = storage.save_bytes(
+        (
+            f"datasets/{task.id}/"
+            f"dataset_v{next_dataset_version}.zip"
+        ),
+        zip_bytes,
+        "application/zip",
+    )
 
     task.processed_image_ids = list(dict.fromkeys([
         *task.processed_image_ids,
         *pending_image_ids,
     ]))
     task.dataset_version = next_dataset_version
-    task.dataset_zip_path = str(zip_path)
+    task.dataset_zip_path = dataset_reference
     task.status = "completed"
     task.error_message = ""
 

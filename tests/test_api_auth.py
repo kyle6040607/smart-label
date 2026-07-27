@@ -18,8 +18,10 @@ def app(tmp_path):
         mask_dir=tmp_path / "mask",
         db_file=tmp_path / "store.json",
     )
+    cfg.db_backend = "json"
     cfg.use_real_sam = False
     cfg.use_real_embedding = False
+    cfg.use_gcs = False
     application = create_app(cfg)
     application.config["TESTING"] = True
     return application

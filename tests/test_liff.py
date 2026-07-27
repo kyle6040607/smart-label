@@ -25,6 +25,7 @@ def app(tmp_path):
     cfg.liff_id = "test-liff-id"
     cfg.use_real_sam = False
     cfg.use_real_embedding = False
+    cfg.use_gcs = False
     cfg.ensure_dirs()
 
     application = create_app(cfg)

@@ -12,6 +12,7 @@ from app.config import Config, config as default_config
 from app.models import User
 from app.services.pipeline import Pipeline
 from app.repository import Repository
+from app.storage import build_storage
 
 
 def _seed_default_user(repo: Repository, cfg: Config) -> None:
@@ -43,7 +44,12 @@ def create_app(config: Config | None = None) -> Flask:
         app.repo = MySQLRepository(cfg)  # type: ignore[attr-defined]
     else:
         app.repo = Repository(cfg.db_file)  # type: ignore[attr-defined]
-    app.pipeline = Pipeline(cfg, app.repo)  # type: ignore[attr-defined]
+    app.storage = build_storage(cfg)  # type: ignore[attr-defined]
+    app.pipeline = Pipeline(  # type: ignore[attr-defined]
+        cfg,
+        app.repo,
+        storage=app.storage,
+    )
 
     # 還原持久化的參數設定
     saved_params = app.repo.get_parameters()

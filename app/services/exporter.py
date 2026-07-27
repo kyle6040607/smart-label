@@ -21,7 +21,7 @@ import numpy as np
 
 from app.models import ImageRecord, Segment
 from app.repository import Repository
-from app.utils import imread
+from app.storage import StorageService
 
 FORMATS = ("coco", "yolo", "mask")
 
@@ -38,11 +38,45 @@ def _arcname(image: ImageRecord) -> str:
     return f"{_safe_stem(image)}{suffix}"
 
 
-def _image_size(image: ImageRecord, segs: list[Segment]) -> tuple[int, int]:
+def _read_bytes(
+    reference: str,
+    storage: StorageService | None,
+) -> bytes:
+    if storage is not None:
+        return storage.read_bytes(reference)
+    return Path(reference).read_bytes()
+
+
+def _read_image(
+    reference: str,
+    flags: int,
+    storage: StorageService | None,
+) -> np.ndarray | None:
+    try:
+        data = _read_bytes(reference, storage)
+    except (FileNotFoundError, OSError):
+        return None
+    return cv2.imdecode(
+        np.frombuffer(data, dtype=np.uint8),
+        flags,
+    )
+
+
+def _image_size(
+    image: ImageRecord,
+    segs: list[Segment],
+    storage: StorageService | None,
+) -> tuple[int, int]:
     """回傳 (w, h)：優先用紀錄值，沒有就從遮罩推回。"""
     if image.width and image.height:
         return image.width, image.height
-    m = imread(segs[0].mask_path, cv2.IMREAD_GRAYSCALE)
+    m = _read_image(
+        segs[0].mask_path,
+        cv2.IMREAD_GRAYSCALE,
+        storage,
+    )
+    if m is None:
+        raise FileNotFoundError(segs[0].mask_path)
     h, w = m.shape[:2]
     return w, h
 
@@ -62,12 +96,19 @@ def _mask_to_polygons(mask: np.ndarray) -> list[list[float]]:
     return polys
 
 
-def _add_image_file(z: zipfile.ZipFile, image: ImageRecord) -> str:
+def _add_image_file(
+    z: zipfile.ZipFile,
+    image: ImageRecord,
+    storage: StorageService | None,
+) -> str:
     """把原圖塞進 zip 的 images/ 下，回傳 zip 內檔名。"""
     arc = _arcname(image)
     try:
-        z.writestr(f"images/{arc}", Path(image.path).read_bytes())
-    except OSError:
+        z.writestr(
+            f"images/{arc}",
+            _read_bytes(image.path, storage),
+        )
+    except (FileNotFoundError, OSError):
         pass  # 原圖檔不在就略過，標註仍照常寫
     return arc
 
@@ -77,6 +118,7 @@ def build_dataset(
     repo: Repository,
     fmt: str,
     image_ids: set[str] | None = None,
+    storage: StorageService | None = None,
 ) -> bytes:
     """收齊已標好的片段，打包成指定格式的 zip，回傳 bytes。"""
     if fmt not in FORMATS:
@@ -103,12 +145,12 @@ def build_dataset(
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         writer = {"coco": _write_coco, "yolo": _write_yolo, "mask": _write_mask}[fmt]
-        writer(z, repo, by_image, labels)
+        writer(z, repo, by_image, labels, storage)
     return buf.getvalue()
 
 
 # ---------- COCO instance segmentation ----------
-def _write_coco(z, repo, by_image, labels):
+def _write_coco(z, repo, by_image, labels, storage):
     cat_id = {name: i + 1 for i, name in enumerate(labels)}
     coco = {
         "images": [],
@@ -120,13 +162,17 @@ def _write_coco(z, repo, by_image, labels):
         image = repo.get_image(image_id)
         if not image:
             continue
-        w, h = _image_size(image, segs)
-        file_name = _add_image_file(z, image)
+        w, h = _image_size(image, segs, storage)
+        file_name = _add_image_file(z, image, storage)
         coco["images"].append(
             {"id": img_idx, "file_name": file_name, "width": w, "height": h}
         )
         for s in segs:
-            mask = imread(s.mask_path, cv2.IMREAD_GRAYSCALE)
+            mask = _read_image(
+                s.mask_path,
+                cv2.IMREAD_GRAYSCALE,
+                storage,
+            )
             if mask is None:
                 continue
             x, y, bw, bh = s.bbox
@@ -144,17 +190,21 @@ def _write_coco(z, repo, by_image, labels):
 
 
 # ---------- YOLOv8 segmentation ----------
-def _write_yolo(z, repo, by_image, labels):
+def _write_yolo(z, repo, by_image, labels, storage):
     cls_idx = {name: i for i, name in enumerate(labels)}
     for image_id, segs in by_image.items():
         image = repo.get_image(image_id)
         if not image:
             continue
-        w, h = _image_size(image, segs)
-        _add_image_file(z, image)
+        w, h = _image_size(image, segs, storage)
+        _add_image_file(z, image, storage)
         lines: list[str] = []
         for s in segs:
-            mask = imread(s.mask_path, cv2.IMREAD_GRAYSCALE)
+            mask = _read_image(
+                s.mask_path,
+                cv2.IMREAD_GRAYSCALE,
+                storage,
+            )
             if mask is None:
                 continue
             for poly in _mask_to_polygons(mask):
@@ -177,18 +227,22 @@ def _write_yolo(z, repo, by_image, labels):
 
 
 # ---------- 語意分割 mask PNG ----------
-def _write_mask(z, repo, by_image, labels):
+def _write_mask(z, repo, by_image, labels, storage):
     cls_idx = {name: i + 1 for i, name in enumerate(labels)}  # 0 保留給背景
     for image_id, segs in by_image.items():
         image = repo.get_image(image_id)
         if not image:
             continue
-        w, h = _image_size(image, segs)
-        _add_image_file(z, image)
+        w, h = _image_size(image, segs, storage)
+        _add_image_file(z, image, storage)
         canvas = np.zeros((h, w), np.uint8)
         # 大塊先畫、小塊後畫蓋上去，避免大區域吃掉重疊的小物件
         for s in sorted(segs, key=lambda s: s.area, reverse=True):
-            mask = imread(s.mask_path, cv2.IMREAD_GRAYSCALE)
+            mask = _read_image(
+                s.mask_path,
+                cv2.IMREAD_GRAYSCALE,
+                storage,
+            )
             if mask is None:
                 continue
             if mask.shape[:2] != (h, w):
@@ -236,4 +290,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

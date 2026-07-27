@@ -101,6 +101,20 @@ USE_REAL_SAM=1 uv run python main.py
 
 > 正式環境產生金鑰範例：`python -c "import os; print(os.urandom(32).hex())"`，把結果設成 `SECRET_KEY`。同一部署（多 worker / 多容器）要用**同一把** key，session 才會一致。
 
+## 圖片與遮罩儲存
+
+預設存於本機 `data/uploads`、`data/masks`、`data/tasks`。若要改存
+Google Cloud Storage，在 `.env` 設定：
+
+```dotenv
+USE_GCS=1
+GCS_PROJECT_ID=smart-label-501610
+GCS_BUCKET=smart_label_bucket
+```
+
+GCS 物件分別存於 `images/`、`masks/`、`datasets/`。即使啟用 GCS，
+資料庫中既有的本機路徑仍可繼續讀取及刪除。
+
 ## API 一覽
 
 | 方法 | 路徑 | 用途 |

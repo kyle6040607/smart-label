@@ -152,7 +152,13 @@ def test_process_task_only_processes_new_images(
 
     dataset_image_ids = []
 
-    def fake_build_dataset(repo, fmt, image_ids=None):
+    def fake_build_dataset(
+        repo,
+        fmt,
+        image_ids=None,
+        storage=None,
+    ):
+        del repo, fmt, storage
         dataset_image_ids.append(set(image_ids or set()))
         return f"version-{len(dataset_image_ids)}".encode()
 
