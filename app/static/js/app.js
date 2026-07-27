@@ -83,7 +83,7 @@ function startFakeProgress(startVal = 10, limitVal = 75) {
   stopFakeProgress();
   currentProgress = startVal;
   updateProgressBar(Math.round(currentProgress));
-  
+
   progressInterval = setInterval(() => {
     if (currentProgress < limitVal) {
       const increment = (limitVal - currentProgress) * 0.04;
@@ -141,13 +141,13 @@ function setSegmentationLoading(active, message = "分割中…", showProgress =
 
   canvas.closest(".canvas-wrap").classList.toggle("is-loading", active);
   canvas.setAttribute("aria-busy", String(active));
-  
+
   if (active) {
     $("autoSegBtn").disabled = true;
   } else {
     updateAutoSegBtn();
   }
-  
+
   $("drawBtn").disabled = active || !state.currentImage;
   $("textPromptInput").disabled = active || !state.currentImage;
   $("textSegBtn").disabled = active || !state.currentImage;
@@ -168,20 +168,20 @@ async function fetchWithProgress(url, options, onProgress) {
   if (!response.ok) {
     throw await responseError(response, "請求失敗");
   }
-  
+
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let finalResult = null;
-  
+
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    
+
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop();
-    
+
     for (const line of lines) {
       if (line.trim()) {
         const data = JSON.parse(line);
@@ -195,7 +195,7 @@ async function fetchWithProgress(url, options, onProgress) {
       }
     }
   }
-  
+
   if (buffer.trim()) {
     try {
       const data = JSON.parse(buffer);
@@ -210,7 +210,7 @@ async function fetchWithProgress(url, options, onProgress) {
       // ignore
     }
   }
-  
+
   if (!finalResult) {
     throw new Error("伺服器未回傳完成狀態");
   }
@@ -236,77 +236,149 @@ function getTouchPos(e) {
 }
 
 $("uploadBtn").onclick = async () => {
-  const files = $("fileInput").files;
+  const fileInputEl = $("fileInput");
+  const files = Array.from(fileInputEl.files);
   if (!files.length) return alert("先選檔案");
-  const fd = new FormData();
-  for (const f of files) fd.append("files", f);
-  const res = await fetch("/api/images", { method: "POST", body: fd });
-  if (!res.ok) {
-    const text = await res.text();
-    let errorMsg = text;
-    try {
-      const json = JSON.parse(text);
-      errorMsg = json.error || json.message || text;
-    } catch (e) { }
-    return alert("上傳失敗：" + errorMsg);
+
+  const uploadBtn = $("uploadBtn");
+  const selectFileBtn = $("selectFileBtn");
+  const fileCountHint = $("fileCountHint");
+
+  uploadBtn.disabled = true;
+  if (selectFileBtn) selectFileBtn.disabled = true;
+
+  const BATCH_SIZE_LIMIT = 15 * 1024 * 1024; // 15 MB 每批動態容量上限
+  const BATCH_COUNT_LIMIT = 50;               // 單批最多 50 張
+
+  let uploadedCount = 0;
+  let uploadedBytes = 0;
+  const totalFiles = files.length;
+  const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
+
+  const sendBatch = async (batch) => {
+    const fd = new FormData();
+    for (const f of batch) fd.append("files", f);
+    const res = await fetch("/api/images", { method: "POST", body: fd });
+    if (!res.ok) {
+      const text = await res.text();
+      let errorMsg = text;
+      try {
+        const json = JSON.parse(text);
+        errorMsg = json.error || json.message || text;
+      } catch (e) { }
+      throw new Error(errorMsg);
+    }
+    const createdImages = await res.json();
+    uploadedCount += batch.length;
+    uploadedBytes += batch.reduce((acc, f) => acc + f.size, 0);
+
+    // 增量渲染：直接將這批剛創好的照片 append 到縮圖區
+    if (Array.isArray(createdImages) && createdImages.length > 0) {
+      appendThumbs(createdImages);
+    }
+
+    if (fileCountHint) {
+      const mbUploaded = (uploadedBytes / (1024 * 1024)).toFixed(1);
+      const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
+      fileCountHint.textContent = `上傳中… (${uploadedCount}/${totalFiles} 張 · ${mbUploaded}/${mbTotal} MB)`;
+    }
+  };
+
+  try {
+    let currentBatch = [];
+    let currentBatchSize = 0;
+
+    for (const f of files) {
+      if (currentBatch.length > 0 && (currentBatchSize + f.size > BATCH_SIZE_LIMIT || currentBatch.length >= BATCH_COUNT_LIMIT)) {
+        await sendBatch(currentBatch);
+        currentBatch = [];
+        currentBatchSize = 0;
+      }
+      currentBatch.push(f);
+      currentBatchSize += f.size;
+    }
+
+    if (currentBatch.length > 0) {
+      await sendBatch(currentBatch);
+    }
+
+    // 清除選擇的檔案與提示
+    fileInputEl.value = "";
+    if (fileCountHint) {
+      fileCountHint.textContent = "尚未選擇檔案";
+    }
+  } catch (err) {
+    alert(`上傳中斷（已成功上傳 ${uploadedCount}/${totalFiles} 張）：${err.message}`);
+  } finally {
+    uploadBtn.disabled = false;
+    if (selectFileBtn) selectFileBtn.disabled = false;
   }
-  // 清除選擇的檔案與提示
-  $("fileInput").value = "";
-  if ($("fileCountHint")) {
-    $("fileCountHint").textContent = "尚未選擇檔案";
-  }
-  await loadThumbs();
 };
+
+function createThumbElement(im) {
+  const wrap = document.createElement("div");
+  wrap.className = "thumb";
+
+  const el = document.createElement("img");
+  el.src = `/api/images/${im.id}/file`;
+  el.title = im.filename;
+  el.onclick = () => {
+    if (state.imgBatchMode) {
+      chk.checked = !chk.checked;
+      updateImgBatchBtnState();
+      return;
+    }
+    selectImage(im, el);
+  };
+
+  // 批次管理勾選框
+  const chk = document.createElement("input");
+  chk.type = "checkbox";
+  chk.className = "thumb-chk";
+  chk.dataset.id = im.id;
+  chk.onclick = (e) => {
+    e.stopPropagation();
+    updateImgBatchBtnState();
+  };
+
+  const del = document.createElement("button");
+  del.className = "thumb-del";
+  del.textContent = "×";
+  del.title = "刪除這張";
+  del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
+
+  wrap.append(chk, el, del);
+  return wrap;
+}
+
+function appendThumbs(newImages) {
+  const box = $("thumbs");
+  if (!box || !newImages || !newImages.length) return;
+
+  const fragment = document.createDocumentFragment();
+  newImages.forEach((im) => {
+    // 防呆：避開重複加入
+    if (box.querySelector(`.thumb-chk[data-id="${im.id}"]`)) return;
+    const wrap = createThumbElement(im);
+    fragment.appendChild(wrap);
+  });
+  box.appendChild(fragment);
+
+  if (!state.imgBatchMode) {
+    $("selectAllImgs").checked = false;
+    updateImgBatchBtnState();
+  }
+}
 
 async function loadThumbs() {
   const imgs = await (await fetch("/api/images")).json();
   const box = $("thumbs");
   box.innerHTML = "";
-  
+
   // 根據批次管理狀態切換 CSS class
   box.classList.toggle("batch-active", state.imgBatchMode);
 
-  imgs.forEach((im) => {
-    const wrap = document.createElement("div");
-    wrap.className = "thumb";
-
-    const el = document.createElement("img");
-    el.src = `/api/images/${im.id}/file`;
-    el.title = im.filename;
-    el.onclick = () => {
-      if (state.imgBatchMode) {
-        chk.checked = !chk.checked;
-        updateImgBatchBtnState();
-        return;
-      }
-      selectImage(im, el);
-    };
-
-    // 批次管理勾選框
-    const chk = document.createElement("input");
-    chk.type = "checkbox";
-    chk.className = "thumb-chk";
-    chk.dataset.id = im.id;
-    chk.onclick = (e) => {
-      e.stopPropagation();
-      updateImgBatchBtnState();
-    };
-
-    const del = document.createElement("button");
-    del.className = "thumb-del";
-    del.textContent = "×";
-    del.title = "刪除這張";
-    del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
-
-    wrap.append(chk, el, del);
-    box.appendChild(wrap);
-  });
-
-  // 非批次模式下，重設勾選狀態
-  if (!state.imgBatchMode) {
-    $("selectAllImgs").checked = false;
-    updateImgBatchBtnState();
-  }
+  appendThumbs(imgs);
 }
 
 async function deleteImage(im) {
@@ -329,7 +401,7 @@ function selectImage(im, el) {
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
   el.classList.add("active");
-  
+
   state.autoSegCompleted = false;
   updateAutoSegBtn(true);
 
@@ -459,6 +531,7 @@ $("drawBtn").onclick = () => {
 // ---------- 單點分割（一般模式：點 canvas）----------
 canvas.onclick = async (e) => {
   if (!state.currentImage || state.drawMode || state.segmenting) return;
+  if (state.mode === "layman") return;
   const { x, y } = toImageXY(e);
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, "單點分割中…");
@@ -674,6 +747,10 @@ async function refreshSidebar() {
     待審：${stats.need_review} · 已審：${stats.reviewed}<br>
     範例數：${stats.num_examples} · 類別數：${stats.num_labels}`;
 
+  if (state.mode === "engineer") {
+    updateCharts(stats);
+  }
+
   const labels = await (await fetch("/api/labels")).json();
   const ll = $("labelList");
   ll.innerHTML = "";
@@ -693,7 +770,7 @@ async function refreshSidebar() {
   const queue = await (await fetch("/api/review/queue")).json();
   const ul = $("reviewQueue");
   ul.innerHTML = "";
-  
+
   // 依據批次管理狀態切換 CSS 類別
   ul.classList.toggle("batch-active", state.segBatchMode);
 
@@ -716,7 +793,7 @@ async function refreshSidebar() {
           </div>
         </div>
       </div>`;
-    
+
     // 綁定批次勾選框事件
     const chk = li.querySelector(".seg-chk");
     chk.onclick = () => {
@@ -750,15 +827,36 @@ async function refreshSidebar() {
     li.onmouseleave = () => {
       if (state.currentImage && s.image_id === state.currentImage.id) redraw(state.lastSegments);
     };
-    li.querySelector(".confirm").onclick = async () => {
-      const label = li.querySelector("input[data-seg]").value.trim();
+    const inputEl = li.querySelector("input[data-seg]");
+    const submitReview = async () => {
+      const label = inputEl.value.trim();
       if (!label) return;
-      await fetch(`/api/segments/${s.id}/review`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label }),
-      });
-      await refreshAfterSegChange();
+
+      //  樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
+      li.style.opacity = "0.3";
+      li.style.pointerEvents = "none";
+
+      try {
+        const res = await fetch(`/api/segments/${s.id}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label }),
+        });
+        if (!res.ok) throw new Error("審核失敗");
+        await refreshAfterSegChange();
+      } catch (err) {
+        console.error(err);
+        li.style.opacity = "1";
+        li.style.pointerEvents = "auto";
+        alert("審核失敗，請重試");
+      }
+    };
+    li.querySelector(".confirm").onclick = submitReview;
+    inputEl.onkeydown = async (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        await submitReview();
+      }
     };
     li.querySelector(".seg-del").onclick = async () => {
       try {
@@ -918,6 +1016,11 @@ $("batchDelImgsBtn").onclick = async () => {
 
   if (!confirm(`確定要批次刪除選取的 ${ids.length} 張照片嗎？這會同時清除與其相關的遮罩。`)) return;
 
+  const btn = $("batchDelImgsBtn");
+  const originalText = btn.textContent;
+  btn.textContent = "刪除中…";
+  btn.disabled = true;
+
   try {
     const res = await fetch("/api/images/delete_batch", {
       method: "POST",
@@ -926,7 +1029,16 @@ $("batchDelImgsBtn").onclick = async () => {
     });
 
     if (!res.ok) throw new Error(await res.text());
-    
+
+    // 增量 DOM 移除：直接將已被刪除的照片縮圖元素從畫面清掉（0ms 延遲）
+    ids.forEach((id) => {
+      const chk = document.querySelector(`.thumb-chk[data-id="${id}"]`);
+      if (chk) {
+        const thumb = chk.closest(".thumb");
+        if (thumb) thumb.remove();
+      }
+    });
+
     // 如果刪除的照片包含當前選擇的圖片，清空畫布
     if (state.currentImage && ids.includes(state.currentImage.id)) {
       state.currentImage = null;
@@ -938,10 +1050,18 @@ $("batchDelImgsBtn").onclick = async () => {
     }
 
     // 退出批次模式並重整
-    toggleImgBatchUI(false);
+    state.imgBatchMode = false;
+    $("toggleImgBatchModeBtn").style.display = "block";
+    $("batchDelImgsBtn").style.display = "none";
+    $("cancelImgBatchBtn").style.display = "none";
+    $("selectAllImgsLabel").style.display = "none";
+    $("thumbs").classList.remove("batch-active");
     await refreshSidebar();
   } catch (err) {
     alert("批次刪除失敗: " + err.message);
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
   }
 };
 
@@ -953,6 +1073,11 @@ $("batchDelSegsBtn").onclick = async () => {
 
   if (!confirm(`確定要批次刪除選取的 ${ids.length} 個遮罩片段嗎？`)) return;
 
+  const btn = $("batchDelSegsBtn");
+  const originalText = btn.textContent;
+  btn.textContent = "刪除中…";
+  btn.disabled = true;
+
   try {
     const res = await fetch("/api/segments/delete_batch", {
       method: "POST",
@@ -962,16 +1087,435 @@ $("batchDelSegsBtn").onclick = async () => {
 
     if (!res.ok) throw new Error(await res.text());
 
+    // 增量 DOM 移除：直接移除清單項目
+    ids.forEach((id) => {
+      const chk = document.querySelector(`.seg-chk[data-id="${id}"]`);
+      if (chk) {
+        const li = chk.closest("li");
+        if (li) li.remove();
+      }
+    });
+
     // 退出批次模式並重整
     state.autoSegCompleted = false;
     updateAutoSegBtn();
-    toggleSegBatchUI(false);
+    state.segBatchMode = false;
+    $("toggleSegBatchModeBtn").style.display = "block";
+    $("batchDelSegsBtn").style.display = "none";
+    $("cancelSegBatchBtn").style.display = "none";
+    $("selectAllSegsLabel").style.display = "none";
+    $("reviewQueue").classList.remove("batch-active");
     await refreshAfterSegChange();
   } catch (err) {
     alert("批次刪除失敗: " + err.message);
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
   }
 };
 
 // 初始載入
 loadThumbs();
-refreshSidebar();
+
+// ---------- 雙模式與參數調整初始化 ----------
+state.mode = localStorage.getItem("mode") || "layman";
+
+let laborSavingChartInstance = null;
+let categoryDistributionChartInstance = null;
+let reviewProgressChartInstance = null;
+
+function getCssVar(varName, fallback = '') {
+  if (typeof window === "undefined" || !document.documentElement) return fallback;
+  const val = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  return val || fallback; 
+}
+
+function applyMode(mode) {
+  state.mode = mode;
+  localStorage.setItem("mode", mode);
+
+  const isEng = mode === "engineer";
+  $("laymanModeBtn").classList.toggle("active", !isEng);
+  $("engineerModeBtn").classList.toggle("active", isEng);
+
+  const wrapper = document.querySelector(".mode-switch-wrapper");
+  if (wrapper) {
+    wrapper.classList.toggle("eng-active", isEng);
+  }
+
+  document.body.classList.toggle("layman-mode", !isEng);
+
+  document.querySelectorAll(".engineer-only").forEach(el => {
+    el.classList.toggle("show", isEng);
+  });
+
+  if (isEng) {
+    loadParameters();
+  }
+  refreshSidebar();
+}
+
+function updateSliderFill(sliderEl) {
+  if (!sliderEl) return;
+  const min = parseFloat(sliderEl.min) || 0;
+  const max = parseFloat(sliderEl.max) || 1;
+  const val = parseFloat(sliderEl.value) || 0;
+  const percent = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+  sliderEl.style.background = `linear-gradient(90deg, #4f9cff 0%, #36d399 ${percent}%, #1b2636 ${percent}%, #1b2636 100%)`;
+}
+
+function updateConfThresholdDisplay(val) {
+  const num = Number(val);
+  const inputVal = $("confThresholdValue");
+  if (inputVal && document.activeElement !== inputVal) {
+    inputVal.value = isNaN(num) ? "" : num.toFixed(2);
+  }
+  updateSliderFill($("confThresholdInput"));
+  const hint = $("confThresholdHint");
+  if (hint) {
+    if (num === 0) {
+      hint.textContent = "（全自動通關）";
+      hint.style.color = getCssVar("--ok", "#36d399");
+    } else if (num === 1) {
+      hint.textContent = "（全人工審核）";
+      hint.style.color = getCssVar("--accent", "#4f9cff");
+    } else {
+      hint.textContent = "";
+    }
+  }
+}
+
+async function loadParameters() {
+  try {
+    const res = await fetch("/api/parameters");
+    if (res.ok) {
+      const data = await res.json();
+      $("confThresholdInput").value = data.confidence_threshold;
+      updateConfThresholdDisplay(data.confidence_threshold);
+      $("yoloConfInput").value = data.yolo_world_confidence;
+      $("yoloConfValue").value = Number(data.yolo_world_confidence).toFixed(2);
+      updateSliderFill($("yoloConfInput"));
+    }
+  } catch (err) {
+    console.error("載入參數失敗:", err);
+  }
+}
+
+function updateCenterText(chartCanvasId, text, color) {
+  const canvas = $(chartCanvasId);
+  if (!canvas) return;
+  const wrapper = canvas.parentElement;
+  let overlay = wrapper.querySelector(".chart-center-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.className = "chart-center-overlay";
+    overlay.style.position = "absolute";
+    overlay.style.top = "50%";
+    overlay.style.left = "50%";
+    overlay.style.transform = "translate(-50%, -50%)";
+    overlay.style.fontSize = "20px";
+    overlay.style.fontWeight = "bold";
+    overlay.style.pointerEvents = "none";
+    wrapper.appendChild(overlay);
+  }
+  overlay.textContent = text;
+  overlay.style.color = color || getCssVar("--text", "#f3f4f6");
+}
+
+function updateCharts(stats) {
+  if (typeof Chart === "undefined") return;
+
+  // 1. 自動過審 vs 手動標籤
+  const laborSavingCtx = $("laborSavingChart").getContext("2d");
+  const totalLabeled = stats.auto_accepted + stats.reviewed;
+  const autoRatioPercent = totalLabeled ? (stats.auto_accepted / totalLabeled * 100).toFixed(0) + "%" : "0%";
+  $("laborSavingSub").innerHTML = `自動過審: <b>${stats.auto_accepted}</b> / 手動標籤: <b>${stats.reviewed}</b>`;
+
+  if (laborSavingChartInstance) {
+    laborSavingChartInstance.data.datasets[0].data = [stats.auto_accepted, stats.reviewed];
+    laborSavingChartInstance.update();
+  } else {
+    laborSavingChartInstance = new Chart(laborSavingCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['自動過審', '手動標籤'],
+        datasets: [{
+          data: [stats.auto_accepted, stats.reviewed],
+          backgroundColor: ['#36d399', '#4f9cff'],
+          borderWidth: 1,
+          borderColor: '#28323f'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        cutout: '75%'
+      }
+    });
+  }
+  updateCenterText("laborSavingChart", autoRatioPercent, getCssVar("--ok", "#36d399"));
+
+  // 2. 類別分布
+  const categoryCtx = $("categoryDistributionChart").getContext("2d");
+  const labelCounts = stats.label_counts || {};
+  const labels = Object.keys(labelCounts);
+  const counts = Object.values(labelCounts);
+  $("categorySub").innerHTML = `已建立類別數: <b>${stats.num_labels}</b>`;
+
+  const roygbivColors = [
+    '#ff5470', // Red
+    '#ff9f43', // Orange
+    '#ffd166', // Yellow
+    '#36d399', // Green
+    '#4f9cff', // Blue
+    '#706fd3', // Indigo
+    '#b33771'  // Violet
+  ];
+  const colors = labels.map((_, idx) => roygbivColors[idx % roygbivColors.length]);
+
+  const cType = state.categoryChartType || "bar";
+  if (categoryDistributionChartInstance && categoryDistributionChartInstance.config.type !== cType) {
+    categoryDistributionChartInstance.destroy();
+    categoryDistributionChartInstance = null;
+  }
+
+  if (cType === "bar") {
+    if (categoryDistributionChartInstance) {
+      categoryDistributionChartInstance.data.labels = labels;
+      categoryDistributionChartInstance.data.datasets[0].data = counts;
+      categoryDistributionChartInstance.data.datasets[0].backgroundColor = colors;
+      categoryDistributionChartInstance.update();
+    } else {
+      categoryDistributionChartInstance = new Chart(categoryCtx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: '數量',
+            data: counts,
+            backgroundColor: colors,
+            borderWidth: 1,
+            borderColor: 'var(--panel)'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: {
+              beginAtZero: true,
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: 'var(--muted)', stepSize: 1 }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { color: 'var(--muted)' }
+            }
+          }
+        }
+      });
+    }
+  } else {
+    // 圓餅圖
+    if (categoryDistributionChartInstance) {
+      categoryDistributionChartInstance.data.labels = labels;
+      categoryDistributionChartInstance.data.datasets[0].data = counts;
+      categoryDistributionChartInstance.data.datasets[0].backgroundColor = colors;
+      categoryDistributionChartInstance.update();
+    } else {
+      categoryDistributionChartInstance = new Chart(categoryCtx, {
+        type: 'pie',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: counts,
+            backgroundColor: colors,
+            borderWidth: 1,
+            borderColor: '#28323f'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+  }
+
+  // 更新類別分布圖的圖例
+  const legendDiv = $("categoryLegend");
+  if (legendDiv) {
+    legendDiv.innerHTML = "";
+    labels.forEach((label, idx) => {
+      const color = colors[idx];
+      const span = document.createElement("span");
+      span.style.display = "flex";
+      span.style.alignItems = "center";
+      span.style.gap = "4px";
+      span.innerHTML = `<span style="display: inline-block; width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></span>${label}`;
+      legendDiv.appendChild(span);
+    });
+  }
+
+  // 3. 審核進度
+  const reviewCtx = $("reviewProgressChart").getContext("2d");
+  const totalToReview = stats.reviewed + stats.need_review;
+  const progressRatio = totalToReview ? stats.reviewed / totalToReview : 0.0;
+  const progressPercentText = (progressRatio * 100).toFixed(0) + "%";
+  $("reviewSub").innerHTML = `已審核: <b>${stats.reviewed}</b> / 待審: <b>${stats.need_review}</b>`;
+
+  if (reviewProgressChartInstance) {
+    reviewProgressChartInstance.data.datasets[0].data = [stats.reviewed, stats.need_review];
+    reviewProgressChartInstance.update();
+  } else {
+    reviewProgressChartInstance = new Chart(reviewCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['已審核', '待人工審核'],
+        datasets: [{
+          data: [stats.reviewed, stats.need_review],
+          backgroundColor: ['#4f9cff', '#ff5470'],
+          borderWidth: 1,
+          borderColor: '#28323f'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        cutout: '75%'
+      }
+    });
+  }
+  updateCenterText("reviewProgressChart", progressPercentText, "var(--accent)");
+}
+
+const switchWrapper = document.querySelector(".mode-switch-wrapper");
+if (switchWrapper) {
+  switchWrapper.onclick = () => {
+    const mode = state.mode === "layman" ? "engineer" : "layman";
+    applyMode(mode);
+  };
+}
+
+function bindNumericInputGuard(inputEl, sliderEl, minVal, maxVal, onUpdate) {
+  if (!inputEl) return;
+
+  let lastValidValue = parseFloat(sliderEl ? sliderEl.value : inputEl.value);
+  if (isNaN(lastValidValue)) lastValidValue = minVal;
+
+  inputEl.addEventListener("keydown", (e) => {
+    if (["-", "+", "e", "E"].includes(e.key)) {
+      e.preventDefault();
+    }
+  });
+
+  inputEl.addEventListener("focus", () => {
+    const curVal = parseFloat(sliderEl ? sliderEl.value : inputEl.value);
+    if (!isNaN(curVal) && curVal >= minVal && curVal <= maxVal) {
+      lastValidValue = curVal;
+    }
+  });
+
+  inputEl.addEventListener("input", () => {
+    let raw = inputEl.value;
+    if (raw === "") return;
+    let num = parseFloat(raw);
+    if (isNaN(num)) return;
+
+    if (num > maxVal) {
+      num = maxVal;
+      inputEl.value = num;
+    }
+    if (num < 0) {
+      num = 0;
+      inputEl.value = num;
+    }
+
+    if (num >= minVal && num <= maxVal) {
+      lastValidValue = num;
+      onUpdate(num);
+    }
+  });
+
+  inputEl.addEventListener("blur", () => {
+    let raw = inputEl.value;
+    let num = parseFloat(raw);
+    if (isNaN(num) || num < minVal || num > maxVal) {
+      num = lastValidValue;
+    } else {
+      lastValidValue = num;
+    }
+    inputEl.value = num.toFixed(2);
+    onUpdate(num);
+  });
+}
+
+$("confThresholdInput").oninput = (e) => {
+  updateConfThresholdDisplay(e.target.value);
+};
+
+bindNumericInputGuard($("confThresholdValue"), $("confThresholdInput"), 0.0, 1.0, (num) => {
+  const clamped = Math.max(0.0, Math.min(1.0, num));
+  $("confThresholdInput").value = clamped;
+  updateConfThresholdDisplay(clamped);
+});
+
+$("yoloConfInput").oninput = (e) => {
+  const val = Number(e.target.value).toFixed(2);
+  if (document.activeElement !== $("yoloConfValue")) {
+    $("yoloConfValue").value = val;
+  }
+  updateSliderFill(e.target);
+};
+
+bindNumericInputGuard($("yoloConfValue"), $("yoloConfInput"), 0.1, 1.0, (num) => {
+  const clamped = Math.max(0.1, Math.min(1.0, num));
+  $("yoloConfInput").value = clamped;
+  updateSliderFill($("yoloConfInput"));
+});
+
+$("saveParamsBtn").onclick = async () => {
+  let confidence_threshold = parseFloat($("confThresholdValue").value);
+  if (isNaN(confidence_threshold)) {
+    confidence_threshold = parseFloat($("confThresholdInput").value);
+  }
+  let yolo_world_confidence = parseFloat($("yoloConfValue").value);
+  if (isNaN(yolo_world_confidence)) {
+    yolo_world_confidence = parseFloat($("yoloConfInput").value);
+  }
+
+  try {
+    const res = await fetch("/api/parameters", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confidence_threshold, yolo_world_confidence })
+    });
+    if (res.ok) {
+      alert("參數儲存與重新預測成功！");
+      await refreshAfterSegChange();
+    } else {
+      alert("儲存失敗：" + (await res.text()));
+    }
+  } catch (err) {
+    console.error(err);
+    alert("儲存時發生錯誤");
+  }
+};
+
+// 初始套用模式
+state.categoryChartType = "bar"; // 預設為長條圖
+
+const toggleBtn = $("toggleCategoryChartTypeBtn");
+if (toggleBtn) {
+  toggleBtn.onclick = () => {
+    state.categoryChartType = state.categoryChartType === "bar" ? "pie" : "bar";
+    toggleBtn.textContent = state.categoryChartType === "bar" ? "切換為圓餅圖" : "切換為長條圖";
+    refreshSidebar();
+  };
+}
+
+applyMode(state.mode);

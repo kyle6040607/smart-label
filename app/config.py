@@ -52,6 +52,7 @@ class Config:
     # strategy: "max_prob" | "margin" | "entropy"
     confidence_strategy: str = os.getenv("CONFIDENCE_STRATEGY", "max_prob")
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
+    yolo_world_confidence: float = float(os.getenv("YOLO_WORLD_CONFIDENCE", "0.4"))
 
     # --- few-shot 分類器（提案第 6、7 頁）---
     # classifier: "knn" | "softmax"
@@ -79,6 +80,10 @@ class Config:
     line_channel_secret: str = os.getenv("LINE_CHANNEL_SECRET", "")
     line_channel_access_token: str = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 
+    # --- LIFF ---
+    liff_id: str = os.getenv("LIFF_ID", "").strip()
+    public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8080",).strip().rstrip("/")
+
     # --- LINE Login（登入用，是另一個獨立的 LINE Login channel）---
     line_login_channel_id: str = os.getenv("LINE_LOGIN_CHANNEL_ID", "")
     line_login_channel_secret: str = os.getenv("LINE_LOGIN_CHANNEL_SECRET", "")
@@ -93,8 +98,40 @@ class Config:
     # --- Gemini API Key ---
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
+    # --- Email 驗證碼（SMTP）---
+    # 未設定 SMTP_HOST 時走開發模式：驗證碼直接印在伺服器 log，不寄信。
+    # Gmail 範例：SMTP_HOST=smtp.gmail.com、SMTP_PORT=587、
+    #            SMTP_USER=你的 Gmail、SMTP_PASSWORD=應用程式密碼（16 碼）
+    smtp_host: str = os.getenv("SMTP_HOST", "")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user: str = os.getenv("SMTP_USER", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    mail_from: str = os.getenv("MAIL_FROM", "") or os.getenv("SMTP_USER", "")
+    otp_ttl_seconds: int = int(os.getenv("OTP_TTL_SECONDS", "600"))     # 驗證碼有效 10 分鐘
+    otp_max_attempts: int = int(os.getenv("OTP_MAX_ATTEMPTS", "5"))    # 最多嘗試 5 次
+
+    # --- 資料庫後端（MySQL / Cloud SQL）---
+    # DB_BACKEND: "auto"（預設，有給 MySQL 位址就用 MySQL，否則 JSON）| "json" | "mysql"
+    db_backend: str = os.getenv("DB_BACKEND", "auto")
+    mysql_host: str = os.getenv("MYSQL_HOST", "")
+    mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
+    mysql_user: str = os.getenv("MYSQL_USER", "")
+    mysql_password: str = os.getenv("MYSQL_PASSWORD", "")
+    mysql_database: str = os.getenv("MYSQL_DATABASE", "")
+    # Cloud Run / App Engine 掛 Cloud SQL 時走 unix socket：
+    # /cloudsql/<PROJECT>:<REGION>:<INSTANCE>；設了這個就不用 mysql_host
+    mysql_unix_socket: str = os.getenv("MYSQL_UNIX_SOCKET", "")
+
+    @property
+    def use_mysql(self) -> bool:
+        if self.db_backend == "mysql":
+            return True
+        if self.db_backend == "json":
+            return False
+        return bool(self.mysql_host or self.mysql_unix_socket)
+
     # --- 上傳限制 ---
-    max_content_length: int = 32 * 1024 * 1024  # 32 MB
+    max_content_length: int = int(os.getenv("MAX_CONTENT_LENGTH", str(64 * 1024 * 1024)))
     allowed_ext: tuple[str, ...] = field(
         default_factory=lambda: ("png", "jpg", "jpeg", "bmp", "webp")
     )

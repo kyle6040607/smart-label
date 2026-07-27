@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>建立標註任務</title>
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=2">
+</head>
+
+<body>
+    
+    <main class="container">
+        
+        <section class="card">
+            <h1>建立標註任務</h1>
+
+            <!-- <p>正在確認 LINE 使用者資訊</p> -->
+
+            <div id="profile" style="display:none; margin-top: 20px;">
+                <img
+                id="profile-image"
+                alt="LINE 使用者頭像"
+                style="display: none;"
+            >
+                <p>
+                    您好，<strong id="display-name"></strong>
+                </p>
+            </div>
+            <div id="status" class="status">
+                登入中......
+            </div>
+            <form id="task-form" style="display: none; margin-top: 24px;">
+                <h2>選擇圖片</h2>
+                <p>
+                    支援JPG、JPEG、PNG，可以一次選擇多張圖片。
+                </p>
+                   <label for="image-input" class="upload-button">
+                        選擇圖片
+                   </label> 
+                   <input 
+                        id="image-input"
+                        type="file"
+                        accept="image/jpeg,image/png"
+                        multiple
+                        hidden 
+                   >
+                   <p id="image-count">
+                        尚未選擇圖片
+                   </p>
+                   <div class="form-group">
+                        <label for="prompt">
+                            想要標註的物件
+                        </label>
+                        <textarea
+                            id="prompt"
+                            name="prompt"
+                            rows="4"
+                            maxlength="200"
+                            placeholder="例如: 請標註圖片中的貓咪"
+                        ></textarea>
+                        <p id="prompt-count">
+                            0 / 200
+                        </p>
+                   </div>
+                   <button
+                        id="submit-button"
+                        type="submit"
+                        class="submit-button"
+                    >
+                        建立標註任務
+                    </button>
+            </form>    
+        </section>
+    </main>
+    <div
+    id="liff-data"
+    data-liff-id="{{ liff_id }}"
+    hidden>
+    </div>
+    <!-- LINE 官方 LIFF SDK -->
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <!-- 再載入自己的 JavaScript -->
+    <script src="{{ url_for('static', filename='js/liff.js') }}?v=6"></script>
+    
+</body>
+</html>

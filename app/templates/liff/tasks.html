@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>我的標註任務</title>
+    <link
+        rel="icon"
+        type="image/png"
+        href="{{ url_for('static', filename='favicon.png') }}"
+    >
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='css/liff.css') }}?v=2"
+    >
+</head>
+
+<body>
+    <main class="container">
+        <section class="card">
+            <h1>我的標註任務</h1>
+
+            <div id="status" class="status">
+                登入中......
+            </div>
+
+            <button
+                id="refresh-button"
+                class="submit-button"
+                type="button"
+                hidden
+            >
+                重新整理
+            </button>
+        </section>
+
+        <section
+            id="active-section"
+            class="card task-section"
+            hidden
+        >
+            <h2>進行中的任務</h2>
+            <div id="active-tasks"></div>
+        </section>
+
+        <section
+            id="history-section"
+            class="card task-section"
+            hidden
+        >
+            <h2>歷史紀錄</h2>
+            <div id="history-tasks"></div>
+        </section>
+
+        <section
+            id="empty-section"
+            class="card task-section"
+            hidden
+        >
+            <p>目前還沒有標註任務。</p>
+        </section>
+    </main>
+
+    <template id="task-card-template">
+        <article class="task-card">
+            <div class="task-card-header">
+                <h3 class="task-prompt"></h3>
+                <span class="task-status"></span>
+            </div>
+
+            <p class="task-info"></p>
+            <p class="task-error" hidden></p>
+
+            <div class="task-actions">
+                <a
+                    class="download-button task-download"
+                    href=""
+                    hidden
+                >
+                    下載 ZIP
+                </a>
+
+                <button
+                    class="submit-button task-add-images"
+                    type="button"
+                    hidden
+                >
+                    新增照片
+                </button>
+            </div>
+        </article>
+    </template>
+
+    <div
+        id="liff-data"
+        data-liff-id="{{ liff_id }}"
+        hidden
+    ></div>
+
+    <script
+        charset="utf-8"
+        src="https://static.line-scdn.net/liff/edge/2/sdk.js"
+    ></script>
+    <script
+        src="{{ url_for('static', filename='js/liff_tasks.js') }}?v=2"
+    ></script>
+</body>
+</html>
