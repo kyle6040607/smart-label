@@ -401,3 +401,119 @@ def test_line_login_claims_unowned_liff_tasks(
 
     with client.session_transaction() as session:
         assert session["user_id"] == user.id
+
+
+def _stub_line_profile(monkeypatch, line_user_id: str) -> None:
+    """讓 LINE OAuth 回傳固定身分，免去真的打 LINE API。"""
+    monkeypatch.setattr(
+        line_login,
+        "exchange_token",
+        lambda *args: {"id_token": "fake-id-token"},
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": line_user_id,
+            "name": "LINE 測試使用者",
+            "picture": "https://example.com/avatar.png",
+        },
+    )
+
+
+def _bind_line(client, user, state="test-state"):
+    with client.session_transaction() as session:
+        session["user_id"] = user.id
+        session["username"] = user.username
+        session["line_oauth_state"] = state
+        session["line_oauth_nonce"] = "test-nonce"
+        session["line_oauth_bind"] = True
+
+    return client.get(f"/login/line/callback?state={state}&code=test-code")
+
+
+def test_binding_merges_line_placeholder_account(app, monkeypatch):
+    """先用 LINE 登入建了佔位帳號，之後用自有帳號綁定同一個 LINE 應該合併而非被擋。"""
+    client = app.test_client()
+    repo = app.repo
+    line_user_id = "U-placeholder-merge"
+
+    # A：使用者自行註冊的正式帳號
+    account_a = repo.add_user(
+        User(username="alice", password_hash="hashed", email="alice@example.com")
+    )
+    # B：先前「用 LINE 登入」時系統自動建立的佔位帳號（無密碼、無 Email）
+    placeholder = repo.add_user(
+        User(username=f"line_{line_user_id[:10]}", line_user_id=line_user_id)
+    )
+    # 佔位帳號名下的資料
+    repo.add_image(ImageRecord(id="img-placeholder", owner_id=placeholder.id))
+    repo.add_example(LabelExample(owner_id=placeholder.id, label="cat", feature=[0.1] * 8))
+    task = repo.add_task(
+        AnnotationTask(user_id=placeholder.id, line_user_id=line_user_id, prompt="貓")
+    )
+
+    _stub_line_profile(monkeypatch, line_user_id)
+    response = _bind_line(client, account_a)
+
+    assert response.status_code == 302, "應合併成功並導回首頁，而不是回 409"
+
+    # LINE 綁到 A，佔位帳號消失
+    assert repo.get_user(account_a.id).line_user_id == line_user_id
+    assert repo.get_user(placeholder.id) is None
+
+    # 佔位帳號名下的資料全部轉移到 A
+    assert repo.get_image("img-placeholder").owner_id == account_a.id
+    assert [e.owner_id for e in repo.list_examples()] == [account_a.id]
+    assert repo.get_task(task.id).user_id == account_a.id
+
+    # A 的分類器要吃得到剛接手的種子範例
+    assert app.pipeline.classifiers[account_a.id].labels == ["cat"]
+
+
+def test_binding_rejects_real_account_conflict(app, monkeypatch):
+    """對方是有密碼的正式帳號時不可擅自合併，仍要擋下來。"""
+    client = app.test_client()
+    repo = app.repo
+    line_user_id = "U-real-conflict"
+
+    account_a = repo.add_user(
+        User(username="alice", password_hash="hashed", email="alice@example.com")
+    )
+    account_b = repo.add_user(
+        User(
+            username="bob",
+            password_hash="hashed",
+            email="bob@example.com",
+            line_user_id=line_user_id,
+        )
+    )
+    repo.add_image(ImageRecord(id="img-bob", owner_id=account_b.id))
+
+    _stub_line_profile(monkeypatch, line_user_id)
+    response = _bind_line(client, account_a)
+
+    assert response.status_code == 409
+    # B 完好無損，資料沒被搬走
+    assert repo.get_user(account_b.id) is not None
+    assert repo.get_user(account_b.id).line_user_id == line_user_id
+    assert repo.get_image("img-bob").owner_id == account_b.id
+    assert repo.get_user(account_a.id).line_user_id is None
+
+
+def test_transfer_ownership_is_noop_for_same_or_empty_user(app):
+    """自己轉給自己、或來源為空，不可誤動任何資料。"""
+    repo = app.repo
+    user = repo.add_user(User(username="alice"))
+    repo.add_image(ImageRecord(id="img-1", owner_id=user.id))
+    repo.add_image(ImageRecord(id="img-orphan", owner_id=""))
+
+    assert repo.transfer_ownership(user.id, user.id) == {
+        "images": 0, "examples": 0, "tasks": 0,
+    }
+    assert repo.transfer_ownership("", user.id) == {
+        "images": 0, "examples": 0, "tasks": 0,
+    }
+    # 無主圖片不可被當成「來源為空」而遭搬走
+    assert repo.get_image("img-orphan").owner_id == ""
+    assert repo.get_image("img-1").owner_id == user.id

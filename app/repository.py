@@ -316,6 +316,43 @@ class Repository:
     def list_users(self) -> list[User]:
         return list(self.users.values())
 
+    def transfer_ownership(self, from_user_id: str, to_user_id: str) -> dict[str, int]:
+        """把一個帳號名下的圖片、種子範例與任務全部轉移給另一個帳號。
+
+        用於 LINE 綁定時合併系統自動建立的佔位帳號。
+        回傳各類別實際轉移的筆數，讓呼叫端可以記錄。
+        Segment 沒有自己的 owner，擁有權由所屬圖片決定，因此不需處理。
+        """
+        moved = {"images": 0, "examples": 0, "tasks": 0}
+        if not from_user_id or from_user_id == to_user_id:
+            return moved
+
+        with self._lock:
+            for image in self.images.values():
+                if image.owner_id == from_user_id:
+                    image.owner_id = to_user_id
+                    moved["images"] += 1
+            for example in self.examples.values():
+                if example.owner_id == from_user_id:
+                    example.owner_id = to_user_id
+                    moved["examples"] += 1
+            for task in self.tasks.values():
+                if task.user_id == from_user_id:
+                    task.user_id = to_user_id
+                    task.updated_at = time.time()
+                    moved["tasks"] += 1
+            self._save()
+
+        return moved
+
+    def delete_user(self, user_id: str) -> bool:
+        """刪除帳號本身；名下資料請先用 transfer_ownership 轉移，否則會變成無主。"""
+        with self._lock:
+            if self.users.pop(user_id, None) is None:
+                return False
+            self._save()
+        return True
+
     # ---------- 統計（給準確率曲線 / 省下工時用）----------
     def stats(self) -> dict:
         segs = list(self.segments.values())

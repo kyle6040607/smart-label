@@ -834,6 +834,38 @@ class MySQLRepository:
             rows = cur.fetchall()
         return [_row_to_user(r) for r in rows]
 
+    def transfer_ownership(self, from_user_id: str, to_user_id: str) -> dict[str, int]:
+        """把一個帳號名下的圖片、種子範例與任務全部轉移給另一個帳號。
+
+        三張表在同一個交易裡更新，避免只轉移一半就中斷。
+        Segment 沒有自己的 owner，擁有權由所屬圖片決定，因此不需處理。
+        """
+        moved = {"images": 0, "examples": 0, "tasks": 0}
+        if not from_user_id or from_user_id == to_user_id:
+            return moved
+
+        with self._tx() as cur:
+            moved["images"] = cur.execute(
+                "UPDATE images SET owner_id=%s WHERE owner_id=%s",
+                (to_user_id, from_user_id),
+            )
+            moved["examples"] = cur.execute(
+                "UPDATE examples SET owner_id=%s WHERE owner_id=%s",
+                (to_user_id, from_user_id),
+            )
+            moved["tasks"] = cur.execute(
+                "UPDATE annotation_tasks SET user_id=%s, updated_at=%s WHERE user_id=%s",
+                (to_user_id, time.time(), from_user_id),
+            )
+
+        return moved
+
+    def delete_user(self, user_id: str) -> bool:
+        """刪除帳號本身；名下資料請先用 transfer_ownership 轉移，否則會變成無主。"""
+        with self._tx() as cur:
+            deleted = cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
+        return bool(deleted)
+
     # ---------- 參數設定 ----------
     def get_parameters(self) -> dict[str, float]:
         with self._tx() as cur:
