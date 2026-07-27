@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from flask import Blueprint, abort, jsonify, request
 
-from app.routes import get_pipeline, get_repo
+from app.routes import (
+    can_access_image,
+    get_owned_segment,
+    get_pipeline,
+    get_repo,
+)
 
 bp = Blueprint("review", __name__, url_prefix="/api")
 
@@ -11,7 +16,15 @@ bp = Blueprint("review", __name__, url_prefix="/api")
 @bp.get("/review/queue")
 def review_queue():
     """待人工審核的低信心片段（被標紅的）。"""
-    return jsonify([s.to_dict() for s in get_repo().list_review_queue()])
+    repo = get_repo()
+    return jsonify([
+        segment.to_dict()
+        for segment in repo.list_review_queue()
+        if (
+            (image := repo.get_image(segment.image_id)) is not None
+            and can_access_image(image)
+        )
+    ])
 
 
 @bp.post("/segments/<seg_id>/review")
@@ -21,9 +34,7 @@ def review_segment(seg_id: str):
     修正後同時當作新種子範例餵回去，回訓讓模型越標越準（主動學習迴圈）。
     """
     repo, pipeline = get_repo(), get_pipeline()
-    seg = repo.get_segment(seg_id)
-    if not seg:
-        abort(404)
+    seg = get_owned_segment(seg_id)
     data = request.get_json(force=True)
     label = (data.get("label") or "").strip()
     if not label:
@@ -35,4 +46,27 @@ def review_segment(seg_id: str):
 @bp.get("/stats")
 def stats():
     """整體統計：自動接受比例 ≈ 省下的工時、送審數量等。"""
-    return jsonify(get_repo().stats())
+    repo = get_repo()
+    owned_image_ids = {
+        image.id for image in repo.list_images() if can_access_image(image)
+    }
+    segments = [
+        segment for segment in repo.list_segments()
+        if segment.image_id in owned_image_ids
+    ]
+    total = len(segments)
+    need_review = sum(1 for segment in segments if segment.needs_review)
+    reviewed = sum(1 for segment in segments if segment.reviewed)
+    auto_accepted = total - need_review
+    labels = {
+        segment.final_label for segment in segments if segment.final_label
+    }
+    return jsonify({
+        "total_segments": total,
+        "auto_accepted": auto_accepted,
+        "need_review": need_review,
+        "reviewed": reviewed,
+        "auto_ratio": round(auto_accepted / total, 3) if total else 0.0,
+        "num_examples": sum(1 for segment in segments if segment.reviewed),
+        "num_labels": len(labels),
+    })

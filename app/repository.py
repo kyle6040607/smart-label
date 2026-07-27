@@ -155,16 +155,22 @@ class Repository:
 
         with self._lock:
             for task in self.tasks.values():
-                if (
-                    task.line_user_id == line_user_id
-                    and not task.user_id
-                ):
+                if task.line_user_id != line_user_id:
+                    continue
+                if task.user_id and task.user_id != user_id:
+                    continue
+                if not task.user_id:
                     task.user_id = user_id
                     task.updated_at = time.time()
                     assigned_count += 1
+                if task.user_id == user_id:
+                    for image_id in task.image_ids:
+                        image = self.images.get(image_id)
+                        if image is not None and not image.owner_id:
+                            image.owner_id = user_id
 
-            if assigned_count > 0:
-                self._save()
+            # 即使任務早已歸戶，也可能需要補上新版的圖片 owner_id。
+            self._save()
 
         return assigned_count
 

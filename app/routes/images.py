@@ -7,7 +7,13 @@ from flask import Blueprint, abort, jsonify, request, send_file
 from PIL import Image
 from werkzeug.utils import secure_filename
 
-from app.routes import get_config, get_repo
+from app.routes import (
+    can_access_image,
+    get_config,
+    get_current_user_id,
+    get_owned_image,
+    get_repo,
+)
 from app.models import ImageRecord
 
 bp = Blueprint("images", __name__, url_prefix="/api/images")
@@ -42,6 +48,8 @@ def upload():
         # 比對是否已有相同雜湊值的照片已上傳
         is_duplicate = False
         for img in repo.list_images():
+            if not can_access_image(img):
+                continue
             existing_hash = getattr(img, "file_hash", "")
             # 針對歷史舊資料進行相容性雜湊值計算與補齊
             if not existing_hash and img.path and Path(img.path).exists():
@@ -61,7 +69,11 @@ def upload():
             continue
 
         name = secure_filename(f.filename)
-        rec = ImageRecord(filename=name, file_hash=file_hash)
+        rec = ImageRecord(
+            owner_id=get_current_user_id(),
+            filename=name,
+            file_hash=file_hash,
+        )
         dest = cfg.upload_dir / f"{rec.id}_{name}"
         f.save(dest)
 
@@ -105,14 +117,18 @@ def upload():
 
 @bp.get("")
 def list_images():
-    return jsonify([i.to_dict() for i in get_repo().list_images()])
+    return jsonify([
+        image.to_dict()
+        for image in get_repo().list_images()
+        if can_access_image(image)
+    ])
 
 
 @bp.get("/<image_id>/file")
 def image_file(image_id: str):
     """回傳原圖，給前端 canvas 顯示。"""
-    rec = get_repo().get_image(image_id)
-    if not rec:
+    rec = get_owned_image(image_id)
+    if not Path(rec.path).is_file():
         abort(404)
     return send_file(Path(rec.path))
 
@@ -121,8 +137,7 @@ def image_file(image_id: str):
 def delete_image(image_id: str):
     """刪除一張上傳的照片，連同它的遮罩片段與檔案一起清掉。"""
     repo = get_repo()
-    if not repo.get_image(image_id):
-        abort(404)
+    get_owned_image(image_id)
     paths = repo.delete_image(image_id)          # 先從資料層移除
     for p in paths:                              # 再刪實體檔（原圖 + 遮罩 PNG）
         Path(p).unlink(missing_ok=True)
@@ -138,8 +153,16 @@ def delete_images_batch():
     if not image_ids:
         abort(400, "無效的圖片 ID 清單")
 
-    paths = repo.delete_images_batch(image_ids)
+    owned_ids = []
+    for image_id in image_ids:
+        image = repo.get_image(str(image_id))
+        if image is not None and can_access_image(image):
+            owned_ids.append(image.id)
+    if len(owned_ids) != len(image_ids):
+        abort(404)
+
+    paths = repo.delete_images_batch(owned_ids)
     for p in paths:
         Path(p).unlink(missing_ok=True)
 
-    return jsonify({"deleted_ids": image_ids, "files_removed": len(paths)}), 200
+    return jsonify({"deleted_ids": owned_ids, "files_removed": len(paths)}), 200

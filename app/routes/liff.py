@@ -282,7 +282,10 @@ def upload_task():
         if not safe_original_filename:
             safe_original_filename = f"upload.{extension}"
 
-        image_record = ImageRecord(filename=safe_original_filename)
+        image_record = ImageRecord(
+            owner_id=web_user_id,
+            filename=safe_original_filename,
+        )
 
         saved_filename = f"{image_record.id}.{extension}"
 

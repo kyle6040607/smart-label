@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Blueprint, abort, jsonify, request, send_file, Response
 
-from app.routes import get_pipeline, get_repo
+from app.routes import get_owned_image, get_owned_segment, get_pipeline, get_repo
 
 bp = Blueprint("segment", __name__, url_prefix="/api")
 
@@ -17,9 +17,7 @@ bp = Blueprint("segment", __name__, url_prefix="/api")
 def segment_image(image_id: str):
     """對整張圖自動切割並分類，回傳所有片段（含信心、是否送審）與完成狀態。"""
     repo, pipeline = get_repo(), get_pipeline()
-    img = repo.get_image(image_id)
-    if not img:
-        abort(404)
+    img = get_owned_image(image_id)
 
     # 紀錄執行前的片段數量
     existing_count = len(repo.list_segments(image_id))
@@ -72,9 +70,7 @@ def segment_image(image_id: str):
 def segment_point(image_id: str):
     """互動式：在使用者點擊座標切出單一物件。body: {"x": int, "y": int}"""
     repo, pipeline = get_repo(), get_pipeline()
-    img = repo.get_image(image_id)
-    if not img:
-        abort(404)
+    img = get_owned_image(image_id)
     data = request.get_json(force=True)
     seg = pipeline.segment_point(img, (int(data["x"]), int(data["y"])))
     return jsonify(seg.to_dict()), 201
@@ -84,9 +80,7 @@ def segment_point(image_id: str):
 def segment_text(image_id: str):
     """自然語言分割。body: {"prompt": "cat"}，回傳零到多個 Segment。"""
     repo, pipeline = get_repo(), get_pipeline()
-    img = repo.get_image(image_id)
-    if not img:
-        abort(404, "找不到圖片")
+    img = get_owned_image(image_id)
 
     data = request.get_json(silent=True) or {}
     prompt = str(data.get("prompt", "")).strip()
@@ -133,9 +127,7 @@ def segment_text(image_id: str):
 def segment_polygon(image_id: str):
     """手動描邊：使用者沿邊界畫出多邊形。body: {"points": [[x,y], ...]}"""
     repo, pipeline = get_repo(), get_pipeline()
-    img = repo.get_image(image_id)
-    if not img:
-        abort(404)
+    img = get_owned_image(image_id)
     data = request.get_json(force=True)
     points = [(int(x), int(y)) for x, y in data.get("points", [])]
     if len(points) < 3:
@@ -146,6 +138,7 @@ def segment_polygon(image_id: str):
 
 @bp.get("/images/<image_id>/segments")
 def list_segments(image_id: str):
+    get_owned_image(image_id)
     return jsonify([s.to_dict() for s in get_repo().list_segments(image_id)])
 
 
@@ -153,8 +146,7 @@ def list_segments(image_id: str):
 def delete_segment(seg_id: str):
     """刪掉切壞/不要的片段，連同它的遮罩 PNG。"""
     repo = get_repo()
-    if not repo.get_segment(seg_id):
-        abort(404)
+    get_owned_segment(seg_id)
     mask = repo.delete_segment(seg_id)
     if mask:
         Path(mask).unlink(missing_ok=True)
@@ -170,6 +162,8 @@ def delete_segments_batch():
     if not seg_ids:
         abort(400, "無效的片段 ID 清單")
 
+    for seg_id in seg_ids:
+        get_owned_segment(str(seg_id))
     paths = repo.delete_segments_batch(seg_ids)
     for p in paths:
         Path(p).unlink(missing_ok=True)
@@ -180,8 +174,10 @@ def delete_segments_batch():
 @bp.get("/segments/<seg_id>/mask")
 def segment_mask(seg_id: str):
     """回傳遮罩 PNG，給前端疊圖。"""
-    seg = get_repo().get_segment(seg_id)
+    seg = get_owned_segment(seg_id)
     if not seg or not seg.mask_path:
+        abort(404)
+    if not Path(seg.mask_path).is_file():
         abort(404)
     return send_file(Path(seg.mask_path), mimetype="image/png")
 

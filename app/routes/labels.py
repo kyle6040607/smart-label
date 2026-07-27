@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from flask import Blueprint, abort, jsonify, request
 
-from app.routes import get_pipeline, get_repo
+from app.routes import get_owned_segment, get_pipeline, get_repo
 
 bp = Blueprint("labels", __name__, url_prefix="/api")
 
@@ -17,9 +17,7 @@ def list_labels():
 def label_segment(seg_id: str):
     """把某片段標成種子範例，觸發主動學習回訓。body: {"label": str}"""
     repo, pipeline = get_repo(), get_pipeline()
-    seg = repo.get_segment(seg_id)
-    if not seg:
-        abort(404)
+    seg = get_owned_segment(seg_id)
     data = request.get_json(force=True)
     label = (data.get("label") or "").strip()
     if not label:

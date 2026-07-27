@@ -27,6 +27,7 @@ from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS images (
     id VARCHAR(32) PRIMARY KEY,
+    owner_id VARCHAR(32) NOT NULL DEFAULT '',
     filename VARCHAR(255) NOT NULL DEFAULT '',
     path VARCHAR(512) NOT NULL DEFAULT '',
     width INT NOT NULL DEFAULT 0,
@@ -114,7 +115,8 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
 
 def _row_to_image(r: dict) -> ImageRecord:
     return ImageRecord(
-        id=r["id"], filename=r["filename"], path=r["path"],
+        id=r["id"], owner_id=r.get("owner_id", ""),
+        filename=r["filename"], path=r["path"],
         width=r["width"], height=r["height"], file_hash=r["file_hash"],
         created_at=r["created_at"],
     )
@@ -233,6 +235,18 @@ class MySQLRepository:
                 cur.execute(f"SHOW COLUMNS FROM users LIKE '{column}'")
                 if cur.fetchone() is None:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {column} {ddl}")
+
+            # 圖片擁有者：舊資料保留空值，僅管理者能在 Web 介面存取。
+            cur.execute("SHOW COLUMNS FROM images LIKE 'owner_id'")
+            if cur.fetchone() is None:
+                cur.execute(
+                    "ALTER TABLE images "
+                    "ADD COLUMN owner_id VARCHAR(32) NOT NULL DEFAULT '' "
+                    "AFTER id"
+                )
+                cur.execute(
+                    "CREATE INDEX idx_images_owner_id ON images (owner_id)"
+                )
             # 舊任務補上已處理圖片欄位
             cur.execute(
                 "SHOW COLUMNS FROM annotation_tasks "
@@ -318,10 +332,13 @@ class MySQLRepository:
     def add_image(self, img: ImageRecord) -> ImageRecord:
         with self._tx() as cur:
             cur.execute(
-                "INSERT INTO images (id, filename, path, width, height, file_hash, created_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (img.id, img.filename, img.path, img.width, img.height,
-                 img.file_hash, img.created_at),
+                "INSERT INTO images "
+                "(id, owner_id, filename, path, width, height, file_hash, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    img.id, img.owner_id, img.filename, img.path,
+                    img.width, img.height, img.file_hash, img.created_at,
+                ),
             )
         return img
 
@@ -651,6 +668,23 @@ class MySQLRepository:
         updated_at = time.time()
 
         with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT image_ids
+                FROM annotation_tasks
+                WHERE line_user_id = %s
+                  AND (user_id = '' OR user_id = %s)
+                FOR UPDATE
+                """,
+                (line_user_id, user_id),
+            )
+            image_ids: set[str] = set()
+            for row in cursor.fetchall():
+                raw_ids = row["image_ids"]
+                if isinstance(raw_ids, str):
+                    raw_ids = json.loads(raw_ids)
+                image_ids.update(str(image_id) for image_id in raw_ids)
+
             assigned_count = cursor.execute(
                 """
                 UPDATE annotation_tasks
@@ -666,6 +700,13 @@ class MySQLRepository:
                     line_user_id,
                 ),
             )
+            if image_ids:
+                placeholders = ", ".join(["%s"] * len(image_ids))
+                cursor.execute(
+                    f"UPDATE images SET owner_id = %s "
+                    f"WHERE owner_id = '' AND id IN ({placeholders})",
+                    (user_id, *sorted(image_ids)),
+                )
 
         return assigned_count
 
