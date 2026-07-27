@@ -5,7 +5,13 @@ import pytest
 
 from app import create_app
 from app.config import Config
-from app.models import AnnotationTask, ImageRecord, Segment, User
+from app.models import (
+    AnnotationTask,
+    ImageRecord,
+    LabelExample,
+    Segment,
+    User,
+)
 from app.services import line_login
 
 
@@ -138,6 +144,71 @@ def test_legacy_unowned_images_are_admin_only(app, tmp_path):
     assert [
         image["id"] for image in admin_client.get("/api/images").get_json()
     ] == [legacy.id]
+
+
+def test_labels_examples_and_delete_are_isolated_by_user(app):
+    repo = app.repo
+    owner = repo.add_user(User(username="label-owner"))
+    other = repo.add_user(User(username="label-other"))
+    owner_image = repo.add_image(ImageRecord(
+        id="label-owner-image",
+        owner_id=owner.id,
+    ))
+    other_image = repo.add_image(ImageRecord(
+        id="label-other-image",
+        owner_id=other.id,
+    ))
+    owner_segment = repo.add_segment(Segment(
+        id="label-owner-segment",
+        image_id=owner_image.id,
+        human_label="cat",
+        reviewed=True,
+    ))
+    other_segment = repo.add_segment(Segment(
+        id="label-other-segment",
+        image_id=other_image.id,
+        human_label="dog",
+        reviewed=True,
+    ))
+    repo.add_example(LabelExample(
+        id="label-owner-example",
+        owner_id=owner.id,
+        label="cat",
+        feature=[1.0, 0.0],
+        source_segment_id=owner_segment.id,
+    ))
+    repo.add_example(LabelExample(
+        id="label-other-example",
+        owner_id=other.id,
+        label="dog",
+        feature=[0.0, 1.0],
+        source_segment_id=other_segment.id,
+    ))
+    app.pipeline.refit()
+    assert app.pipeline.classifiers[owner.id].labels == ["cat"]
+    assert app.pipeline.classifiers[other.id].labels == ["dog"]
+
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess["user_id"] = owner.id
+        sess["username"] = owner.username
+
+    assert client.get("/api/labels").get_json() == ["cat"]
+    examples = client.get("/api/examples").get_json()
+    assert [example["id"] for example in examples] == [
+        "label-owner-example"
+    ]
+    stats = client.get("/api/stats").get_json()
+    assert stats["num_examples"] == 1
+    assert stats["num_labels"] == 1
+    assert stats["label_counts"] == {"cat": 1}
+
+    deleted = client.delete("/api/labels/cat")
+    assert deleted.status_code == 200
+    assert repo.labels(owner.id) == []
+    assert repo.labels(other.id) == ["dog"]
+    assert repo.get_segment(owner_segment.id).human_label is None
+    assert repo.get_segment(other_segment.id).human_label == "dog"
 
 
 def test_stale_user_session_removes_only_login_fields(app):

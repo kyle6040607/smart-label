@@ -5,6 +5,7 @@ from flask import Blueprint, abort, jsonify, request
 
 from app.routes import (
     can_access_image,
+    get_current_user_id,
     get_owned_segment,
     get_pipeline,
     get_repo,
@@ -17,13 +18,13 @@ bp = Blueprint("review", __name__, url_prefix="/api")
 def review_queue():
     """待人工審核的低信心片段（被標紅的）。"""
     repo = get_repo()
+    owned_image_ids = {
+        image.id for image in repo.list_images() if can_access_image(image)
+    }
     return jsonify([
         segment.to_dict()
         for segment in repo.list_review_queue()
-        if (
-            (image := repo.get_image(segment.image_id)) is not None
-            and can_access_image(image)
-        )
+        if segment.image_id in owned_image_ids
     ])
 
 
@@ -61,12 +62,20 @@ def stats():
     labels = {
         segment.final_label for segment in segments if segment.final_label
     }
+    label_counts: dict[str, int] = {}
+    for segment in segments:
+        if segment.final_label:
+            label_counts[segment.final_label] = (
+                label_counts.get(segment.final_label, 0) + 1
+            )
+    examples = repo.list_examples(get_current_user_id())
     return jsonify({
         "total_segments": total,
         "auto_accepted": auto_accepted,
         "need_review": need_review,
         "reviewed": reviewed,
         "auto_ratio": round(auto_accepted / total, 3) if total else 0.0,
-        "num_examples": sum(1 for segment in segments if segment.reviewed),
+        "num_examples": len(examples),
         "num_labels": len(labels),
+        "label_counts": label_counts,
     })

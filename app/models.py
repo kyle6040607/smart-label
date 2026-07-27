@@ -141,6 +141,7 @@ class LabelExample:
     """
 
     id: str = field(default_factory=_new_id)
+    owner_id: str = ""          # 與來源圖片相同的 Web 使用者 ID
     label: str = ""
     feature: list[float] = field(default_factory=list)
     source_segment_id: str | None = None

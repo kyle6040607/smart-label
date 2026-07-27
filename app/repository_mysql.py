@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS segments (
 
 CREATE TABLE IF NOT EXISTS examples (
     id VARCHAR(32) PRIMARY KEY,
+    owner_id VARCHAR(32) NOT NULL DEFAULT '',
     label VARCHAR(64) NOT NULL,
     feature JSON NOT NULL,
     source_segment_id VARCHAR(32) NULL,
@@ -135,7 +136,8 @@ def _row_to_segment(r: dict) -> Segment:
 
 def _row_to_example(r: dict) -> LabelExample:
     return LabelExample(
-        id=r["id"], label=r["label"], feature=json.loads(r["feature"]),
+        id=r["id"], owner_id=r.get("owner_id", ""),
+        label=r["label"], feature=json.loads(r["feature"]),
         source_segment_id=r["source_segment_id"], created_at=r["created_at"],
     )
 
@@ -246,6 +248,29 @@ class MySQLRepository:
                 )
                 cur.execute(
                     "CREATE INDEX idx_images_owner_id ON images (owner_id)"
+                )
+
+            cur.execute("SHOW COLUMNS FROM examples LIKE 'owner_id'")
+            if cur.fetchone() is None:
+                cur.execute(
+                    "ALTER TABLE examples "
+                    "ADD COLUMN owner_id VARCHAR(32) NOT NULL DEFAULT '' "
+                    "AFTER id"
+                )
+                cur.execute(
+                    "CREATE INDEX idx_examples_owner_id ON examples (owner_id)"
+                )
+                # 可從來源片段追溯的舊範例，自動繼承圖片擁有者。
+                cur.execute(
+                    """
+                    UPDATE examples AS example
+                    JOIN segments AS segment
+                      ON segment.id = example.source_segment_id
+                    JOIN images AS image
+                      ON image.id = segment.image_id
+                    SET example.owner_id = image.owner_id
+                    WHERE example.owner_id = ''
+                    """
                 )
             # 舊任務補上已處理圖片欄位
             cur.execute(
@@ -448,34 +473,73 @@ class MySQLRepository:
     def add_example(self, ex: LabelExample) -> LabelExample:
         with self._tx() as cur:
             cur.execute(
-                "INSERT INTO examples (id, label, feature, source_segment_id, created_at)"
-                " VALUES (%s, %s, %s, %s, %s)",
-                (ex.id, ex.label, json.dumps(ex.feature),
-                 ex.source_segment_id, ex.created_at),
+                "INSERT INTO examples "
+                "(id, owner_id, label, feature, source_segment_id, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    ex.id, ex.owner_id, ex.label, json.dumps(ex.feature),
+                    ex.source_segment_id, ex.created_at,
+                ),
             )
         return ex
 
-    def list_examples(self) -> list[LabelExample]:
+    def list_examples(self, owner_id: str | None = None) -> list[LabelExample]:
         with self._tx() as cur:
-            cur.execute("SELECT * FROM examples")
+            if owner_id is None:
+                cur.execute("SELECT * FROM examples")
+            else:
+                cur.execute(
+                    "SELECT * FROM examples WHERE owner_id=%s",
+                    (owner_id,),
+                )
             rows = cur.fetchall()
         return [_row_to_example(r) for r in rows]
 
-    def labels(self) -> list[str]:
+    def labels(self, owner_id: str | None = None) -> list[str]:
         with self._tx() as cur:
-            cur.execute("SELECT DISTINCT label FROM examples ORDER BY label")
+            if owner_id is None:
+                cur.execute(
+                    "SELECT DISTINCT label FROM examples ORDER BY label"
+                )
+            else:
+                cur.execute(
+                    "SELECT DISTINCT label FROM examples "
+                    "WHERE owner_id=%s ORDER BY label",
+                    (owner_id,),
+                )
             rows = cur.fetchall()
         return [r["label"] for r in rows]
 
-    def delete_label(self, label: str) -> int:
+    def delete_label(self, label: str, owner_id: str | None = None) -> int:
         """刪掉某類別的所有種子範例，連帶把該類別的人工標記退回送審。"""
         with self._tx() as cur:
-            deleted = cur.execute("DELETE FROM examples WHERE label=%s", (label,))
-            cur.execute(
-                "UPDATE segments SET human_label=NULL, reviewed=0, needs_review=1"
-                " WHERE human_label=%s",
-                (label,),
-            )
+            if owner_id is None:
+                deleted = cur.execute(
+                    "DELETE FROM examples WHERE label=%s",
+                    (label,),
+                )
+                cur.execute(
+                    "UPDATE segments SET human_label=NULL, "
+                    "reviewed=0, needs_review=1 WHERE human_label=%s",
+                    (label,),
+                )
+            else:
+                deleted = cur.execute(
+                    "DELETE FROM examples WHERE label=%s AND owner_id=%s",
+                    (label, owner_id),
+                )
+                cur.execute(
+                    """
+                    UPDATE segments AS segment
+                    JOIN images AS image ON image.id = segment.image_id
+                    SET segment.human_label=NULL,
+                        segment.reviewed=0,
+                        segment.needs_review=1
+                    WHERE segment.human_label=%s
+                      AND image.owner_id=%s
+                    """,
+                    (label, owner_id),
+                )
         return deleted
 
     # ---------- 標註任務 ----------
@@ -705,6 +769,17 @@ class MySQLRepository:
                 cursor.execute(
                     f"UPDATE images SET owner_id = %s "
                     f"WHERE owner_id = '' AND id IN ({placeholders})",
+                    (user_id, *sorted(image_ids)),
+                )
+                cursor.execute(
+                    f"""
+                    UPDATE examples AS example
+                    JOIN segments AS segment
+                      ON segment.id = example.source_segment_id
+                    SET example.owner_id = %s
+                    WHERE example.owner_id = ''
+                      AND segment.image_id IN ({placeholders})
+                    """,
                     (user_id, *sorted(image_ids)),
                 )
 
