@@ -12,6 +12,10 @@ from app.routes import get_pipeline, get_repo
 
 bp = Blueprint("segment", __name__, url_prefix="/api")
 
+# YOLO-World 推論解析度的可接受範圍（Ultralytics 要求為 32 的倍數）
+YOLO_IMGSZ_MIN = 320
+YOLO_IMGSZ_MAX = 1536
+
 
 @bp.post("/images/<image_id>/segment")
 def segment_image(image_id: str):
@@ -192,7 +196,8 @@ def get_parameters():
     pipeline = get_pipeline()
     return jsonify({
         "confidence_threshold": pipeline.config.confidence_threshold,
-        "yolo_world_confidence": pipeline.config.yolo_world_confidence
+        "yolo_world_confidence": pipeline.config.yolo_world_confidence,
+        "yolo_imgsz": pipeline.config.yolo_imgsz
     })
 
 
@@ -230,12 +235,35 @@ def update_parameters():
         pipeline.config.yolo_world_confidence = val
         repo.set_parameter("yolo_world_confidence", val)
 
+    if "yolo_imgsz" in data:
+        raw_val = data["yolo_imgsz"]
+        if isinstance(raw_val, bool):
+            return jsonify({"error": "yolo_imgsz 必須為有效的整數"}), 400
+        try:
+            num_val = float(raw_val)
+        except (ValueError, TypeError):
+            return jsonify({"error": "yolo_imgsz 必須為有效的整數"}), 400
+        if num_val != int(num_val):
+            return jsonify({"error": "yolo_imgsz 必須為有效的整數"}), 400
+        val = int(num_val)
+        # Ultralytics 會把非 32 倍數的值靜默調整，先擋掉避免實際生效值與顯示值不符
+        if not (YOLO_IMGSZ_MIN <= val <= YOLO_IMGSZ_MAX) or val % 32 != 0:
+            return jsonify({
+                "error": (
+                    f"yolo_imgsz 必須為 {YOLO_IMGSZ_MIN} 至 {YOLO_IMGSZ_MAX} 之間、"
+                    "且為 32 的倍數"
+                )
+            }), 400
+        pipeline.config.yolo_imgsz = val
+        repo.set_parameter("yolo_imgsz", val)
+
     pipeline.reclassify_pending()
 
     return jsonify({
         "status": "success",
         "parameters": {
             "confidence_threshold": pipeline.config.confidence_threshold,
-            "yolo_world_confidence": pipeline.config.yolo_world_confidence
+            "yolo_world_confidence": pipeline.config.yolo_world_confidence,
+            "yolo_imgsz": pipeline.config.yolo_imgsz
         }
     })

@@ -53,6 +53,9 @@ class Config:
     confidence_strategy: str = os.getenv("CONFIDENCE_STRATEGY", "max_prob")
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
     yolo_world_confidence: float = float(os.getenv("YOLO_WORLD_CONFIDENCE", "0.4"))
+    # YOLO-World 推論解析度：越大越抓得到小物件，但速度與記憶體成本上升。
+    # Ultralytics 要求為 32 的倍數，可用範圍見 routes/segment.py 的驗證。
+    yolo_imgsz: int = int(os.getenv("YOLO_IMGSZ", "640"))
 
     # --- few-shot 分類器（提案第 6、7 頁）---
     # classifier: "knn" | "softmax"

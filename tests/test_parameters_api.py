@@ -121,7 +121,8 @@ def test_parameters_persistence(client, tmp_path):
     # Post parameter update
     res = client.post("/api/parameters", json={
         "confidence_threshold": 0.75,
-        "yolo_world_confidence": 0.25
+        "yolo_world_confidence": 0.25,
+        "yolo_imgsz": 1280
     })
     assert res.status_code == 200
 
@@ -133,4 +134,32 @@ def test_parameters_persistence(client, tmp_path):
     new_app = create_app(cfg)
     assert new_app.pipeline.config.confidence_threshold == 0.75
     assert new_app.pipeline.config.yolo_world_confidence == 0.25
+    # 存進 parameters 表是 float，還原時必須轉回 int，否則會傳 1280.0 給 Ultralytics
+    assert new_app.pipeline.config.yolo_imgsz == 1280
+    assert isinstance(new_app.pipeline.config.yolo_imgsz, int)
+
+
+def test_yolo_imgsz_get_and_post(client):
+    res = client.get("/api/parameters")
+    assert res.get_json()["yolo_imgsz"] == 640
+
+    res = client.post("/api/parameters", json={"yolo_imgsz": 1280})
+    assert res.status_code == 200
+    assert res.get_json()["parameters"]["yolo_imgsz"] == 1280
+
+    assert client.get("/api/parameters").get_json()["yolo_imgsz"] == 1280
+
+
+def test_yolo_imgsz_validation(client):
+    # 非 32 的倍數 -> 400（Ultralytics 會靜默調整，必須先擋掉）
+    assert client.post("/api/parameters", json={"yolo_imgsz": 700}).status_code == 400
+    # 超出範圍 -> 400
+    assert client.post("/api/parameters", json={"yolo_imgsz": 64}).status_code == 400
+    assert client.post("/api/parameters", json={"yolo_imgsz": 4096}).status_code == 400
+    # 非整數 -> 400
+    assert client.post("/api/parameters", json={"yolo_imgsz": 640.5}).status_code == 400
+    assert client.post("/api/parameters", json={"yolo_imgsz": "big"}).status_code == 400
+    assert client.post("/api/parameters", json={"yolo_imgsz": True}).status_code == 400
+    # 被擋下來之後不可留下副作用
+    assert client.get("/api/parameters").get_json()["yolo_imgsz"] == 640
 

@@ -1195,6 +1195,14 @@ async function loadParameters() {
       $("yoloConfInput").value = data.yolo_world_confidence;
       $("yoloConfValue").value = Number(data.yolo_world_confidence).toFixed(2);
       updateSliderFill($("yoloConfInput"));
+      if (data.yolo_imgsz != null) {
+        const imgszEl = $("yoloImgszInput");
+        // 後端若回傳下拉選單沒有的值（例如用環境變數設的），補一個選項再選取
+        if (!Array.from(imgszEl.options).some((o) => o.value === String(data.yolo_imgsz))) {
+          imgszEl.add(new Option(String(data.yolo_imgsz), String(data.yolo_imgsz)));
+        }
+        imgszEl.value = String(data.yolo_imgsz);
+      }
     }
   } catch (err) {
     console.error("載入參數失敗:", err);
@@ -1487,12 +1495,13 @@ $("saveParamsBtn").onclick = async () => {
   if (isNaN(yolo_world_confidence)) {
     yolo_world_confidence = parseFloat($("yoloConfInput").value);
   }
+  const yolo_imgsz = parseInt($("yoloImgszInput").value, 10);
 
   try {
     const res = await fetch("/api/parameters", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confidence_threshold, yolo_world_confidence })
+      body: JSON.stringify({ confidence_threshold, yolo_world_confidence, yolo_imgsz })
     });
     if (res.ok) {
       alert("參數儲存與重新預測成功！");

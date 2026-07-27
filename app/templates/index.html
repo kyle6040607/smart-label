@@ -106,6 +106,19 @@
             </div>
             <span class="hint" style="display: block; margin-top: 8px; font-size: 13px;">文字分割偵測的信心度</span>
           </div>
+          <div class="param-group" style="margin-top: 24px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
+              <label for="yoloImgszInput" style="margin: 0; flex: 1; font-weight: 500;">推論解析度:</label>
+              <div style="flex: 1; text-align: right;">
+                <select id="yoloImgszInput" class="param-val-input" style="width: auto; min-width: 96px;">
+                  <option value="640">640（快）</option>
+                  <option value="960">960（平衡）</option>
+                  <option value="1280">1280（抓小物件）</option>
+                </select>
+              </div>
+            </div>
+            <span class="hint" style="display: block; margin-top: 8px; font-size: 13px;">解析度越高越抓得到小物件，但速度越慢</span>
+          </div>
           <button id="saveParamsBtn" style="margin-top: 20px; width: 100%; display: block;">儲存並重新預測</button>
         </div>
       </section>
