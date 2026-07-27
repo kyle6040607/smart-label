@@ -23,7 +23,7 @@ from flask import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.models import User
-from app.routes import get_config, get_repo
+from app.routes import get_config, get_pipeline, get_repo
 from app.services import line_login, mailer
 
 bp = Blueprint("auth", __name__)
@@ -388,7 +388,34 @@ def line_callback():
         current = repo.get_user(session["user_id"])
         owner = repo.get_user_by_line_id(line_user_id)
         if owner is not None and (current is None or owner.id != current.id):
-            return render_template("login.html", error="這個 LINE 帳號已綁定其他帳號"), 409
+            # 佔位帳號＝先前「用 LINE 登入」時系統自動建立的（無密碼、無 Email）。
+            # 使用者並非刻意註冊它，因此直接把資料併回目前帳號並釋放 LINE ID，
+            # 避免使用者被自己無意間建立的帳號卡住而無法綁定。
+            is_placeholder = (
+                current is not None
+                and not owner.password_hash
+                and not owner.email
+            )
+            if not is_placeholder:
+                return render_template(
+                    "login.html", error="這個 LINE 帳號已綁定其他帳號"
+                ), 409
+
+            moved = repo.transfer_ownership(
+                from_user_id=owner.id,
+                to_user_id=current.id,
+            )
+            repo.delete_user(owner.id)
+            current_app.logger.info(
+                "合併 LINE 佔位帳號 %s → %s：%s",
+                owner.id, current.id, moved,
+            )
+
+            # 種子範例換了主人，兩邊的 few-shot 分類器都要重建
+            pipeline = get_pipeline()
+            pipeline.refit(owner.id)
+            pipeline.refit(current.id)
+            pipeline.reclassify_pending(current.id)
 
         if current is not None:
             current.line_user_id = line_user_id
