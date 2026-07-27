@@ -155,16 +155,34 @@ class Repository:
 
         with self._lock:
             for task in self.tasks.values():
-                if (
-                    task.line_user_id == line_user_id
-                    and not task.user_id
-                ):
+                if task.line_user_id != line_user_id:
+                    continue
+                if task.user_id and task.user_id != user_id:
+                    continue
+                if not task.user_id:
                     task.user_id = user_id
                     task.updated_at = time.time()
                     assigned_count += 1
+                if task.user_id == user_id:
+                    for image_id in task.image_ids:
+                        image = self.images.get(image_id)
+                        if image is not None and not image.owner_id:
+                            image.owner_id = user_id
+                    task_image_ids = set(task.image_ids)
+                    task_segment_ids = {
+                        segment.id
+                        for segment in self.segments.values()
+                        if segment.image_id in task_image_ids
+                    }
+                    for example in self.examples.values():
+                        if (
+                            not example.owner_id
+                            and example.source_segment_id in task_segment_ids
+                        ):
+                            example.owner_id = user_id
 
-            if assigned_count > 0:
-                self._save()
+            # 即使任務早已歸戶，也可能需要補上新版的圖片 owner_id。
+            self._save()
 
         return assigned_count
 
@@ -221,24 +239,46 @@ class Repository:
             self._save()
         return ex
 
-    def list_examples(self) -> list[LabelExample]:
-        return list(self.examples.values())
+    def list_examples(self, owner_id: str | None = None) -> list[LabelExample]:
+        examples = self.examples.values()
+        if owner_id is not None:
+            examples = [
+                example for example in examples
+                if example.owner_id == owner_id
+            ]
+        return list(examples)
 
-    def labels(self) -> list[str]:
-        return sorted({ex.label for ex in self.examples.values()})
+    def labels(self, owner_id: str | None = None) -> list[str]:
+        return sorted({
+            example.label for example in self.list_examples(owner_id)
+        })
 
-    def delete_label(self, label: str) -> int:
+    def delete_label(self, label: str, owner_id: str | None = None) -> int:
         """刪掉某類別的所有種子範例（標錯類別時用），回傳刪除的範例數。
 
         連帶把用這個錯誤類別人工標過的片段退回送審——類別都錯了，
         那些標記也不該留在匯出資料裡。回訓由上層 pipeline 負責。
         """
         with self._lock:
-            ids = [eid for eid, ex in self.examples.items() if ex.label == label]
+            ids = [
+                example_id
+                for example_id, example in self.examples.items()
+                if (
+                    example.label == label
+                    and (owner_id is None or example.owner_id == owner_id)
+                )
+            ]
             for eid in ids:
                 del self.examples[eid]
             for seg in self.segments.values():
-                if seg.human_label == label:
+                image = self.images.get(seg.image_id)
+                if (
+                    seg.human_label == label
+                    and (
+                        owner_id is None
+                        or (image is not None and image.owner_id == owner_id)
+                    )
+                ):
                     seg.human_label = None
                     seg.reviewed = False
                     seg.needs_review = True
@@ -327,7 +367,16 @@ class Repository:
             d.pop("final_label", None)  # 衍生欄位不還原
             self.segments[d["id"]] = Segment(**{k: v for k, v in d.items() if k in Segment.__dataclass_fields__})
         for d in data.get("examples", []):
-            self.examples[d["id"]] = LabelExample(**{k: v for k, v in d.items() if k in LabelExample.__dataclass_fields__})
+            example = LabelExample(**{
+                k: v for k, v in d.items()
+                if k in LabelExample.__dataclass_fields__
+            })
+            if not example.owner_id and example.source_segment_id:
+                segment = self.segments.get(example.source_segment_id)
+                image = self.images.get(segment.image_id) if segment else None
+                if image is not None:
+                    example.owner_id = image.owner_id
+            self.examples[d["id"]] = example
         for d in data.get("users", []):
             self.users[d["id"]] = User(**{k: v for k, v in d.items() if k in User.__dataclass_fields__})
         for d in data.get("tasks", []):

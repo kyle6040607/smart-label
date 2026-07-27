@@ -104,6 +104,7 @@ def test_liff_upload_creates_annotation_task(
     )
 
     assert image_record is not None
+    assert image_record.owner_id == ""
     assert image_record.width == 20
     assert image_record.height == 10
     assert Path(image_record.path).exists()
