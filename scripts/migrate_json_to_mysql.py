@@ -55,22 +55,22 @@ def main() -> None:
             cur.execute(
                 """
                 REPLACE INTO annotation_tasks (
-                    id, user_id, line_user_id, prompt, image_ids, status,
+                    id, user_id, line_user_id, prompt, image_ids, processed_image_ids, dataset_version,
+                    notified_dataset_version, status,
                     dataset_zip_path, best_model_path, download_token,
                     error_message, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     task.id, task.user_id, task.line_user_id, task.prompt,
-                    json.dumps(task.image_ids), task.status,
+                    json.dumps(task.image_ids),json.dumps(task.processed_image_ids),
+                    task.dataset_version, task.notified_dataset_version, task.status,
                     task.dataset_zip_path, task.best_model_path,
                     task.download_token, task.error_message,
                     task.created_at, task.updated_at,
                 ),
             )
-        for s in src.line_sessions.values():
-            dst._write_session(cur, s)  # noqa: SLF001
         for key, value in src.parameters.items():
             cur.execute(
                 "REPLACE INTO parameters (`key`, value) VALUES (%s, %s)",
@@ -80,7 +80,7 @@ def main() -> None:
     print(
         f"遷移完成：images={len(src.images)} segments={len(src.segments)}"
         f" examples={len(src.examples)} users={len(src.users)}"
-        f" tasks={len(src.tasks)} line_sessions={len(src.line_sessions)}"
+        f" tasks={len(src.tasks)}"
         f" parameters={len(src.parameters)}"
     )
 

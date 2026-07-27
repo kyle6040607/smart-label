@@ -9,9 +9,7 @@ pipeline 不用改任何一行就能切換（見 app/__init__.py 的後端選擇
   （Cloud Run / App Engine 掛 Cloud SQL 的標準走法）
 
 每個執行緒各持一條連線（threading.local），操作前 ping(reconnect=True)
-自動處理 Cloud SQL 閒置斷線。多筆寫入包在同一個交易裡；LINE session
-的狀態機用 SELECT ... FOR UPDATE 保證多 worker 下的原子性——這點比
-JSON 版的 process 內鎖更強。
+自動處理 Cloud SQL 閒置斷線，多筆寫入包在同一個交易裡。
 """
 from __future__ import annotations
 
@@ -24,7 +22,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from app.config import Config
-from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User, LineSession
+from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS images (
@@ -90,6 +88,9 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
     line_user_id VARCHAR(64) NOT NULL DEFAULT '',
     prompt TEXT NOT NULL,
     image_ids JSON NOT NULL,
+    processed_image_ids JSON NOT NULL,
+    dataset_version INT NOT NULL DEFAULT 0,
+    notified_dataset_version INT NOT NULL DEFAULT 0,
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
     dataset_zip_path VARCHAR(512) NOT NULL DEFAULT '',
     best_model_path VARCHAR(512) NOT NULL DEFAULT '',
@@ -106,14 +107,6 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS line_sessions (
-    line_user_id VARCHAR(64) PRIMARY KEY,
-    image_ids JSON NOT NULL,
-    images_done TINYINT(1) NOT NULL DEFAULT 0,
-    confirmed TINYINT(1) NOT NULL DEFAULT 0,
-    prompt TEXT NULL,
-    updated_at DOUBLE NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 """
 
 
@@ -167,6 +160,9 @@ def _row_to_task(
         line_user_id=row["line_user_id"],
         prompt=row["prompt"],
         image_ids=json.loads(row["image_ids"]),
+        processed_image_ids=json.loads(row["processed_image_ids"]),
+        dataset_version=int(row["dataset_version"]),
+        notified_dataset_version=int(row["notified_dataset_version"]),
         status=row["status"],
         dataset_zip_path=row["dataset_zip_path"],
         best_model_path=row["best_model_path"],
@@ -176,17 +172,7 @@ def _row_to_task(
         updated_at=row["updated_at"],
     )
 
-def _row_to_session(r: dict) -> LineSession:
-    return LineSession(
-        line_user_id=r["line_user_id"], image_ids=json.loads(r["image_ids"]),
-        images_done=bool(r["images_done"]), confirmed=bool(r["confirmed"]),
-        prompt=r["prompt"], updated_at=r["updated_at"],
-    )
-
-
 class MySQLRepository:
-    SESSION_TTL_SECONDS = 600
-
     def __init__(self, cfg: Config):
         self._cfg = cfg
         self._local = threading.local()
@@ -247,7 +233,76 @@ class MySQLRepository:
                 cur.execute(f"SHOW COLUMNS FROM users LIKE '{column}'")
                 if cur.fetchone() is None:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {column} {ddl}")
+            # 舊任務補上已處理圖片欄位
+            cur.execute(
+                "SHOW COLUMNS FROM annotation_tasks "
+                "LIKE 'processed_image_ids'"
+            )
+            processed_image_column = cur.fetchone()
 
+            if processed_image_column is None:
+                cur.execute(
+                    "ALTER TABLE annotation_tasks "
+                    "ADD COLUMN processed_image_ids JSON NULL "
+                    "AFTER image_ids"
+                )
+
+            cur.execute(
+                """
+                UPDATE annotation_tasks
+                SET processed_image_ids = CASE
+                    WHEN status = 'completed' THEN image_ids
+                    ELSE JSON_ARRAY()
+                END
+                WHERE processed_image_ids IS NULL
+                """
+            )
+
+            if (
+                processed_image_column is None
+                or processed_image_column["Null"] == "YES"
+            ):
+                cur.execute(
+                    "ALTER TABLE annotation_tasks "
+                    "MODIFY COLUMN processed_image_ids JSON NOT NULL"
+                )
+
+            # 舊任務補上資料集與通知版本欄位
+            task_version_migrations = [
+                (
+                    "dataset_version",
+                    "INT NOT NULL DEFAULT 0 "
+                    "AFTER processed_image_ids",
+                ),
+                (
+                    "notified_dataset_version",
+                    "INT NOT NULL DEFAULT 0 "
+                    "AFTER dataset_version",
+                ),
+            ]
+
+            for column, ddl in task_version_migrations:
+                cur.execute(
+                    "SHOW COLUMNS FROM annotation_tasks "
+                    f"LIKE '{column}'"
+                )
+
+                if cur.fetchone() is None:
+                    cur.execute(
+                        "ALTER TABLE annotation_tasks "
+                        f"ADD COLUMN {column} {ddl}"
+                    )
+
+            # 舊的已完成 ZIP 視為第 1 版
+            cur.execute(
+                """
+                UPDATE annotation_tasks
+                SET dataset_version = 1
+                WHERE status = 'completed'
+                  AND dataset_zip_path <> ''
+                  AND dataset_version = 0
+                """
+            )
             # 確保 parameters 資料表結構正確
             cur.execute("SHOW COLUMNS FROM parameters LIKE 'key'")
             if cur.fetchone() is None:
@@ -417,6 +472,9 @@ class MySQLRepository:
                     line_user_id,
                     prompt,
                     image_ids,
+                    processed_image_ids,
+                    dataset_version,
+                    notified_dataset_version,
                     status,
                     dataset_zip_path,
                     best_model_path,
@@ -428,7 +486,8 @@ class MySQLRepository:
                 VALUES (
                     %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s
+                    %s, %s, %s, %s,
+                    %s, %s, %s
                 )
                 """,
                 (
@@ -437,6 +496,9 @@ class MySQLRepository:
                     task.line_user_id,
                     task.prompt,
                     json.dumps(task.image_ids),
+                    json.dumps(task.processed_image_ids),
+                    task.dataset_version,
+                    task.notified_dataset_version,
                     task.status,
                     task.dataset_zip_path,
                     task.best_model_path,
@@ -468,6 +530,73 @@ class MySQLRepository:
 
         return _row_to_task(row) if row else None
 
+    def list_tasks_by_line_user_id(
+        self,
+        line_user_id: str,
+    ) -> list[AnnotationTask]:
+        """依更新時間由新到舊取得 LINE 使用者的任務。"""
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE line_user_id = %s
+                ORDER BY updated_at DESC
+                """,
+                (line_user_id,),
+            )
+
+            rows = cursor.fetchall()
+
+        return [
+            _row_to_task(row)
+            for row in rows
+        ]
+
+    def claim_next_pending_task(
+        self,
+    ) -> AnnotationTask | None:
+        updated_at = time.time()
+
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+                """
+            )
+
+            row = cursor.fetchone()
+
+            if row is None:
+                return None
+
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET
+                    status = %s,
+                    error_message = '',
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (
+                    "processing",
+                    updated_at,
+                    row["id"],
+                ),
+            )
+
+            row["status"] = "processing"
+            row["error_message"] = ""
+            row["updated_at"] = updated_at
+
+        return _row_to_task(row)
+
     def update_task(
         self,
         task: AnnotationTask,
@@ -483,6 +612,9 @@ class MySQLRepository:
                     line_user_id = %s,
                     prompt = %s,
                     image_ids = %s,
+                    processed_image_ids = %s,
+                    dataset_version = %s,
+                    notified_dataset_version = %s,
                     status = %s,
                     dataset_zip_path = %s,
                     best_model_path = %s,
@@ -496,6 +628,9 @@ class MySQLRepository:
                     task.line_user_id,
                     task.prompt,
                     json.dumps(task.image_ids),
+                    json.dumps(task.processed_image_ids),
+                    task.dataset_version,
+                    task.notified_dataset_version,
                     task.status,
                     task.dataset_zip_path,
                     task.best_model_path,
@@ -582,109 +717,6 @@ class MySQLRepository:
             cur.execute("SELECT * FROM users")
             rows = cur.fetchall()
         return [_row_to_user(r) for r in rows]
-
-    # ---------- LINE session ----------
-    def _write_session(self, cur, s: LineSession) -> None:
-        cur.execute(
-            "REPLACE INTO line_sessions (line_user_id, image_ids, images_done,"
-            " confirmed, prompt, updated_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (s.line_user_id, json.dumps(s.image_ids), s.images_done,
-             s.confirmed, s.prompt, s.updated_at),
-        )
-
-    def _select_session(self, cur, line_user_id: str, for_update: bool = False) -> LineSession | None:
-        sql = "SELECT * FROM line_sessions WHERE line_user_id=%s"
-        if for_update:
-            sql += " FOR UPDATE"
-        cur.execute(sql, (line_user_id,))
-        r = cur.fetchone()
-        return _row_to_session(r) if r else None
-
-    def get_line_session(self, line_user_id: str) -> LineSession | None:
-        with self._tx() as cur:
-            return self._select_session(cur, line_user_id)
-
-    def add_line_session_image(self, line_user_id: str, image_id: str) -> tuple[LineSession, list[str], bool]:
-        """新增一張圖到 session；回傳 (session, 逾時被清的舊圖 id, reopened)。"""
-        with self._tx() as cur:
-            s = self._select_session(cur, line_user_id, for_update=True)
-            expired_ids: list[str] = []
-            if s is not None and time.time() - s.updated_at > self.SESSION_TTL_SECONDS:
-                expired_ids = list(s.image_ids)
-                s = None
-            if s is None:
-                s = LineSession(line_user_id=line_user_id)
-            reopened = s.images_done
-            s.image_ids.append(image_id)
-            s.images_done = False
-            s.confirmed = False
-            s.updated_at = time.time()
-            self._write_session(cur, s)
-            return s, expired_ids, reopened
-
-    def mark_line_session_images_done(self, line_user_id: str) -> LineSession | None:
-        with self._tx() as cur:
-            s = self._select_session(cur, line_user_id, for_update=True)
-            if s is None or not s.image_ids:
-                return None
-            s.images_done = True
-            s.confirmed = False
-            s.updated_at = time.time()
-            self._write_session(cur, s)
-            return s
-
-    def confirm_line_session_images(self, line_user_id: str) -> LineSession | None:
-        with self._tx() as cur:
-            s = self._select_session(cur, line_user_id, for_update=True)
-            if s is None or not s.images_done or s.confirmed:
-                return None
-            s.confirmed = True
-            s.updated_at = time.time()
-            self._write_session(cur, s)
-            return s
-
-    def reset_line_session_images(self, line_user_id: str) -> list[str]:
-        with self._tx() as cur:
-            s = self._select_session(cur, line_user_id, for_update=True)
-            if s is None:
-                return []
-            old_ids = list(s.image_ids)
-            s.image_ids = []
-            s.images_done = False
-            s.confirmed = False
-            s.prompt = None
-            s.updated_at = time.time()
-            self._write_session(cur, s)
-            return old_ids
-
-    def set_line_session_prompt(self, line_user_id: str, prompt: str) -> LineSession | None:
-        with self._tx() as cur:
-            s = self._select_session(cur, line_user_id, for_update=True)
-            if s is None or not s.confirmed:
-                return None
-            s.prompt = prompt
-            s.updated_at = time.time()
-            self._write_session(cur, s)
-            return s
-
-    def try_consume_line_session(self, line_user_id: str) -> tuple[str, LineSession | None]:
-        """圖文都到齊時原子性地取出並刪除 session，避免多 worker 重複觸發。"""
-        with self._tx() as cur:
-            s = self._select_session(cur, line_user_id, for_update=True)
-            if s is None or not s.image_ids:
-                return "empty", None
-            if not s.images_done:
-                return "collecting_images", s
-            if not s.confirmed:
-                return "awaiting_confirmation", s
-            if s.prompt is None:
-                return "waiting_prompt", s
-            cur.execute("DELETE FROM line_sessions WHERE line_user_id=%s", (line_user_id,))
-            return "ready", s
-
-    def clear_line_session(self, line_user_id: str) -> None:
-        with self._tx() as cur:
-            cur.execute("DELETE FROM line_sessions WHERE line_user_id=%s", (line_user_id,))
 
     # ---------- 參數設定 ----------
     def get_parameters(self) -> dict[str, float]:

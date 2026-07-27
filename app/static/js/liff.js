@@ -13,6 +13,17 @@ const imageCountElement =document.getElementById("image-count");
 const promptElement =document.getElementById("prompt");
 const promptCountElement =document.getElementById("prompt-count");
 const submitButtonElement =document.getElementById("submit-button");
+const selectedImageFiles = new Map();
+
+
+function getImageFileKey(file) {
+    return [
+        file.name,
+        file.size,
+        file.type,
+        file.lastModified,
+    ].join(":");
+}
 
 // URL 與 LINE 登入輔助函式
 function getCleanRedirectUri() {
@@ -223,52 +234,43 @@ async function initializeLiff() {
 // 圖片選擇
 // ========================================
 
-imageInputElement.addEventListener(
-    "change",
-    () => {
-        const files = Array.from(imageInputElement.files);
+imageInputElement.addEventListener("change", () => {
+    const newFiles = Array.from(imageInputElement.files);
+    const allowedTypes = ["image/jpeg", "image/png"];
 
-        imageCountElement.classList.remove("error-message");
+    if (newFiles.length === 0) {
+        return;
+    }
 
-        if (files.length === 0) {
-            imageCountElement.textContent =
-                "尚未選擇圖片";
+    const invalidFiles = newFiles.filter(
+        (file) => !allowedTypes.includes(file.type)
+    );
 
-            return;
-        }
-
-        const allowedTypes = ["image/jpeg","image/png",];
-
-        const invalidFiles = files.filter(
-            (file) => {
-                return !allowedTypes.includes(
-                    file.type
-                );
-            }
-        );
-
-        if (invalidFiles.length > 0) {
-            imageInputElement.value = "";
-
-            imageCountElement.textContent =
-                "檔案格式錯誤，只能選擇 JPG、JPEG 或 PNG";
-
-            imageCountElement.classList.add(
-                "error-message"
-            );
-
-            return;
-        }
-
+    if (invalidFiles.length > 0) {
+        imageInputElement.value = "";
         imageCountElement.textContent =
-            `已選擇 ${files.length} 張圖片`;
+            "檔案格式錯誤，只能選擇 JPG、JPEG 或 PNG";
+        imageCountElement.classList.add("error-message");
+        return;
+    }
 
-        console.log(
-            "選擇的圖片：",
-            files
+    for (const file of newFiles) {
+        selectedImageFiles.set(
+            getImageFileKey(file),
+            file
         );
     }
-);
+
+    imageInputElement.value = "";
+    imageCountElement.classList.remove("error-message");
+    imageCountElement.textContent =
+        `已累加選擇 ${selectedImageFiles.size} 張圖片`;
+
+    console.log(
+        "目前累加的圖片：",
+        Array.from(selectedImageFiles.values())
+    );
+});
 
 
 // ========================================
@@ -296,7 +298,7 @@ taskFormElement.addEventListener(
     async (event) => {
         event.preventDefault();
 
-        const files = Array.from(imageInputElement.files);
+        const files = Array.from(selectedImageFiles.values());
 
         const prompt =promptElement.value.trim();
 
@@ -487,23 +489,19 @@ taskFormElement.addEventListener(
                 result
             );
 
-            statusElement.textContent =
-                `上傳成功，收到 ${result.image_count} 張圖片`;
+            taskFormElement.style.display = "none";
 
-            /*
-             * 清空表單，方便建立下一個任務。
-             */
-            taskFormElement.reset();
+            if (liff.isInClient()) {
+                statusElement.textContent =
+                    `已建立 ${result.image_count} 張圖片的標註任務，正在關閉頁面...`;
 
-            imageCountElement.textContent =
-                "尚未選擇圖片";
-
-            imageCountElement.classList.remove(
-                "error-message"
-            );
-
-            promptCountElement.textContent =
-                "0 / 200";
+                window.setTimeout(() => {
+                    liff.closeWindow();
+                }, 1200);
+            } else {
+                statusElement.textContent =
+                    `已建立 ${result.image_count} 張圖片的標註任務，可以關閉此頁面`;
+            }
 
         } catch (error) {
             console.error(
