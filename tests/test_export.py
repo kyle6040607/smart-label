@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from app.config import Config
-from app.services.exporter import build_dataset
+from app.services.exporter import build_dataset, write_dataset
 from app.services.pipeline import Pipeline
 from app.models import ImageRecord
 from app.repository import Repository
@@ -29,6 +29,7 @@ def _setup(tmp_path) -> Repository:
     )
     cfg.use_real_sam = False
     cfg.use_real_embedding = False
+    cfg.use_gcs = False
     cfg.ensure_dirs()
     repo = Repository(cfg.db_file)
     pipe = Pipeline(cfg, repo)
@@ -42,6 +43,29 @@ def _setup(tmp_path) -> Repository:
 
 def _zip(data: bytes) -> zipfile.ZipFile:
     return zipfile.ZipFile(io.BytesIO(data))
+
+
+def test_write_dataset_supports_non_seekable_output(tmp_path):
+    class NonSeekableOutput:
+        def __init__(self):
+            self.data = bytearray()
+
+        def write(self, data):
+            self.data.extend(data)
+            return len(data)
+
+        def flush(self):
+            pass
+
+    output = NonSeekableOutput()
+    write_dataset(
+        _setup(tmp_path),
+        "yolo",
+        output=output,
+    )
+
+    with zipfile.ZipFile(io.BytesIO(output.data)) as archive:
+        assert "data.yaml" in archive.namelist()
 
 
 def test_export_coco(tmp_path):

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.models import AnnotationTask
 from app.repository import Repository
-from app.services.exporter import build_dataset
+from app.services.exporter import write_dataset
 from app.services.pipeline import Pipeline
 from app.storage import LocalStorage, StorageService
 
@@ -12,9 +12,25 @@ def process_task(
     pipeline: Pipeline,
     task: AnnotationTask,
     output_dir: Path,
+    *,
+    storage: StorageService | None = None,
 ) -> AnnotationTask:
     """執行單一 LIFF 標註任務並產生 YOLO ZIP。"""
-    storage = getattr(pipeline, "storage", None)
+    if storage is None:
+        storage = getattr(pipeline, "storage", None)
+
+    pipeline_config = getattr(pipeline, "config", None)
+    if (
+        bool(getattr(pipeline_config, "use_gcs", False))
+        and (
+            storage is None
+            or storage.backend_name != "gcs"
+        )
+    ):
+        raise RuntimeError(
+            "USE_GCS=1，但 task_processor 沒有取得 GCS storage"
+        )
+
     if storage is None:
         storage = StorageService(
             local=LocalStorage(
@@ -67,22 +83,22 @@ def process_task(
             f"找不到符合標註內容的物件：{task.prompt}"
         )
 
-    zip_bytes = build_dataset(
-        repo,
-        "yolo",
-        image_ids=set(task.image_ids),
-        storage=storage,
-    )
-
     next_dataset_version = task.dataset_version + 1
-    dataset_reference = storage.save_bytes(
-        (
-            f"datasets/{task.id}/"
-            f"dataset_v{next_dataset_version}.zip"
-        ),
-        zip_bytes,
-        "application/zip",
+    object_name = (
+        f"datasets/{task.id}/"
+        f"dataset_v{next_dataset_version}.zip"
     )
+    with storage.open_writer(
+        object_name,
+        "application/zip",
+    ) as (output, dataset_reference):
+        write_dataset(
+            repo,
+            "yolo",
+            output=output,
+            image_ids=set(task.image_ids),
+            storage=storage,
+        )
 
     task.processed_image_ids = list(dict.fromkeys([
         *task.processed_image_ids,

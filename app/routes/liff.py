@@ -39,13 +39,16 @@ import secrets
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
+from google.auth.exceptions import TransportError
 from flask import (
     Blueprint,
+    Response,
     current_app,
     jsonify,
+    redirect,
     render_template,
     request,
-    send_file,
+    stream_with_context,
     url_for,
 )
 
@@ -61,6 +64,15 @@ bp = Blueprint(
     __name__,
     url_prefix="/liff",
 )
+
+_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+def _stream_file(storage, reference: str):
+    """固定大小串流檔案，避免把整個 ZIP 載入記憶體。"""
+    with storage.open_reader(reference) as reader:
+        while chunk := reader.read(_DOWNLOAD_CHUNK_SIZE):
+            yield chunk
 
 
 def _verify_liff_profile(id_token: str):
@@ -427,9 +439,32 @@ def download_task_dataset(task_id: str):
     if not storage.exists(task.dataset_zip_path):
         return jsonify({"ok": False, "message": "ZIP 檔案不存在"}), 404
 
-    return send_file(
-        io.BytesIO(storage.read_bytes(task.dataset_zip_path)),
+    download_name = f"smart_label_{task.id}_yolo.zip"
+    try:
+        signed_url = storage.generate_download_url(
+            task.dataset_zip_path,
+            download_name,
+        )
+    except (AttributeError, TransportError):
+        current_app.logger.warning(
+            "無法產生 GCS signed URL，改由應用程式串流：%s",
+            task.dataset_zip_path,
+            exc_info=True,
+        )
+        signed_url = None
+
+    if signed_url is not None:
+        return redirect(signed_url, code=302)
+
+    return Response(
+        stream_with_context(
+            _stream_file(storage, task.dataset_zip_path)
+        ),
         mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"smart_label_{task.id}_yolo.zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{download_name}"'
+            ),
+            "X-Accel-Buffering": "no",
+        },
     )

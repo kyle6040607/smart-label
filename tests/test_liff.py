@@ -113,6 +113,7 @@ def test_liff_upload_creates_annotation_task(
 def test_liff_task_download_checks_token_and_status(
     app,
     tmp_path,
+    monkeypatch,
 ):
     client = app.test_client()
 
@@ -155,6 +156,20 @@ def test_liff_task_download_checks_token_and_status(
     )
     zip_path.write_bytes(
         b"test-zip-content"
+    )
+    monkeypatch.setattr(
+        app.storage,
+        "read_bytes",
+        lambda *_: pytest.fail(
+            "ZIP 下載不應把整個檔案讀入記憶體"
+        ),
+    )
+    monkeypatch.setattr(
+        app.storage,
+        "generate_download_url",
+        lambda *_: (_ for _ in ()).throw(
+            AttributeError("test signing unavailable")
+        ),
     )
 
     success_response = client.get(
@@ -227,6 +242,43 @@ def test_liff_task_status_returns_download_url(
     assert failed_result is not None
     assert failed_result["task_status"] == "failed"
     assert failed_result["error_message"] == "測試失敗原因"
+
+
+def test_liff_gcs_download_redirects_to_signed_url(
+    app,
+    monkeypatch,
+):
+    task = app.repo.add_task(
+        AnnotationTask(
+            status="completed",
+            dataset_zip_path=(
+                "gs://test-bucket/datasets/task/dataset.zip"
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        app.storage,
+        "exists",
+        lambda reference: reference == task.dataset_zip_path,
+    )
+    monkeypatch.setattr(
+        app.storage,
+        "generate_download_url",
+        lambda reference, download_name: (
+            "https://storage.example/dataset.zip?signed=1"
+        ),
+    )
+
+    response = app.test_client().get(
+        f"/liff/tasks/{task.id}/download"
+        f"?token={task.download_token}"
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == (
+        "https://storage.example/dataset.zip?signed=1"
+    )
+
 
 def test_liff_task_list_only_returns_verified_user_tasks(
     app,

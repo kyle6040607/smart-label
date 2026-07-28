@@ -21,7 +21,7 @@ from app.models import ImageRecord, LabelExample, Segment
 from app.repository import Repository
 from app.ml.yolo_world import YoloWorldDetector
 from app.services.gemini import GeminiService
-from app.storage import LocalStorage, StorageService
+from app.storage import (StorageService, require_configured_storage,)
 
 
 class Pipeline:
@@ -33,13 +33,7 @@ class Pipeline:
     ):
         self.config = config
         self.repo = repo
-        self.storage = storage or StorageService(
-            local=LocalStorage(
-                data_dir=config.data_dir,
-                upload_dir=config.upload_dir,
-                mask_dir=config.mask_dir,
-            )
-        )
+        self.storage = require_configured_storage(config, storage,)
         self.yolo_detector = None
         self.gemini_service = GeminiService(config.gemini_api_key)
         self.segmenter = build_segmenter(

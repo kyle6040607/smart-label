@@ -1,8 +1,18 @@
 """本機與 Google Cloud Storage 共用的檔案儲存介面。"""
 from __future__ import annotations
 
+import shutil
+from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Protocol
+from typing import (
+    TYPE_CHECKING,
+    BinaryIO,
+    ContextManager,
+    Iterator,
+    Protocol,
+)
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from app.config import Config
@@ -16,7 +26,22 @@ class StorageBackend(Protocol):
         content_type: str | None = None,
     ) -> str: ...
 
+    def save_file(
+        self,
+        object_name: str,
+        source: Path,
+        content_type: str | None = None,
+    ) -> str: ...
+
     def read_bytes(self, reference: str) -> bytes: ...
+
+    def open_reader(self, reference: str) -> BinaryIO: ...
+
+    def open_writer(
+        self,
+        object_name: str,
+        content_type: str | None = None,
+    ) -> ContextManager[tuple[BinaryIO, str]]: ...
 
     def delete(self, reference: str) -> bool: ...
 
@@ -83,6 +108,43 @@ class LocalStorage:
     def read_bytes(self, reference: str) -> bytes:
         return Path(reference).read_bytes()
 
+    def save_file(
+        self,
+        object_name: str,
+        source: Path,
+        content_type: str | None = None,
+    ) -> str:
+        del content_type
+        source = Path(source)
+        target = self._target(object_name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(f"{target.suffix}.tmp")
+        shutil.copyfile(source, temporary)
+        temporary.replace(target)
+        return str(target)
+
+    def open_reader(self, reference: str) -> BinaryIO:
+        return Path(reference).open("rb")
+
+    @contextmanager
+    def open_writer(
+        self,
+        object_name: str,
+        content_type: str | None = None,
+    ) -> Iterator[tuple[BinaryIO, str]]:
+        del content_type
+        target = self._target(object_name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(f"{target.suffix}.tmp")
+
+        try:
+            with temporary.open("wb") as writer:
+                yield writer, str(target)
+            temporary.replace(target)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+
     def delete(self, reference: str) -> bool:
         path = Path(reference)
         existed = path.is_file()
@@ -145,6 +207,88 @@ class GCSStorage:
         except NotFound as exc:
             raise FileNotFoundError(reference) from exc
 
+    def save_file(
+        self,
+        object_name: str,
+        source: Path,
+        content_type: str | None = None,
+    ) -> str:
+        key = str(_safe_object_name(object_name))
+        self.bucket.blob(key).upload_from_filename(
+            str(source),
+            content_type=content_type,
+        )
+        return f"gs://{self.bucket_name}/{key}"
+
+    def open_reader(self, reference: str) -> BinaryIO:
+        return self.bucket.blob(
+            self._object_name(reference)
+        ).open("rb")
+
+    @contextmanager
+    def open_writer(
+        self,
+        object_name: str,
+        content_type: str | None = None,
+    ) -> Iterator[tuple[BinaryIO, str]]:
+        key = str(_safe_object_name(object_name))
+        blob = self.bucket.blob(key)
+        blob.content_type = content_type
+        reference = f"gs://{self.bucket_name}/{key}"
+
+        with blob.open(
+            "wb",
+            chunk_size=8 * 1024 * 1024,
+            ignore_flush=True,
+        ) as writer:
+            yield writer, reference
+
+    def generate_download_url(
+        self,
+        reference: str,
+        download_name: str,
+        expires_minutes: int = 10,
+    ) -> str:
+        from google.auth.credentials import Signing
+        from google.auth.transport.requests import Request
+
+        blob = self.bucket.blob(self._object_name(reference))
+        credentials = getattr(self.client, "_credentials", None)
+        signing_options = {}
+
+        if credentials is not None:
+            if isinstance(credentials, Signing):
+                signing_options["credentials"] = credentials
+            else:
+                credentials.refresh(Request())
+                service_account_email = getattr(
+                    credentials,
+                    "service_account_email",
+                    "",
+                )
+                if not service_account_email:
+                    raise AttributeError(
+                        "目前憑證沒有可供 IAM signBlob 使用的 "
+                        "service_account_email"
+                    )
+                signing_options.update(
+                    service_account_email=service_account_email,
+                    access_token=credentials.token,
+                )
+
+        disposition = (
+            "attachment; "
+            f"filename*=UTF-8''{quote(download_name)}"
+        )
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=expires_minutes),
+            method="GET",
+            response_type="application/zip",
+            response_disposition=disposition,
+            **signing_options,
+        )
+
     def delete(self, reference: str) -> bool:
         from google.api_core.exceptions import NotFound
 
@@ -203,6 +347,51 @@ class StorageService:
     def read_bytes(self, reference: str) -> bytes:
         return self._backend_for(reference).read_bytes(reference)
 
+    def save_file(
+        self,
+        object_name: str,
+        source: Path,
+        content_type: str | None = None,
+    ) -> str:
+        backend = self.gcs if self.use_gcs else self.local
+        assert backend is not None
+        return backend.save_file(object_name, source, content_type)
+
+    def open_reader(self, reference: str) -> BinaryIO:
+        return self._backend_for(reference).open_reader(reference)
+
+    @contextmanager
+    def open_writer(
+        self,
+        object_name: str,
+        content_type: str | None = None,
+    ) -> Iterator[tuple[BinaryIO, str]]:
+        backend = self.gcs if self.use_gcs else self.local
+        assert backend is not None
+        with backend.open_writer(
+            object_name,
+            content_type,
+        ) as result:
+            yield result
+
+    def generate_download_url(
+        self,
+        reference: str,
+        download_name: str,
+        expires_minutes: int = 10,
+    ) -> str | None:
+        if not reference.startswith("gs://"):
+            return None
+        if self.gcs is None:
+            raise RuntimeError(
+                "資料指向 GCS，但目前未設定 GCS 儲存後端"
+            )
+        return self.gcs.generate_download_url(
+            reference,
+            download_name,
+            expires_minutes,
+        )
+
     def delete(self, reference: str) -> bool:
         return self._backend_for(reference).delete(reference)
 
@@ -229,3 +418,29 @@ def build_storage(config: Config) -> StorageService:
         gcs=gcs,
         use_gcs=config.use_gcs,
     )
+
+
+def require_configured_storage(
+    config: Config,
+    storage: StorageService | None,
+) -> StorageService:
+    """確保 USE_GCS 與實際寫入 backend 一致，禁止靜默寫回本機。"""
+    if storage is None:
+        if config.use_gcs:
+            raise RuntimeError(
+                "USE_GCS=1，但沒有提供 StorageService"
+            )
+        return StorageService(
+            local=LocalStorage(
+                data_dir=config.data_dir,
+                upload_dir=config.upload_dir,
+                mask_dir=config.mask_dir,
+            )
+        )
+
+    if config.use_gcs and storage.backend_name != "gcs":
+        raise RuntimeError(
+            "USE_GCS=1，但 StorageService backend 不是 GCS"
+        )
+
+    return storage

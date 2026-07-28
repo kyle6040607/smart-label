@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import zipfile
+from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 from google.api_core.exceptions import NotFound
 from PIL import Image
 
@@ -30,10 +32,41 @@ class FakeBlob:
         del content_type
         self.objects[self.name] = bytes(data)
 
+    def upload_from_filename(
+        self,
+        filename: str,
+        content_type: str | None = None,
+    ) -> None:
+        del content_type
+        self.objects[self.name] = Path(filename).read_bytes()
+
     def download_as_bytes(self) -> bytes:
         if self.name not in self.objects:
             raise NotFound("missing")
         return self.objects[self.name]
+
+    def open(self, mode: str, **kwargs):
+        del kwargs
+        if mode == "rb":
+            if self.name not in self.objects:
+                raise FileNotFoundError(self.name)
+            return io.BytesIO(self.objects[self.name])
+        if mode == "wb":
+            objects = self.objects
+            name = self.name
+
+            class CommittingWriter(io.BytesIO):
+                def close(self):
+                    if not self.closed:
+                        objects[name] = self.getvalue()
+                    super().close()
+
+            return CommittingWriter()
+        raise ValueError(mode)
+
+    def generate_signed_url(self, **kwargs) -> str:
+        del kwargs
+        return f"https://storage.example/{self.name}?signed=1"
 
     def delete(self) -> None:
         if self.name not in self.objects:
@@ -109,6 +142,71 @@ def test_local_storage_keeps_existing_directories(tmp_path):
     assert storage.read_bytes(image_path) == b"image"
 
 
+def test_storage_can_stream_and_upload_existing_file(tmp_path):
+    source = tmp_path / "source.zip"
+    source.write_bytes(b"streamed-zip")
+    storage = make_storage(tmp_path, use_gcs=True)
+
+    reference = storage.save_file(
+        "datasets/task-1/dataset.zip",
+        source,
+        "application/zip",
+    )
+
+    assert reference == (
+        "gs://test-bucket/datasets/task-1/dataset.zip"
+    )
+    with storage.open_reader(reference) as reader:
+        assert reader.read(4) == b"stre"
+        assert reader.read() == b"amed-zip"
+
+
+def test_storage_can_write_zip_stream_and_generate_signed_url(
+    tmp_path,
+):
+    storage = make_storage(tmp_path, use_gcs=True)
+
+    with storage.open_writer(
+        "datasets/task-2/dataset.zip",
+        "application/zip",
+    ) as (writer, reference):
+        writer.write(b"streamed-output")
+
+    assert storage.read_bytes(reference) == b"streamed-output"
+    assert storage.generate_download_url(
+        reference,
+        "dataset.zip",
+    ) == (
+        "https://storage.example/"
+        "datasets/task-2/dataset.zip?signed=1"
+    )
+
+
+def test_local_stream_writer_does_not_publish_partial_file(
+    tmp_path,
+):
+    storage = make_storage(tmp_path, use_gcs=False)
+    target = (
+        tmp_path
+        / "data"
+        / "tasks"
+        / "task-3"
+        / "dataset.zip"
+    )
+
+    with pytest.raises(RuntimeError, match="zip failed"):
+        with storage.open_writer(
+            "datasets/task-3/dataset.zip",
+            "application/zip",
+        ) as (writer, reference):
+            assert reference == str(target)
+            writer.write(b"partial")
+            raise RuntimeError("zip failed")
+
+    assert not target.exists()
+    assert not target.with_suffix(".zip.tmp").exists()
+
+
 def test_gcs_storage_and_legacy_local_path_can_coexist(tmp_path):
     storage = make_storage(tmp_path, use_gcs=True)
 
@@ -128,6 +226,47 @@ def test_gcs_storage_and_legacy_local_path_can_coexist(tmp_path):
     assert storage.read_bytes(local_path) == b"local-image"
     assert storage.delete(gcs_path) is True
     assert storage.delete(gcs_path) is False
+
+
+def test_pipeline_rejects_missing_storage_when_gcs_is_enabled(
+    tmp_path,
+):
+    cfg = Config(
+        base_dir=tmp_path,
+        data_dir=tmp_path / "data",
+        upload_dir=tmp_path / "uploads",
+        mask_dir=tmp_path / "masks",
+        db_file=tmp_path / "store.json",
+    )
+    cfg.use_gcs = True
+    repo = Repository(cfg.db_file)
+
+    with pytest.raises(
+        RuntimeError,
+        match="USE_GCS=1",
+    ):
+        Pipeline(cfg, repo)
+
+
+def test_pipeline_rejects_local_backend_when_gcs_is_enabled(
+    tmp_path,
+):
+    cfg = Config(
+        base_dir=tmp_path,
+        data_dir=tmp_path / "data",
+        upload_dir=tmp_path / "uploads",
+        mask_dir=tmp_path / "masks",
+        db_file=tmp_path / "store.json",
+    )
+    cfg.use_gcs = True
+    repo = Repository(cfg.db_file)
+    local_storage = make_storage(tmp_path, use_gcs=False)
+
+    with pytest.raises(
+        RuntimeError,
+        match="backend 不是 GCS",
+    ):
+        Pipeline(cfg, repo, storage=local_storage)
 
 
 def test_pipeline_and_export_read_images_and_masks_from_gcs(tmp_path):

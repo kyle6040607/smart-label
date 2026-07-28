@@ -15,6 +15,7 @@ import io
 import json
 import zipfile
 from pathlib import Path
+from typing import BinaryIO
 
 import cv2
 import numpy as np
@@ -114,13 +115,14 @@ def _add_image_file(
 
 
 # ---------- 對外入口 ----------
-def build_dataset(
+def write_dataset(
     repo: Repository,
     fmt: str,
+    output: BinaryIO,
     image_ids: set[str] | None = None,
     storage: StorageService | None = None,
-) -> bytes:
-    """收齊已標好的片段，打包成指定格式的 zip，回傳 bytes。"""
+) -> None:
+    """收齊已標好的片段，逐步寫入指定的 ZIP binary stream。"""
     if fmt not in FORMATS:
         raise ValueError(
             f"未知格式：{fmt}（可用：{', '.join(FORMATS)}）"
@@ -142,10 +144,30 @@ def build_dataset(
     for s in labeled:
         by_image.setdefault(s.image_id, []).append(s)
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(
+        output,
+        "w",
+        zipfile.ZIP_DEFLATED,
+    ) as z:
         writer = {"coco": _write_coco, "yolo": _write_yolo, "mask": _write_mask}[fmt]
         writer(z, repo, by_image, labels, storage)
+
+
+def build_dataset(
+    repo: Repository,
+    fmt: str,
+    image_ids: set[str] | None = None,
+    storage: StorageService | None = None,
+) -> bytes:
+    """相容舊呼叫：在記憶體建立 ZIP 並回傳 bytes。"""
+    buf = io.BytesIO()
+    write_dataset(
+        repo,
+        fmt,
+        output=buf,
+        image_ids=image_ids,
+        storage=storage,
+    )
     return buf.getvalue()
 
 
