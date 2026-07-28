@@ -27,6 +27,7 @@ coverage.xml
 htmlcov/
 *.log
 
+
 # IDE / editors
 .vscode/
 .idea/
@@ -53,9 +54,8 @@ models/*.pth
 models/*.pt
 weights/
 app/ml/GroundingDINO/
-tests/benchmark_accuracy.py
-tests/benchmark_sam.py
-tests/benchmark_Yolo_DINO.py
+
+
 
 # 環境變數
 .env
