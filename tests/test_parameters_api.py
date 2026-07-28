@@ -11,8 +11,10 @@ def client(tmp_path):
         mask_dir=tmp_path / "mask", db_file=tmp_path / "store.json",
     )
     cfg.ensure_dirs()
+    cfg.db_backend = "json"
     cfg.use_real_sam = False
     cfg.use_real_embedding = False
+    cfg.use_gcs = False
     
     app = create_app(cfg)
     app.config["TESTING"] = True
@@ -74,7 +76,12 @@ def test_reclassify_pending_on_parameter_update(client, tmp_path):
     
     # Add example to train classifier and make it ready
     from app.models import LabelExample
-    repo.add_example(LabelExample(label="cat", feature=[0.1]*512))
+    repo.add_example(
+        LabelExample(
+            label="cat",
+            feature=[0.1] * pipeline.embedder.dim,
+        )
+    )
     pipeline.refit()
     assert pipeline.classifier.ready is True
     
@@ -131,6 +138,10 @@ def test_parameters_persistence(client, tmp_path):
         base_dir=tmp_path, data_dir=tmp_path, upload_dir=tmp_path / "up",
         mask_dir=tmp_path / "mask", db_file=tmp_path / "store.json",
     )
+    cfg.db_backend = "json"
+    cfg.use_gcs = False
+    cfg.use_real_sam = False
+    cfg.use_real_embedding = False
     new_app = create_app(cfg)
     assert new_app.pipeline.config.confidence_threshold == 0.75
     assert new_app.pipeline.config.yolo_world_confidence == 0.25
@@ -162,4 +173,3 @@ def test_yolo_imgsz_validation(client):
     assert client.post("/api/parameters", json={"yolo_imgsz": True}).status_code == 400
     # 被擋下來之後不可留下副作用
     assert client.get("/api/parameters").get_json()["yolo_imgsz"] == 640
-

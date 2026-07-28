@@ -19,15 +19,21 @@ from app.ml.embedding import build_embedder
 from app.ml.sam import build_segmenter
 from app.models import ImageRecord, LabelExample, Segment
 from app.repository import Repository
-from app.utils import imread, imwrite
 from app.ml.yolo_world import YoloWorldDetector
 from app.services.gemini import GeminiService
+from app.storage import (StorageService, require_configured_storage,)
 
 
 class Pipeline:
-    def __init__(self, config: Config, repo: Repository):
+    def __init__(
+        self,
+        config: Config,
+        repo: Repository,
+        storage: StorageService | None = None,
+    ):
         self.config = config
         self.repo = repo
+        self.storage = require_configured_storage(config, storage,)
         self.yolo_detector = None
         self.gemini_service = GeminiService(config.gemini_api_key)
         self.segmenter = build_segmenter(
@@ -68,17 +74,38 @@ class Pipeline:
         return image.owner_id if image is not None else ""
 
     # ---------- 影像 IO ----------
-    @staticmethod
-    def _read_rgb(path: str) -> np.ndarray:
-        bgr = imread(path, cv2.IMREAD_COLOR)
+    def _read_rgb(self, reference: str) -> np.ndarray:
+        encoded = np.frombuffer(
+            self.storage.read_bytes(reference),
+            dtype=np.uint8,
+        )
+        bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if bgr is None:
-            raise FileNotFoundError(path)
+            raise ValueError(f"無法解碼圖片：{reference}")
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
     def _save_mask(self, image_id: str, seg_id: str, mask: np.ndarray) -> str:
-        out = self.config.mask_dir / f"{image_id}_{seg_id}.png"
-        imwrite(str(out), (mask > 0).astype(np.uint8) * 255)
-        return str(out)
+        ok, encoded = cv2.imencode(
+            ".png",
+            (mask > 0).astype(np.uint8) * 255,
+        )
+        if not ok:
+            raise ValueError("遮罩 PNG 編碼失敗")
+        return self.storage.save_bytes(
+            f"masks/{image_id}_{seg_id}.png",
+            encoded.tobytes(),
+            "image/png",
+        )
+
+    def _read_mask(self, reference: str) -> np.ndarray:
+        encoded = np.frombuffer(
+            self.storage.read_bytes(reference),
+            dtype=np.uint8,
+        )
+        mask = cv2.imdecode(encoded, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError(f"無法解碼遮罩：{reference}")
+        return mask
 
     # ---------- 自動分割整張圖（提案 demo 第 1 步：自動分割）----------
     def segment_image(self, image: ImageRecord, progress_callback: Callable[[dict], None] | None = None) -> list[Segment]:
@@ -360,7 +387,7 @@ class Pipeline:
             raise ValueError("找不到片段所屬圖片")
         owner_id = image.owner_id
         img = self._read_rgb(image.path)
-        mask = imread(seg.mask_path, cv2.IMREAD_GRAYSCALE)
+        mask = self._read_mask(seg.mask_path)
         feat = self.embedder.encode(img, mask)
         ex = LabelExample(
             owner_id=owner_id,
@@ -427,6 +454,6 @@ class Pipeline:
                 continue
             if seg.image_id not in cache:
                 cache[seg.image_id] = self._read_rgb(image.path)
-            mask = imread(seg.mask_path, cv2.IMREAD_GRAYSCALE)
+            mask = self._read_mask(seg.mask_path)
             self._classify_segment(cache[seg.image_id], seg, mask)
             self.repo.update_segment(seg)

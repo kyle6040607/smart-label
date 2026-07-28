@@ -1,14 +1,20 @@
 """分割 API（提案 demo 第 3 步：系統自動分割，低信心標紅）。"""
 from __future__ import annotations
 
+import io
 import json
 import queue
 import threading
-from pathlib import Path
 
 from flask import Blueprint, abort, jsonify, request, send_file, Response
 
-from app.routes import get_owned_image, get_owned_segment, get_pipeline, get_repo
+from app.routes import (
+    get_owned_image,
+    get_owned_segment,
+    get_pipeline,
+    get_repo,
+    get_storage,
+)
 
 bp = Blueprint("segment", __name__, url_prefix="/api")
 
@@ -153,7 +159,7 @@ def delete_segment(seg_id: str):
     get_owned_segment(seg_id)
     mask = repo.delete_segment(seg_id)
     if mask:
-        Path(mask).unlink(missing_ok=True)
+        get_storage().delete(mask)
     return jsonify({"deleted": seg_id})
 
 
@@ -170,7 +176,7 @@ def delete_segments_batch():
         get_owned_segment(str(seg_id))
     paths = repo.delete_segments_batch(seg_ids)
     for p in paths:
-        Path(p).unlink(missing_ok=True)
+        get_storage().delete(p)
 
     return jsonify({"deleted_ids": seg_ids}), 200
 
@@ -181,9 +187,15 @@ def segment_mask(seg_id: str):
     seg = get_owned_segment(seg_id)
     if not seg or not seg.mask_path:
         abort(404)
-    if not Path(seg.mask_path).is_file():
+    try:
+        data = get_storage().read_bytes(seg.mask_path)
+    except FileNotFoundError:
         abort(404)
-    return send_file(Path(seg.mask_path), mimetype="image/png")
+    return send_file(
+        io.BytesIO(data),
+        mimetype="image/png",
+        download_name=f"{seg.id}.png",
+    )
 
 
 @bp.get("/parameters")

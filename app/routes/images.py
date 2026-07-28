@@ -1,10 +1,11 @@
 """影像上傳與瀏覽 API（提案 demo 第 1 步：上傳一批照片）。"""
 from __future__ import annotations
 
-from pathlib import Path
+import io
+import mimetypes
 
 from flask import Blueprint, abort, jsonify, request, send_file
-from PIL import Image
+from PIL import Image, ImageOps
 from werkzeug.utils import secure_filename
 
 from app.routes import (
@@ -13,6 +14,7 @@ from app.routes import (
     get_current_user_id,
     get_owned_image,
     get_repo,
+    get_storage,
 )
 from app.models import ImageRecord
 
@@ -27,7 +29,7 @@ def _allowed(filename: str, allowed: tuple[str, ...]) -> bool:
 def upload():
     """支援一次上傳多張。回傳建立的 ImageRecord 清單。"""
     import hashlib
-    cfg, repo = get_config(), get_repo()
+    cfg, repo, storage = get_config(), get_repo(), get_storage()
     files = request.files.getlist("files") or request.files.getlist("file")
     if not files:
         abort(400, "沒有收到檔案（欄位名 files）")
@@ -52,10 +54,11 @@ def upload():
                 continue
             existing_hash = getattr(img, "file_hash", "")
             # 針對歷史舊資料進行相容性雜湊值計算與補齊
-            if not existing_hash and img.path and Path(img.path).exists():
+            if not existing_hash and img.path:
                 try:
-                    with open(img.path, "rb") as ef:
-                        existing_hash = hashlib.sha256(ef.read()).hexdigest()
+                    existing_hash = hashlib.sha256(
+                        storage.read_bytes(img.path)
+                    ).hexdigest()
                     img.file_hash = existing_hash
                     repo_updated = True
                 except Exception:
@@ -68,39 +71,56 @@ def upload():
         if is_duplicate:
             continue
 
+        extension = f.filename.rsplit(".", 1)[1].lower()
         name = secure_filename(f.filename)
         rec = ImageRecord(
             owner_id=get_current_user_id(),
             filename=name,
             file_hash=file_hash,
         )
-        dest = cfg.upload_dir / f"{rec.id}_{name}"
-        f.save(dest)
 
-        # 讀取並等比例縮小原圖（避免大圖撐開版面且加速 AI 運算）
-        with Image.open(dest) as im:
-            # 自動校正 EXIF 旋轉方向
-            from PIL import ImageOps
-            im_corrected = ImageOps.exif_transpose(im)
-            
+        if not name:
+            name = f"{rec.id}.{extension}"
+            rec.filename = name
+
+        # 在記憶體中校正圖片方向及縮圖，再交給目前選用的儲存後端。
+        with Image.open(io.BytesIO(file_bytes)) as im:
+            save_format = im.format or extension.upper()
+            if save_format.upper() == "JPG":
+                save_format = "JPEG"
+            processed_image = ImageOps.exif_transpose(im)
+
             max_side = 1024
-            if max(im_corrected.size) > max_side:
-                scale = max_side / max(im_corrected.size)
-                new_size = (int(im_corrected.size[0] * scale), int(im_corrected.size[1] * scale))
-                im_resized = im_corrected.resize(new_size, Image.Resampling.LANCZOS)
-                
-                # 儲存覆蓋原檔，保持原格式（或預設為 JPEG）
-                save_format = im.format or "JPEG"
-                im_resized.save(dest, format=save_format)
-                rec.width, rec.height = new_size
-            else:
-                # 若不需縮小但有旋轉校正，重新存檔
-                if im_corrected.size != im.size:
-                    save_format = im.format or "JPEG"
-                    im_corrected.save(dest, format=save_format)
-                rec.width, rec.height = im_corrected.size
 
-        rec.path = str(dest)
+            if max(processed_image.size) > max_side:
+                scale = max_side / max(processed_image.size)
+                new_size = (
+                    int(processed_image.size[0] * scale),
+                    int(processed_image.size[1] * scale),
+                )
+                processed_image = processed_image.resize(
+                    new_size,
+                    Image.Resampling.LANCZOS,
+                )
+
+            rec.width, rec.height = processed_image.size
+
+            output = io.BytesIO()
+            processed_image.save(
+                output,
+                format=save_format,
+            )
+
+        content_type = (
+            Image.MIME.get(save_format.upper())
+            or f.mimetype
+            or "application/octet-stream"
+        )
+        rec.path = storage.save_bytes(
+            f"images/{rec.id}_{name}",
+            output.getvalue(),
+            content_type,
+        )
         repo.add_image(rec)
         created.append(rec.to_dict())
 
@@ -128,9 +148,15 @@ def list_images():
 def image_file(image_id: str):
     """回傳原圖，給前端 canvas 顯示。"""
     rec = get_owned_image(image_id)
-    if not Path(rec.path).is_file():
+    try:
+        data = get_storage().read_bytes(rec.path)
+    except FileNotFoundError:
         abort(404)
-    return send_file(Path(rec.path))
+    return send_file(
+        io.BytesIO(data),
+        mimetype=mimetypes.guess_type(rec.filename)[0],
+        download_name=rec.filename,
+    )
 
 
 @bp.delete("/<image_id>")
@@ -138,10 +164,16 @@ def delete_image(image_id: str):
     """刪除一張上傳的照片，連同它的遮罩片段與檔案一起清掉。"""
     repo = get_repo()
     get_owned_image(image_id)
-    paths = repo.delete_image(image_id)          # 先從資料層移除
-    for p in paths:                              # 再刪實體檔（原圖 + 遮罩 PNG）
-        Path(p).unlink(missing_ok=True)
-    return jsonify({"deleted": image_id, "files_removed": len(paths)})
+    paths = repo.delete_image(image_id)
+    files_removed = sum(
+        get_storage().delete(path)
+        for path in paths
+        if path
+    )
+    return jsonify({
+        "deleted": image_id,
+        "files_removed": files_removed,
+    })
 
 
 @bp.post("/delete_batch")
@@ -162,7 +194,13 @@ def delete_images_batch():
         abort(404)
 
     paths = repo.delete_images_batch(owned_ids)
-    for p in paths:
-        Path(p).unlink(missing_ok=True)
+    files_removed = sum(
+        get_storage().delete(path)
+        for path in paths
+        if path
+    )
 
-    return jsonify({"deleted_ids": owned_ids, "files_removed": len(paths)}), 200
+    return jsonify({
+        "deleted_ids": owned_ids,
+        "files_removed": files_removed,
+    }), 200

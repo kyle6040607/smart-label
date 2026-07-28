@@ -12,9 +12,11 @@ def client(tmp_path):
         mask_dir=tmp_path / "mask", db_file=tmp_path / "store.json",
     )
     cfg.ensure_dirs()
+    cfg.db_backend = "json"
     # 我們不希望用真的 SAM/embedding 來跑測試，強制設為 mock 模式
     cfg.use_real_sam = False
     cfg.use_real_embedding = False
+    cfg.use_gcs = False
     
     app = create_app(cfg)
     app.config["TESTING"] = True

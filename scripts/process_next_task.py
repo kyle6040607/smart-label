@@ -30,6 +30,7 @@ def main() -> None:
             pipeline,
             task,
             cfg.data_dir / "tasks",
+            storage=app.storage,
         )
     except Exception as exc:
         task.status = "failed"

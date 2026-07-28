@@ -6,6 +6,7 @@ from flask import abort, current_app, session
 from app.config import Config
 from app.services.pipeline import Pipeline
 from app.repository import Repository
+from app.storage import StorageService
 
 
 def get_repo() -> Repository:
@@ -18,6 +19,10 @@ def get_pipeline() -> Pipeline:
 
 def get_config() -> Config:
     return current_app.smart_config  # type: ignore[attr-defined]
+
+
+def get_storage() -> StorageService:
+    return current_app.storage  # type: ignore[attr-defined]
 
 
 def get_current_user_id() -> str:
