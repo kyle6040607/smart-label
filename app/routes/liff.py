@@ -34,6 +34,7 @@
 - 任務清單只回傳該 LINE 使用者自己的任務。
 - 狀態查詢與 ZIP 下載必須驗證任務的隨機 token。
 """
+import hashlib
 import io
 import secrets
 from pathlib import Path
@@ -308,9 +309,11 @@ def upload_task():
         if not safe_original_filename:
             safe_original_filename = f"upload.{extension}"
 
+        # 一併存下雜湊值，否則網頁端去重時得回頭把整張圖抓下來重算
         image_record = ImageRecord(
             owner_id=web_user_id,
             filename=safe_original_filename,
+            file_hash=hashlib.sha256(image_bytes).hexdigest(),
         )
 
         saved_filename = f"{image_record.id}.{extension}"

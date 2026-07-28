@@ -33,6 +33,15 @@ class Repository:
             self._save()
         return img
 
+    def set_image_hash(self, image_id: str, file_hash: str) -> None:
+        """補寫舊資料缺少的 file_hash；只在欄位仍為空時寫入。"""
+        with self._lock:
+            img = self.images.get(image_id)
+            if img is None or img.file_hash:
+                return
+            img.file_hash = file_hash
+            self._save()
+
     def get_image(self, image_id: str) -> ImageRecord | None:
         return self.images.get(image_id)
 
