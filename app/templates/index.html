@@ -16,10 +16,28 @@
       <h1>智慧分割標記助手</h1>
       <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
     </div>
-    <div class="mode-switch-wrapper">
-      <div class="mode-switch-bg"></div>
-      <button id="laymanModeBtn" class="mode-btn active" type="button">素人模式</button>
-      <button id="engineerModeBtn" class="mode-btn" type="button">工程師模式</button>
+    <div class="header-center-controls">
+      <div class="mode-switch-wrapper">
+        <div class="mode-switch-bg"></div>
+        <button id="laymanModeBtn" class="mode-btn active" type="button">素人模式</button>
+        <button id="engineerModeBtn" class="mode-btn" type="button">工程師模式</button>
+      </div>
+      <button id="themeToggleBtn" class="theme-toggle-btn" type="button" title="切換深色/淺色模式" aria-label="切換深色/淺色模式">
+        <svg class="theme-icon sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"></circle>
+          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="23"></line>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+          <line x1="1" y1="12" x2="3" y2="12"></line>
+          <line x1="21" y1="12" x2="23" y2="12"></line>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+        <svg class="theme-icon moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+      </button>
     </div>
     <div class="header-actions">
       {% if display_name %}<span class="hi">{{ display_name }}</span>{% endif %}
@@ -46,18 +64,30 @@
           </div>
           <span class="hint" id="fileCountHint" style="display: block; margin-top: 8px;">尚未選擇檔案</span>
         </div>
-        <!-- 批次管理控制條 -->
-        <div class="batch-control-bar">
-          <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
-            <input type="checkbox" id="selectAllImgs" /> 全選
-          </label>
-          <div style="display: flex; gap: 8px; margin-left: auto;">
-            <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
-            <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
-            <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
-          </div>
+
+        <!-- 展開照片庫按鈕 (位置置中於上傳框下方) -->
+        <div style="display: flex; justify-content: center; margin-top: 10px; margin-bottom: 4px;">
+          <button id="toggleGalleryCollapseBtn" type="button" class="gallery-toggle-btn">
+            <span id="galleryToggleIcon">▼</span>
+            <span id="galleryToggleText">展開照片庫 (0)</span>
+          </button>
         </div>
-        <div id="thumbs" class="thumbs"></div>
+
+        <!-- 縮圖容器 (可折疊 + 固定高度滾動) -->
+        <div id="thumbsWrapper" class="thumbs-wrapper collapsed">
+          <!-- 批次管理控制條 -->
+          <div class="batch-control-bar">
+            <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
+              <input type="checkbox" id="selectAllImgs" /> 全選
+            </label>
+            <div style="display: flex; gap: 8px; margin-left: auto;">
+              <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
+              <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
+              <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
+            </div>
+          </div>
+          <div id="thumbs" class="thumbs"></div>
+        </div>
       </section>
 
       <!-- 0 · 參數調整 (工程師模式) -->
@@ -171,18 +201,21 @@
       <div style="margin-top: 20px; margin-bottom: 8px;">
         <h3 style="margin: 0; font-size: 13px; color: var(--muted);">低信心待審（標紅）</h3>
       </div>
-      <!-- 批次管理控制條 -->
-      <div class="batch-control-bar" style="margin-bottom: 8px;">
-        <label id="selectAllSegsLabel" style="display: none; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; margin: 0;">
-          <input type="checkbox" id="selectAllSegs" /> 全選
-        </label>
-        <div style="display: flex; gap: 6px; margin-left: auto;">
-          <button id="toggleSegBatchModeBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px;">批次管理</button>
-          <button id="batchDelSegsBtn" class="btn-danger" style="padding: 3px 8px; font-size: 11px; display: none;" disabled>確認刪除</button>
-          <button id="cancelSegBatchBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px; display: none;">取消</button>
+      <!-- 低信心待審容器 (固定高度滾動 + 置頂浮動控制條) -->
+      <div id="reviewQueueWrapper" class="queue-wrapper">
+        <!-- 批次管理控制條 -->
+        <div class="batch-control-bar">
+          <label id="selectAllSegsLabel" style="display: none; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; margin: 0;">
+            <input type="checkbox" id="selectAllSegs" /> 全選
+          </label>
+          <div style="display: flex; gap: 6px; margin-left: auto;">
+            <button id="toggleSegBatchModeBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px;">批次管理</button>
+            <button id="batchDelSegsBtn" class="btn-danger" style="padding: 3px 8px; font-size: 11px; display: none;" disabled>確認刪除</button>
+            <button id="cancelSegBatchBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px; display: none;">取消</button>
+          </div>
         </div>
+        <ul id="reviewQueue" class="queue"></ul>
       </div>
-      <ul id="reviewQueue" class="queue"></ul>
 
       <h3>匯出資料集</h3>
       <div class="export">

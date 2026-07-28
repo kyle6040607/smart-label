@@ -144,6 +144,13 @@ def list_images():
     ])
 
 
+@bp.get("/<image_id>")
+def get_image_info(image_id: str):
+    """取得單張照片的核心詮釋資料（ImageRecord）。"""
+    rec = get_owned_image(image_id)
+    return jsonify(rec.to_dict())
+
+
 @bp.get("/<image_id>/file")
 def image_file(image_id: str):
     """回傳原圖，給前端 canvas 顯示。"""
