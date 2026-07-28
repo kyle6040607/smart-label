@@ -57,6 +57,8 @@ def create_app(config: Config | None = None) -> Flask:
         app.pipeline.config.confidence_threshold = float(saved_params["confidence_threshold"])
     if "yolo_world_confidence" in saved_params:
         app.pipeline.config.yolo_world_confidence = float(saved_params["yolo_world_confidence"])
+    if "yolo_imgsz" in saved_params:
+        app.pipeline.config.yolo_imgsz = int(saved_params["yolo_imgsz"])
 
     _seed_default_user(app.repo, cfg)
 

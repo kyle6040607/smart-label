@@ -27,6 +27,7 @@ from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS images (
     id VARCHAR(32) PRIMARY KEY,
+    owner_id VARCHAR(32) NOT NULL DEFAULT '',
     filename VARCHAR(255) NOT NULL DEFAULT '',
     path VARCHAR(512) NOT NULL DEFAULT '',
     width INT NOT NULL DEFAULT 0,
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS segments (
 
 CREATE TABLE IF NOT EXISTS examples (
     id VARCHAR(32) PRIMARY KEY,
+    owner_id VARCHAR(32) NOT NULL DEFAULT '',
     label VARCHAR(64) NOT NULL,
     feature JSON NOT NULL,
     source_segment_id VARCHAR(32) NULL,
@@ -114,7 +116,8 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
 
 def _row_to_image(r: dict) -> ImageRecord:
     return ImageRecord(
-        id=r["id"], filename=r["filename"], path=r["path"],
+        id=r["id"], owner_id=r.get("owner_id", ""),
+        filename=r["filename"], path=r["path"],
         width=r["width"], height=r["height"], file_hash=r["file_hash"],
         created_at=r["created_at"],
     )
@@ -133,7 +136,8 @@ def _row_to_segment(r: dict) -> Segment:
 
 def _row_to_example(r: dict) -> LabelExample:
     return LabelExample(
-        id=r["id"], label=r["label"], feature=json.loads(r["feature"]),
+        id=r["id"], owner_id=r.get("owner_id", ""),
+        label=r["label"], feature=json.loads(r["feature"]),
         source_segment_id=r["source_segment_id"], created_at=r["created_at"],
     )
 
@@ -233,6 +237,41 @@ class MySQLRepository:
                 cur.execute(f"SHOW COLUMNS FROM users LIKE '{column}'")
                 if cur.fetchone() is None:
                     cur.execute(f"ALTER TABLE users ADD COLUMN {column} {ddl}")
+
+            # 圖片擁有者：舊資料保留空值，僅管理者能在 Web 介面存取。
+            cur.execute("SHOW COLUMNS FROM images LIKE 'owner_id'")
+            if cur.fetchone() is None:
+                cur.execute(
+                    "ALTER TABLE images "
+                    "ADD COLUMN owner_id VARCHAR(32) NOT NULL DEFAULT '' "
+                    "AFTER id"
+                )
+                cur.execute(
+                    "CREATE INDEX idx_images_owner_id ON images (owner_id)"
+                )
+
+            cur.execute("SHOW COLUMNS FROM examples LIKE 'owner_id'")
+            if cur.fetchone() is None:
+                cur.execute(
+                    "ALTER TABLE examples "
+                    "ADD COLUMN owner_id VARCHAR(32) NOT NULL DEFAULT '' "
+                    "AFTER id"
+                )
+                cur.execute(
+                    "CREATE INDEX idx_examples_owner_id ON examples (owner_id)"
+                )
+                # 可從來源片段追溯的舊範例，自動繼承圖片擁有者。
+                cur.execute(
+                    """
+                    UPDATE examples AS example
+                    JOIN segments AS segment
+                      ON segment.id = example.source_segment_id
+                    JOIN images AS image
+                      ON image.id = segment.image_id
+                    SET example.owner_id = image.owner_id
+                    WHERE example.owner_id = ''
+                    """
+                )
             # 舊任務補上已處理圖片欄位
             cur.execute(
                 "SHOW COLUMNS FROM annotation_tasks "
@@ -318,10 +357,13 @@ class MySQLRepository:
     def add_image(self, img: ImageRecord) -> ImageRecord:
         with self._tx() as cur:
             cur.execute(
-                "INSERT INTO images (id, filename, path, width, height, file_hash, created_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (img.id, img.filename, img.path, img.width, img.height,
-                 img.file_hash, img.created_at),
+                "INSERT INTO images "
+                "(id, owner_id, filename, path, width, height, file_hash, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    img.id, img.owner_id, img.filename, img.path,
+                    img.width, img.height, img.file_hash, img.created_at,
+                ),
             )
         return img
 
@@ -431,34 +473,73 @@ class MySQLRepository:
     def add_example(self, ex: LabelExample) -> LabelExample:
         with self._tx() as cur:
             cur.execute(
-                "INSERT INTO examples (id, label, feature, source_segment_id, created_at)"
-                " VALUES (%s, %s, %s, %s, %s)",
-                (ex.id, ex.label, json.dumps(ex.feature),
-                 ex.source_segment_id, ex.created_at),
+                "INSERT INTO examples "
+                "(id, owner_id, label, feature, source_segment_id, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    ex.id, ex.owner_id, ex.label, json.dumps(ex.feature),
+                    ex.source_segment_id, ex.created_at,
+                ),
             )
         return ex
 
-    def list_examples(self) -> list[LabelExample]:
+    def list_examples(self, owner_id: str | None = None) -> list[LabelExample]:
         with self._tx() as cur:
-            cur.execute("SELECT * FROM examples")
+            if owner_id is None:
+                cur.execute("SELECT * FROM examples")
+            else:
+                cur.execute(
+                    "SELECT * FROM examples WHERE owner_id=%s",
+                    (owner_id,),
+                )
             rows = cur.fetchall()
         return [_row_to_example(r) for r in rows]
 
-    def labels(self) -> list[str]:
+    def labels(self, owner_id: str | None = None) -> list[str]:
         with self._tx() as cur:
-            cur.execute("SELECT DISTINCT label FROM examples ORDER BY label")
+            if owner_id is None:
+                cur.execute(
+                    "SELECT DISTINCT label FROM examples ORDER BY label"
+                )
+            else:
+                cur.execute(
+                    "SELECT DISTINCT label FROM examples "
+                    "WHERE owner_id=%s ORDER BY label",
+                    (owner_id,),
+                )
             rows = cur.fetchall()
         return [r["label"] for r in rows]
 
-    def delete_label(self, label: str) -> int:
+    def delete_label(self, label: str, owner_id: str | None = None) -> int:
         """刪掉某類別的所有種子範例，連帶把該類別的人工標記退回送審。"""
         with self._tx() as cur:
-            deleted = cur.execute("DELETE FROM examples WHERE label=%s", (label,))
-            cur.execute(
-                "UPDATE segments SET human_label=NULL, reviewed=0, needs_review=1"
-                " WHERE human_label=%s",
-                (label,),
-            )
+            if owner_id is None:
+                deleted = cur.execute(
+                    "DELETE FROM examples WHERE label=%s",
+                    (label,),
+                )
+                cur.execute(
+                    "UPDATE segments SET human_label=NULL, "
+                    "reviewed=0, needs_review=1 WHERE human_label=%s",
+                    (label,),
+                )
+            else:
+                deleted = cur.execute(
+                    "DELETE FROM examples WHERE label=%s AND owner_id=%s",
+                    (label, owner_id),
+                )
+                cur.execute(
+                    """
+                    UPDATE segments AS segment
+                    JOIN images AS image ON image.id = segment.image_id
+                    SET segment.human_label=NULL,
+                        segment.reviewed=0,
+                        segment.needs_review=1
+                    WHERE segment.human_label=%s
+                      AND image.owner_id=%s
+                    """,
+                    (label, owner_id),
+                )
         return deleted
 
     # ---------- 標註任務 ----------
@@ -651,6 +732,23 @@ class MySQLRepository:
         updated_at = time.time()
 
         with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT image_ids
+                FROM annotation_tasks
+                WHERE line_user_id = %s
+                  AND (user_id = '' OR user_id = %s)
+                FOR UPDATE
+                """,
+                (line_user_id, user_id),
+            )
+            image_ids: set[str] = set()
+            for row in cursor.fetchall():
+                raw_ids = row["image_ids"]
+                if isinstance(raw_ids, str):
+                    raw_ids = json.loads(raw_ids)
+                image_ids.update(str(image_id) for image_id in raw_ids)
+
             assigned_count = cursor.execute(
                 """
                 UPDATE annotation_tasks
@@ -666,6 +764,24 @@ class MySQLRepository:
                     line_user_id,
                 ),
             )
+            if image_ids:
+                placeholders = ", ".join(["%s"] * len(image_ids))
+                cursor.execute(
+                    f"UPDATE images SET owner_id = %s "
+                    f"WHERE owner_id = '' AND id IN ({placeholders})",
+                    (user_id, *sorted(image_ids)),
+                )
+                cursor.execute(
+                    f"""
+                    UPDATE examples AS example
+                    JOIN segments AS segment
+                      ON segment.id = example.source_segment_id
+                    SET example.owner_id = %s
+                    WHERE example.owner_id = ''
+                      AND segment.image_id IN ({placeholders})
+                    """,
+                    (user_id, *sorted(image_ids)),
+                )
 
         return assigned_count
 
@@ -717,6 +833,38 @@ class MySQLRepository:
             cur.execute("SELECT * FROM users")
             rows = cur.fetchall()
         return [_row_to_user(r) for r in rows]
+
+    def transfer_ownership(self, from_user_id: str, to_user_id: str) -> dict[str, int]:
+        """把一個帳號名下的圖片、種子範例與任務全部轉移給另一個帳號。
+
+        三張表在同一個交易裡更新，避免只轉移一半就中斷。
+        Segment 沒有自己的 owner，擁有權由所屬圖片決定，因此不需處理。
+        """
+        moved = {"images": 0, "examples": 0, "tasks": 0}
+        if not from_user_id or from_user_id == to_user_id:
+            return moved
+
+        with self._tx() as cur:
+            moved["images"] = cur.execute(
+                "UPDATE images SET owner_id=%s WHERE owner_id=%s",
+                (to_user_id, from_user_id),
+            )
+            moved["examples"] = cur.execute(
+                "UPDATE examples SET owner_id=%s WHERE owner_id=%s",
+                (to_user_id, from_user_id),
+            )
+            moved["tasks"] = cur.execute(
+                "UPDATE annotation_tasks SET user_id=%s, updated_at=%s WHERE user_id=%s",
+                (to_user_id, time.time(), from_user_id),
+            )
+
+        return moved
+
+    def delete_user(self, user_id: str) -> bool:
+        """刪除帳號本身；名下資料請先用 transfer_ownership 轉移，否則會變成無主。"""
+        with self._tx() as cur:
+            deleted = cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
+        return bool(deleted)
 
     # ---------- 參數設定 ----------
     def get_parameters(self) -> dict[str, float]:

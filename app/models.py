@@ -20,6 +20,7 @@ class ImageRecord:
     """一張上傳的待標記照片。"""
 
     id: str = field(default_factory=_new_id)
+    owner_id: str = ""          # Web 使用者 ID；舊資料 / 尚未綁定的 LIFF 圖片可暫時留空
     filename: str = ""
     path: str = ""
     width: int = 0
@@ -140,6 +141,7 @@ class LabelExample:
     """
 
     id: str = field(default_factory=_new_id)
+    owner_id: str = ""          # 與來源圖片相同的 Web 使用者 ID
     label: str = ""
     feature: list[float] = field(default_factory=list)
     source_segment_id: str | None = None
