@@ -6,7 +6,7 @@ class GeminiService:
     def __init__(self, api_key: str):
         self.api_key = api_key
         # 使用最新、速度極快的 gemini-3.5-flash 作為預設語意分析模型
-        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={self.api_key}"
+        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={self.api_key}"
 
     def parse_prompt(self, prompt: str) -> list[str]:
         """呼叫 Gemini 將複雜的中文或英文句子分析並翻譯成 YOLO-World 的英文單詞清單。
