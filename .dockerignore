@@ -12,8 +12,10 @@ __pycache__
 
 runs/
 data/
-models/*.pth
-models/*.pt
+# 權重必須進 image：Cloud Run 可寫檔案系統是 tmpfs，執行期下載會
+# 算進記憶體額度（曾因此 OOM），且每次冷啟動重來一次。
+# model.pt 是 mobile_sam.pt 的重複檔，只有測試當假路徑用，不需要。
+models/model.pt
 weights/
 
 README.md
