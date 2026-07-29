@@ -1,6 +1,7 @@
 """影像上傳與瀏覽 API（提案 demo 第 1 步：上傳一批照片）。"""
 from __future__ import annotations
 
+import hashlib
 import io
 import mimetypes
 
@@ -25,10 +26,37 @@ def _allowed(filename: str, allowed: tuple[str, ...]) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed
 
 
+def _collect_known_hashes(repo, storage) -> set[str]:
+    """收齊目前使用者看得到的照片雜湊值，供上傳去重比對。
+
+    舊資料（含 LIFF 上傳）沒存 file_hash，這裡補算後寫回 DB——
+    每個請求只做一次，否則多檔上傳會對同一批舊照片重複下載。
+    """
+    hashes = set()
+
+    for img in repo.list_images():
+        if not can_access_image(img):
+            continue
+
+        file_hash = getattr(img, "file_hash", "")
+        if not file_hash and img.path:
+            try:
+                file_hash = hashlib.sha256(
+                    storage.read_bytes(img.path)
+                ).hexdigest()
+            except Exception:
+                continue
+            repo.set_image_hash(img.id, file_hash)
+
+        if file_hash:
+            hashes.add(file_hash)
+
+    return hashes
+
+
 @bp.post("")
 def upload():
     """支援一次上傳多張。回傳建立的 ImageRecord 清單。"""
-    import hashlib
     cfg, repo, storage = get_config(), get_repo(), get_storage()
     files = request.files.getlist("files") or request.files.getlist("file")
     if not files:
@@ -36,7 +64,7 @@ def upload():
 
     created = []
     duplicates = []
-    repo_updated = False
+    known_hashes = _collect_known_hashes(repo, storage)
 
     for f in files:
         if not f.filename or not _allowed(f.filename, cfg.allowed_ext):
@@ -47,28 +75,9 @@ def upload():
         f.seek(0)
         file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-        # 比對是否已有相同雜湊值的照片已上傳
-        is_duplicate = False
-        for img in repo.list_images():
-            if not can_access_image(img):
-                continue
-            existing_hash = getattr(img, "file_hash", "")
-            # 針對歷史舊資料進行相容性雜湊值計算與補齊
-            if not existing_hash and img.path:
-                try:
-                    existing_hash = hashlib.sha256(
-                        storage.read_bytes(img.path)
-                    ).hexdigest()
-                    img.file_hash = existing_hash
-                    repo_updated = True
-                except Exception:
-                    pass
-            if existing_hash == file_hash:
-                is_duplicate = True
-                duplicates.append(f.filename)
-                break
-
-        if is_duplicate:
+        # 比對是否已有相同雜湊值的照片已上傳（含同一批次內的重複）
+        if file_hash in known_hashes:
+            duplicates.append(f.filename)
             continue
 
         extension = f.filename.rsplit(".", 1)[1].lower()
@@ -122,10 +131,8 @@ def upload():
             content_type,
         )
         repo.add_image(rec)
+        known_hashes.add(file_hash)
         created.append(rec.to_dict())
-
-    if repo_updated:
-        repo._save()
 
     if duplicates and not created:
         return jsonify({"error": "圖片已上傳過，請勿重複上傳"}), 400

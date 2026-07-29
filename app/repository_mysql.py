@@ -367,6 +367,14 @@ class MySQLRepository:
             )
         return img
 
+    def set_image_hash(self, image_id: str, file_hash: str) -> None:
+        """補寫舊資料缺少的 file_hash；只在欄位仍為空時寫入。"""
+        with self._tx() as cur:
+            cur.execute(
+                "UPDATE images SET file_hash=%s WHERE id=%s AND file_hash=''",
+                (file_hash, image_id),
+            )
+
     def get_image(self, image_id: str) -> ImageRecord | None:
         with self._tx() as cur:
             cur.execute("SELECT * FROM images WHERE id=%s", (image_id,))
