@@ -36,8 +36,25 @@ RUN uv venv $VIRTUAL_ENV && \
     uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     uv pip install . --find-links https://download.pytorch.org/whl/cpu
 
+# YOLO-World 的 set_classes() 需要 CLIP，但 pyproject 沒宣告，Ultralytics 會在
+# 執行期臨時 pip install 並警告「要重啟才生效」。在這裡先裝好，避免執行期安裝。
+# 不寫進 pyproject 是為了不動 uv.lock，避免影響本機開發環境。
+RUN uv pip install "clip @ git+https://github.com/ultralytics/CLIP.git"
+
 # 建立執行期需要的資料與暫存目錄
 RUN mkdir -p data uploads masks models
+
+# YOLO-World 權重沒被 Git 追蹤，Cloud Build 的 checkout 裡不會有它，
+# 必須在建置階段取得，否則會退回執行期下載並佔用 instance memory。
+# 放在 COPY . . 之前，改程式碼時這層可重用。
+RUN curl -fsSL -o models/yolov8x-worldv2.pt \
+      https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8x-worldv2.pt && \
+    echo "41e771bfbbb8894dd857f3fef7cac3b3578dffd49fd3547101efa6a606a02a0e  models/yolov8x-worldv2.pt" \
+      | sha256sum -c -
+
+# CLIP 權重（ViT-B/32，約 338MB）預先抓進 image 的快取目錄，否則第一次
+# set_classes() 會在執行期下載。build 與執行期同為 root，快取路徑一致。
+RUN python -c "import clip; clip.load('ViT-B/32', device='cpu')"
 
 # 複製應用程式程式碼
 COPY . .
