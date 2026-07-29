@@ -44,9 +44,15 @@ RUN uv pip install "clip @ git+https://github.com/ultralytics/CLIP.git"
 # 建立執行期需要的資料與暫存目錄
 RUN mkdir -p data uploads masks models
 
-# YOLO-World 權重沒被 Git 追蹤，Cloud Build 的 checkout 裡不會有它，
-# 必須在建置階段取得，否則會退回執行期下載並佔用 instance memory。
+# 權重都在建置階段取得，不依賴 Git：yolov8x 根本沒被追蹤，mobile_sam 雖然
+# 有追蹤但走 Git LFS，Cloud Build 的 checkout 只會拿到指標檔而非真檔案。
+# 執行期下載則會佔用 instance memory 並拖慢每次冷啟動。
 # 放在 COPY . . 之前，改程式碼時這層可重用。
+RUN curl -fsSL -o models/mobile_sam.pt \
+      https://raw.githubusercontent.com/ChaoningZhang/MobileSAM/master/weights/mobile_sam.pt && \
+    echo "6dbb90523a35330fedd7f1d3dfc66f995213d81b29a5ca8108dbcdd4e37d6c2f  models/mobile_sam.pt" \
+      | sha256sum -c -
+
 RUN curl -fsSL -o models/yolov8x-worldv2.pt \
       https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8x-worldv2.pt && \
     echo "41e771bfbbb8894dd857f3fef7cac3b3578dffd49fd3547101efa6a606a02a0e  models/yolov8x-worldv2.pt" \
