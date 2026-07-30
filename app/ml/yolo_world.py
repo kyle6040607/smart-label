@@ -85,6 +85,22 @@ class YoloWorldDetector:
         # 2. 設定預測目標類別（僅使用使用者的 prompt，不添加其他佔位類別）
         self.model.set_classes([prompt])
 
+        # 🔍 [Cloud Run / CLIP 驗證] 印出並確認文本特徵向量 txt_feats 讀取狀態
+        try:
+            txt_feats = getattr(self.model.model, "txt_feats", None)
+            if txt_feats is None:
+                # 相容處理：部分 Ultralytics 架構下 txt_feats 位於內部底層網路
+                inner_model = getattr(self.model.model, "model", None)
+                if inner_model is not None:
+                    txt_feats = getattr(inner_model, "txt_feats", None)
+
+            if txt_feats is not None:
+                print(f"✅ [YOLO-World CLIP 驗證] 成功讀取 txt_feats! 矩陣形狀: {txt_feats.shape}, 設備: {txt_feats.device}")
+            else:
+                print("⚠️ [YOLO-World CLIP 驗證] 未直接找到 self.model.model.txt_feats 屬性。")
+        except Exception as e:
+            print(f"❌ [YOLO-World CLIP 驗證] 讀取 txt_feats 異常: {e}")
+
         # 3. 進行圖像色彩空間轉換與 Letterbox 前處理
         # 💡 注意：Pipeline 中傳入的是 RGB 矩陣，轉換為 BGR
         bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
