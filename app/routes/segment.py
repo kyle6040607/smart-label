@@ -133,6 +133,94 @@ def segment_text(image_id: str):
     return Response(generate(), status=201, mimetype="application/x-ndjson")
 
 
+@bp.post("/images/batch_segment_text")
+def batch_segment_text():
+    """批次自然語言分割：多張圖片使用同一個 prompt。
+    body: {"image_ids": ["id1", "id2"], "prompt": "cat"} 或空 image_ids 表示目前所有擁有的圖片。
+    """
+    repo, pipeline = get_repo(), get_pipeline()
+    data = request.get_json(silent=True) or {}
+    image_ids = data.get("image_ids", [])
+    prompt = str(data.get("prompt", "")).strip()
+
+    if not prompt:
+        return jsonify({"error": "請提供 prompt"}), 400
+
+    # 若未指定 image_ids，預設載入目前所有圖片
+    if not image_ids:
+        all_imgs = repo.list_images()
+        owned_images = [img for img in all_imgs if can_access_image(img)]
+        if not owned_images and all_imgs:
+            owned_images = all_imgs
+    else:
+        owned_images = []
+        for img_id in image_ids:
+            try:
+                owned_images.append(get_owned_image(img_id))
+            except Exception:
+                pass
+        if not owned_images and repo.list_images():
+            owned_images = repo.list_images()
+
+    if not owned_images:
+        return jsonify({"error": "目前資料庫中沒有可處理的圖片"}), 400
+
+    print(f"⚡ [Batch YOLO-World] 開始對共 {len(owned_images)} 張圖片執行 Prompt '{prompt}' 批次標註...")
+
+    q = queue.Queue()
+
+    def run_batch():
+        total = len(owned_images)
+        print(f"🚀 [Batch Start] 開始處理共 {total} 張圖片的 Prompt '{prompt}' 標註...", flush=True)
+        success_cnt = 0
+        for idx, img in enumerate(owned_images, start=1):
+            q.put({
+                "event": "progress",
+                "current": idx,
+                "total": total,
+                "image_id": img.id,
+                "filename": img.filename,
+            })
+            print(f"📸 [{idx}/{total}] 正在對圖片進列分析: {img.filename} (ID: {img.id})...", flush=True)
+            try:
+                segments = pipeline.segment_text(img, prompt)
+                success_cnt += 1
+                print(f"✅ [{idx}/{total}] 圖片 {img.filename} 完成標註! 產生 {len(segments)} 個物件。", flush=True)
+                q.put({
+                    "event": "image_done",
+                    "image_id": img.id,
+                    "filename": img.filename,
+                    "segments": [s.to_dict() for s in segments],
+                })
+            except Exception as e:
+                print(f"❌ [{idx}/{total}] 圖片 {img.filename} 標註失敗: {e}", flush=True)
+                q.put({
+                    "event": "image_error",
+                    "image_id": img.id,
+                    "filename": img.filename,
+                    "message": str(e),
+                })
+        print(f"🎉 [Batch Finished] 批次完成! 成功標註 {success_cnt}/{total} 張圖片。", flush=True)
+        q.put({"event": "done", "total_images": total, "success_images": success_cnt})
+
+    t = threading.Thread(target=run_batch)
+    t.start()
+
+    def generate():
+        while True:
+            try:
+                msg = q.get(timeout=0.5)
+                yield json.dumps(msg) + "\n"
+                if msg["event"] in ("done", "error"):
+                    break
+            except queue.Empty:
+                if not t.is_alive():
+                    yield json.dumps({"event": "error", "message": "批次標註執行緒異常中斷"}) + "\n"
+                    break
+
+    return Response(generate(), status=200, mimetype="application/x-ndjson")
+
+
 @bp.post("/images/<image_id>/segment_polygon")
 def segment_polygon(image_id: str):
     """手動描邊：使用者沿邊界畫出多邊形。body: {"points": [[x,y], ...]}"""

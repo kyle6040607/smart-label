@@ -210,6 +210,7 @@ class Pipeline:
 
         # Mock 測試模式：不載入真實模型
         if not self.config.use_real_sam:
+            print(f"⚠️ [Pipeline Status] 目前為 Mock 模擬模式 (use_real_sam=False)，跳過 YOLO-World 載入。若要接通真實 AI 模型，請確認 .env 中設為 USE_REAL_SAM=1。")
             mock_segments: list[Segment] = []
             h, w = img.shape[:2]
 
@@ -256,6 +257,7 @@ class Pipeline:
 
             return mock_segments
 
+        print(f"🚀 [Real AI Engine] 正在對圖片使用真實 YOLO-World + MobileSAM 進行 Prompt '{parsed_classes}' 標註分析...")
         # 動態載入 YOLO-World
         if self.yolo_detector is None:
             model_path = str(

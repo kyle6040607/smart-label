@@ -1621,3 +1621,94 @@ if (toggleBtn) {
 }
 
 applyMode(state.mode);
+
+// ==========================================
+// ⚡ 多圖批次文字標註 (Batch Auto-Labeling with Prompt)
+// ==========================================
+const batchTextBtn = $("batchTextSegBtn");
+if (batchTextBtn) {
+  batchTextBtn.onclick = async () => {
+    const promptInput = $("textPromptInput");
+    const prompt = promptInput ? promptInput.value.trim() : "";
+    if (!prompt) {
+      alert("請先在搜尋框輸入要批次標註的物件名稱（例如：strawberry）！");
+      if (promptInput) promptInput.focus();
+      return;
+    }
+
+    // 🔍 精確抓取網頁圖庫中所有打藍色勾勾 (.thumb-chk:checked) 的圖片 ID
+    const checkedChks = document.querySelectorAll(".thumb-chk:checked");
+    const selectedIds = Array.from(checkedChks).map(chk => chk.dataset.id).filter(Boolean);
+    const hasSelected = selectedIds.length > 0;
+    const targetText = hasSelected ? `已勾選的 ${selectedIds.length} 張圖片` : "圖庫內的所有圖片";
+
+    if (!confirm(`確定要對 ${targetText}，統一套用 Prompt: '${prompt}' 進行 YOLO-World 批次自動標註嗎？`)) {
+      return;
+    }
+
+    batchTextBtn.disabled = true;
+    batchTextBtn.textContent = "⚡ 標註處理中...";
+    setSegmentationLoading(true, `正在對 ${targetText} 進行批次標註 (${prompt})...`, true);
+
+    try {
+      const res = await fetch("/api/images/batch_segment_text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: prompt,
+          image_ids: hasSelected ? selectedIds : []
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        alert("批次標註失敗：" + (err.error || "未知錯誤"));
+        setSegmentationLoading(false);
+        batchTextBtn.disabled = false;
+        batchTextBtn.textContent = "⚡ 批次多圖標註";
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.event === "progress") {
+              const pct = Math.round((msg.current / msg.total) * 100);
+              updateProgressBar(pct);
+              setSegmentationLoading(true, `[${msg.current}/${msg.total}] 正在分析 ${msg.filename} (Prompt: '${prompt}')...`, true);
+            } else if (msg.event === "done") {
+              alert(`🎉 成功完成共 ${msg.total_images} 張圖片的 YOLO-World 批次自動標註！`);
+            } else if (msg.event === "error") {
+              alert("批次標註發生錯誤：" + msg.message);
+            }
+          } catch (e) {
+            console.error("解析進度失敗", e);
+          }
+        }
+      }
+      await refreshSidebar();
+      if (state.currentImageId) {
+        await selectImage(state.currentImageId);
+      }
+    } catch (err) {
+      console.error("批次標註異常:", err);
+      alert("批次標註通訊失敗：" + err.message);
+    } finally {
+      setSegmentationLoading(false);
+      batchTextBtn.disabled = false;
+      batchTextBtn.textContent = "⚡ 批次多圖標註";
+    }
+  };
+}

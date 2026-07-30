@@ -211,7 +211,7 @@ def _write_coco(z, repo, by_image, labels, storage):
     z.writestr("annotations.json", json.dumps(coco, ensure_ascii=False, indent=2))
 
 
-# ---------- YOLOv8 segmentation ----------
+# ---------- YOLOv26x-seg ----------
 def _write_yolo(z, repo, by_image, labels, storage):
     cls_idx = {name: i for i, name in enumerate(labels)}
     for image_id, segs in by_image.items():
