@@ -280,15 +280,20 @@ function initDropZone() {
   if (!dropZone || !fileInputEl) return;
 
   if (cancelUploadBtn) {
-    cancelUploadBtn.onclick = (e) => {
+    cancelUploadBtn.onclick = async (e) => {
       e.stopPropagation();
       state.isAborted = true;
+      try {
+        fetch("/api/images/cancel_upload", { method: "POST" });
+      } catch (err) {}
       if (state.currentXhr) {
         try {
           state.currentXhr.abort();
         } catch (err) {}
         state.currentXhr = null;
       }
+      await loadThumbs();
+      expandGallery();
     };
   }
 
@@ -381,10 +386,34 @@ $("uploadBtn").onclick = async (e) => {
           const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
 
           if (e.loaded >= e.total) {
-            fileCountHint.textContent = `檔案傳送完成 (100%) · 伺服器解壓與處理中，請稍候…`;
+            fileCountHint.textContent = `檔案傳送完成 (100%) · 伺服器準備解壓照片…`;
           } else {
-            fileCountHint.textContent = `正在上傳… ${pct}% (${mbUploaded} / ${mbTotal} MB)`;
+            fileCountHint.textContent = `正在傳送檔案… ${pct}% (${mbUploaded} / ${mbTotal} MB)`;
           }
+        }
+      };
+
+      xhr.onprogress = () => {
+        if (state.isAborted) return;
+        const text = xhr.responseText;
+        const lines = text.split("\n");
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line.trim());
+            if (data.event === "progress") {
+              state.lastProcessedCount = data.created_count || data.current;
+              state.lastTotalCount = data.total;
+              const pct = Math.round((data.current / data.total) * 100);
+              if (fileCountHint) {
+                fileCountHint.textContent = `正在解壓與處理照片… ${data.current.toLocaleString()} / ${data.total.toLocaleString()} 張 (${pct}%)`;
+              }
+              if (data.latest_image) {
+                appendThumbs([data.latest_image]);
+                expandGallery();
+              }
+            }
+          } catch (err) {}
         }
       };
 
@@ -395,7 +424,22 @@ $("uploadBtn").onclick = async (e) => {
         }
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
-            const createdImages = JSON.parse(xhr.responseText);
+            let createdImages = [];
+            const text = xhr.responseText.trim();
+            if (text.startsWith("{")) {
+              const lines = text.split("\n");
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                  const data = JSON.parse(line.trim());
+                  if (data.event === "done" && Array.isArray(data.created)) {
+                    createdImages = data.created;
+                  }
+                } catch (e) {}
+              }
+            } else {
+              createdImages = JSON.parse(text);
+            }
             uploadedCount += batch.length;
             uploadedBytes += batch.reduce((acc, f) => acc + f.size, 0);
 
@@ -427,7 +471,8 @@ $("uploadBtn").onclick = async (e) => {
         reject(new Error("使用者已取消上傳"));
       };
 
-      xhr.open("POST", "/api/images");
+      xhr.open("POST", "/api/images?stream=1");
+      xhr.setRequestHeader("Accept", "application/x-ndjson");
       xhr.send(fd);
     });
   };
@@ -453,12 +498,13 @@ $("uploadBtn").onclick = async (e) => {
   } catch (err) {
     if (state.isAborted) {
       if (fileCountHint) {
-        fileCountHint.textContent = uploadedCount > 0
-          ? `已中途取消上傳（先前成功的照片已保留在照片庫）`
-          : "已取消上傳";
+        const countInfo = state.lastProcessedCount
+          ? `（已保留已解壓處理的 ${state.lastProcessedCount.toLocaleString()} / ${(state.lastTotalCount || '?').toLocaleString()} 張照片）`
+          : "";
+        fileCountHint.textContent = `已中途取消上傳${countInfo}`;
       }
     } else {
-      alert(`上傳中斷（已成功處理 ${uploadedCount}/${totalFiles} 檔）：${err.message}`);
+      alert(`上傳中斷：${err.message}`);
     }
   } finally {
     fileInputEl.value = "";
@@ -471,9 +517,11 @@ $("uploadBtn").onclick = async (e) => {
       cancelUploadBtn.disabled = false;
     }
     if (state.isAborted) {
+      await loadThumbs();
+      expandGallery();
       setTimeout(() => {
         if (!state.isUploading) updateFileCountHint();
-      }, 2500);
+      }, 3000);
     } else {
       updateFileCountHint();
     }

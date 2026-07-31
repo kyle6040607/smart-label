@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import mimetypes
-
 import os
 import tarfile
 import tempfile
@@ -15,7 +15,7 @@ try:
 except ImportError:
     py7zr = None
 
-from flask import Blueprint, abort, jsonify, request, send_file
+from flask import Blueprint, Response, abort, jsonify, request, send_file, stream_with_context
 from PIL import Image, ImageOps
 from werkzeug.utils import secure_filename
 
@@ -31,6 +31,17 @@ from app.routes import (
 from app.models import ImageRecord
 
 bp = Blueprint("images", __name__, url_prefix="/api/images")
+
+
+cancelled_uploads: set[str] = set()
+
+
+@bp.post("/cancel_upload")
+def cancel_upload():
+    """設定取消標記，中斷當前使用者正在執行的壓縮檔解壓/圖片處理迴圈。"""
+    user_id = get_current_user_id()
+    cancelled_uploads.add(user_id)
+    return jsonify({"status": "cancelling"}), 200
 
 
 def _allowed(filename: str, allowed: tuple[str, ...]) -> bool:
@@ -154,15 +165,23 @@ def _collect_known_hashes(repo, storage) -> set[str]:
 
 @bp.post("")
 def upload():
-    """支援一次上傳多張照片或壓縮檔 (zip/7z/tar)。回傳建立的 ImageRecord 清單。"""
+    """支援一次上傳多張照片或壓縮檔 (zip/7z/tar)。支援一般 JSON 與 NDJSON 串流進度回傳。"""
+    user_id = get_current_user_id()
+    cancelled_uploads.discard(user_id)
+
     cfg, repo, storage = get_config(), get_repo(), get_storage()
     files = request.files.getlist("files") or request.files.getlist("file")
     if not files:
         abort(400, "沒有收到檔案（欄位名 files）")
 
+    want_stream = request.args.get("stream") == "1" or "application/x-ndjson" in request.headers.get("Accept", "")
+
     items_to_process: list[tuple[str, bytes]] = []
 
     for f in files:
+        if user_id in cancelled_uploads:
+            cancelled_uploads.discard(user_id)
+            break
         if not f.filename:
             continue
 
@@ -184,36 +203,132 @@ def upload():
     if not items_to_process:
         abort(400, "沒有有效的影像檔或解壓後無支援格式影像")
 
-    created = []
-    duplicates = []
+    total_items = len(items_to_process)
     known_hashes = _collect_known_hashes(repo, storage)
     project_id = request.form.get("project_id") or get_current_project_id()
 
-    for orig_filename, file_bytes in items_to_process:
-        # 計算檔案 SHA-256
-        file_hash = hashlib.sha256(file_bytes).hexdigest()
+    def generate_upload_stream():
+        created = []
+        duplicates = []
+        is_cancelled = False
 
+        for idx, (orig_filename, file_bytes) in enumerate(items_to_process, start=1):
+            if user_id in cancelled_uploads:
+                cancelled_uploads.discard(user_id)
+                is_cancelled = True
+                break
+
+            file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+            if file_hash in known_hashes:
+                duplicates.append(orig_filename)
+                if want_stream and (idx % 10 == 0 or idx == total_items):
+                    yield json.dumps({
+                        "event": "progress",
+                        "current": idx,
+                        "total": total_items,
+                        "created_count": len(created),
+                        "filename": orig_filename,
+                    }, ensure_ascii=False) + "\n"
+                continue
+
+            extension = orig_filename.rsplit(".", 1)[1].lower() if "." in orig_filename else "png"
+            name = secure_filename(orig_filename) or f"uploaded.{extension}"
+
+            rec = ImageRecord(
+                owner_id=user_id,
+                project_id=project_id,
+                filename=name,
+                file_hash=file_hash,
+            )
+
+            try:
+                with Image.open(io.BytesIO(file_bytes)) as im:
+                    save_format = im.format or extension.upper()
+                    if save_format.upper() == "JPG":
+                        save_format = "JPEG"
+                    processed_image = ImageOps.exif_transpose(im)
+
+                    max_side = 1024
+                    if max(processed_image.size) > max_side:
+                        scale = max_side / max(processed_image.size)
+                        new_size = (
+                            int(processed_image.size[0] * scale),
+                            int(processed_image.size[1] * scale),
+                        )
+                        processed_image = processed_image.resize(
+                            new_size,
+                            Image.Resampling.LANCZOS,
+                        )
+
+                    rec.width, rec.height = processed_image.size
+
+                    output = io.BytesIO()
+                    processed_image.save(output, format=save_format)
+            except Exception:
+                continue
+
+            content_type = (
+                Image.MIME.get(save_format.upper())
+                or f"image/{extension}"
+            )
+            rec.path = storage.save_bytes(
+                f"images/{rec.id}_{name}",
+                output.getvalue(),
+                content_type,
+            )
+            repo.add_image(rec)
+            known_hashes.add(file_hash)
+            rec_dict = rec.to_dict()
+            created.append(rec_dict)
+
+            if want_stream and (idx % 5 == 0 or idx == total_items or idx == 1):
+                yield json.dumps({
+                    "event": "progress",
+                    "current": idx,
+                    "total": total_items,
+                    "created_count": len(created),
+                    "filename": name,
+                    "latest_image": rec_dict,
+                }, ensure_ascii=False) + "\n"
+
+        if want_stream:
+            yield json.dumps({
+                "event": "done",
+                "cancelled": is_cancelled,
+                "current": len(created),
+                "total": total_items,
+                "created": created,
+            }, ensure_ascii=False) + "\n"
+
+    if want_stream:
+        return Response(stream_with_context(generate_upload_stream()), mimetype="application/x-ndjson")
+
+    # 非串流模式（相容原本的 API 與測試）
+    created = []
+    duplicates = []
+    for idx, (orig_filename, file_bytes) in enumerate(items_to_process, start=1):
+        if user_id in cancelled_uploads:
+            cancelled_uploads.discard(user_id)
+            break
+        file_hash = hashlib.sha256(file_bytes).hexdigest()
         if file_hash in known_hashes:
             duplicates.append(orig_filename)
             continue
-
         extension = orig_filename.rsplit(".", 1)[1].lower() if "." in orig_filename else "png"
         name = secure_filename(orig_filename) or f"uploaded.{extension}"
-
         rec = ImageRecord(
-            owner_id=get_current_user_id(),
+            owner_id=user_id,
             project_id=project_id,
             filename=name,
             file_hash=file_hash,
         )
-
         try:
             with Image.open(io.BytesIO(file_bytes)) as im:
                 save_format = im.format or extension.upper()
                 if save_format.upper() == "JPG":
                     save_format = "JPEG"
                 processed_image = ImageOps.exif_transpose(im)
-
                 max_side = 1024
                 if max(processed_image.size) > max_side:
                     scale = max_side / max(processed_image.size)
@@ -225,18 +340,11 @@ def upload():
                         new_size,
                         Image.Resampling.LANCZOS,
                     )
-
                 rec.width, rec.height = processed_image.size
-
                 output = io.BytesIO()
-                processed_image.save(
-                    output,
-                    format=save_format,
-                )
+                processed_image.save(output, format=save_format)
         except Exception:
-            # 檔案格式無法解碼為圖片時略過
             continue
-
         content_type = (
             Image.MIME.get(save_format.upper())
             or f"image/{extension}"

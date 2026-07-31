@@ -146,3 +146,10 @@ def test_upload_7z_archive(app_client):
     json_data = res.get_json()
     assert len(json_data) == 1
     assert json_data[0]["filename"] == "sample.png"
+
+
+def test_cancel_upload_endpoint(app_client):
+    app, client = app_client
+    res = client.post("/api/images/cancel_upload")
+    assert res.status_code == 200
+    assert res.get_json() == {"status": "cancelling"}
