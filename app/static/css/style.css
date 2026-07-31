@@ -846,3 +846,98 @@ body.layman-mode canvas {
   cursor: default;
 }
 
+/* 自訂極簡彈窗 / 模態框 (Custom Modal System) */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal-card {
+  background: var(--panel, #1e2630);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 420px;
+  color: var(--text, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transform: scale(0.92) translateY(10px);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-overlay.active .modal-card {
+  transform: scale(1) translateY(0);
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text, #fff);
+}
+
+.modal-desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted, #a0aec0);
+  line-height: 1.5;
+}
+
+.modal-input-group, .modal-select-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modal-input-label, .modal-select-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted, #a0aec0);
+}
+
+.modal-input, .modal-select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #334155);
+  background: var(--bg, rgba(0, 0, 0, 0.2));
+  color: var(--text, #fff);
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.modal-input:focus, .modal-select:focus {
+  border-color: var(--accent, #4f9cff);
+  box-shadow: 0 0 0 3px rgba(79, 156, 255, 0.25);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+

@@ -17,6 +17,14 @@
       <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
     </div>
     <div class="header-center-controls">
+      <div class="project-selector-wrapper" style="display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.05); padding: 4px 8px; border-radius: 8px;">
+        <label for="projectSelect" style="font-size: 13px; font-weight: 600; white-space: nowrap;">📂 專案：</label>
+        <select id="projectSelect" class="project-select" style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border-color, #ccc); background: var(--panel-bg, #fff); color: var(--text-color, #333); font-size: 13px; font-weight: 500; cursor: pointer;">
+        </select>
+        <button id="createProjectBtn" class="btn-secondary" type="button" style="padding: 4px 8px; font-size: 12px;" title="建立新專案">+ 新建</button>
+        <button id="renameProjectBtn" class="btn-secondary" type="button" style="padding: 4px 8px; font-size: 12px;" title="重新命名專案">重新命名</button>
+        <button id="deleteProjectBtn" class="btn-danger" type="button" style="padding: 4px 8px; font-size: 12px;" title="刪除此專案">刪除</button>
+      </div>
       <div class="mode-switch-wrapper">
         <div class="mode-switch-bg"></div>
         <button id="laymanModeBtn" class="mode-btn active" type="button">素人模式</button>
@@ -274,6 +282,24 @@
       </div>
     </section>
   </main>
+
+  <!-- 自訂極簡彈窗 (Custom Modal System) -->
+  <div id="modalOverlay" class="modal-overlay">
+    <div class="modal-card">
+      <h3 id="modalTitle" class="modal-title">彈窗標題</h3>
+      <p id="modalDesc" class="modal-desc" style="display: none;"></p>
+      
+      <div id="modalInputGroup" class="modal-input-group" style="display: none;">
+        <label id="modalInputLabel" class="modal-input-label" for="modalInput">名稱</label>
+        <input type="text" id="modalInput" class="modal-input" placeholder="請輸入..." />
+      </div>
+
+      <div class="modal-actions">
+        <button id="modalCancelBtn" type="button" class="btn-secondary">取消</button>
+        <button id="modalConfirmBtn" type="button" class="btn-primary">確認</button>
+      </div>
+    </div>
+  </div>
 
   <script src="{{ url_for('static', filename='js/vendor/chart.umd.min.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>

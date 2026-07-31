@@ -3,6 +3,7 @@
 "use strict";
 
 const state = {
+  currentProjectId: null,
   currentImage: null,
   drawMode: false,
   drawing: false,
@@ -258,6 +259,7 @@ $("uploadBtn").onclick = async () => {
   const sendBatch = async (batch) => {
     const fd = new FormData();
     for (const f of batch) fd.append("files", f);
+    if (state.currentProjectId) fd.append("project_id", state.currentProjectId);
     const res = await fetch("/api/images", { method: "POST", body: fd });
     if (!res.ok) {
       const text = await res.text();
@@ -1190,8 +1192,221 @@ $("batchDelSegsBtn").onclick = async () => {
   }
 };
 
+// ---------- 專案管理邏輯 ----------
+function clearCanvasAndCurrentState() {
+  state.currentImage = null;
+  state.autoSegCompleted = false;
+  state.lastSegments = [];
+  state.points = [];
+  $("autoSegBtn").disabled = true;
+  $("drawBtn").disabled = true;
+  $("textPromptInput").disabled = true;
+  $("textSegBtn").disabled = true;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+async function fetchProjects() {
+  try {
+    const res = await fetch("/api/projects");
+    if (!res.ok) return;
+    const data = await res.json();
+    state.currentProjectId = data.active_project_id;
+    const select = $("projectSelect");
+    if (!select) return;
+    select.innerHTML = "";
+    (data.projects || []).forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name + (p.mode === "engineer" ? " [工程師]" : "");
+      if (p.id === data.active_project_id) opt.selected = true;
+      select.appendChild(opt);
+    });
+  } catch (err) {
+    console.error("載入專案清單失敗:", err);
+  }
+}
+
+async function selectProject(projectId) {
+  try {
+    const res = await fetch(`/api/projects/${projectId}/select`, { method: "POST" });
+    if (!res.ok) throw new Error(await res.text());
+    state.currentProjectId = projectId;
+    clearCanvasAndCurrentState();
+    await loadThumbs();
+    await refreshSidebar();
+    if (state.mode === "engineer") await loadParameters();
+  } catch (err) {
+    alert("切換專案失敗: " + err.message);
+  }
+}
+
+function showModal({ title, desc = "", showInput = false, inputLabel = "", inputValue = "", confirmText = "確認", isDanger = false }) {
+  return new Promise((resolve) => {
+    const overlay = $("modalOverlay");
+    const titleEl = $("modalTitle");
+    const descEl = $("modalDesc");
+    const inputGroup = $("modalInputGroup");
+    const inputLabelEl = $("modalInputLabel");
+    const inputEl = $("modalInput");
+    const cancelBtn = $("modalCancelBtn");
+    const confirmBtn = $("modalConfirmBtn");
+
+    titleEl.textContent = title;
+    if (desc) {
+      descEl.textContent = desc;
+      descEl.style.display = "block";
+    } else {
+      descEl.style.display = "none";
+    }
+
+    if (showInput) {
+      inputLabelEl.textContent = inputLabel || "名稱";
+      inputEl.value = inputValue || "";
+      inputGroup.style.display = "flex";
+    } else {
+      inputGroup.style.display = "none";
+    }
+
+    confirmBtn.textContent = confirmText;
+    confirmBtn.className = isDanger ? "btn-danger" : "btn-primary";
+
+    overlay.classList.add("active");
+
+    if (showInput) {
+      setTimeout(() => {
+        inputEl.focus();
+        inputEl.select();
+      }, 50);
+    }
+
+    const close = (val) => {
+      overlay.classList.remove("active");
+      cancelBtn.onclick = null;
+      confirmBtn.onclick = null;
+      inputEl.onkeydown = null;
+      resolve(val);
+    };
+
+    cancelBtn.onclick = () => close(null);
+    confirmBtn.onclick = () => close(showInput ? inputEl.value : true);
+
+    if (showInput) {
+      inputEl.onkeydown = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          close(inputEl.value);
+        } else if (e.key === "Escape") {
+          close(null);
+        }
+      };
+    }
+  });
+}
+
+function initProjectControls() {
+  const select = $("projectSelect");
+  if (select) {
+    select.onchange = async () => {
+      const selectedId = select.value;
+      if (selectedId && selectedId !== state.currentProjectId) {
+        await selectProject(selectedId);
+      }
+    };
+  }
+
+  const createBtn = $("createProjectBtn");
+  if (createBtn) {
+    createBtn.onclick = async () => {
+      const name = await showModal({
+        title: "✨ 建立新專案",
+        showInput: true,
+        inputLabel: "專案名稱",
+        inputValue: "新專案",
+        confirmText: "建立專案"
+      });
+      if (name === null || !name.trim()) return;
+      try {
+        const res = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim(), mode: state.mode })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        clearCanvasAndCurrentState();
+        await fetchProjects();
+        await loadThumbs();
+        await refreshSidebar();
+      } catch (err) {
+        alert("建立專案失敗: " + err.message);
+      }
+    };
+  }
+
+  const renameBtn = $("renameProjectBtn");
+  if (renameBtn) {
+    renameBtn.onclick = async () => {
+      if (!state.currentProjectId) return;
+      const selectEl = $("projectSelect");
+      const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
+      const oldName = currentOpt ? currentOpt.textContent.replace(/ \[工程師\]$/, "") : "";
+      const newName = await showModal({
+        title: "✏️ 重新命名專案",
+        showInput: true,
+        inputLabel: "新的專案名稱",
+        inputValue: oldName,
+        confirmText: "儲存修改"
+      });
+      if (newName === null || !newName.trim() || newName.trim() === oldName) return;
+      try {
+        const res = await fetch(`/api/projects/${state.currentProjectId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName.trim() })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await fetchProjects();
+      } catch (err) {
+        alert("修改專案名稱失敗: " + err.message);
+      }
+    };
+  }
+
+  const deleteBtn = $("deleteProjectBtn");
+  if (deleteBtn) {
+    deleteBtn.onclick = async () => {
+      if (!state.currentProjectId) return;
+      const selectEl = $("projectSelect");
+      const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
+      const projName = currentOpt ? currentOpt.textContent.replace(/ \[工程師\]$/, "") : "此專案";
+      const confirmed = await showModal({
+        title: "⚠️ 確定要刪除專案嗎？",
+        desc: `專案「${projName}」內的所有照片、遮罩檔及分類成果將會被永久刪除且無法復原！`,
+        confirmText: "確認刪除",
+        isDanger: true
+      });
+      if (!confirmed) return;
+
+      try {
+        const res = await fetch(`/api/projects/${state.currentProjectId}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(await res.text());
+        clearCanvasAndCurrentState();
+        await fetchProjects();
+        await loadThumbs();
+        await refreshSidebar();
+      } catch (err) {
+        alert("刪除專案失敗: " + err.message);
+      }
+    };
+  }
+}
+
 // 初始載入
-loadThumbs();
+async function initApp() {
+  initProjectControls();
+  await fetchProjects();
+  await loadThumbs();
+}
+initApp();
 
 // ---------- 雙模式與參數調整初始化 ----------
 state.mode = localStorage.getItem("mode") || "layman";

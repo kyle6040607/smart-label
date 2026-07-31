@@ -22,18 +22,30 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from app.config import Config
-from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User
+from app.models import AnnotationTask, ImageRecord, Segment, LabelExample, User, Project
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS projects (
+    id VARCHAR(32) PRIMARY KEY,
+    owner_id VARCHAR(32) NOT NULL DEFAULT '',
+    name VARCHAR(128) NOT NULL DEFAULT '',
+    mode VARCHAR(16) NOT NULL DEFAULT 'novice',
+    created_at DOUBLE NOT NULL,
+    updated_at DOUBLE NOT NULL,
+    INDEX idx_projects_owner_id (owner_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS images (
     id VARCHAR(32) PRIMARY KEY,
     owner_id VARCHAR(32) NOT NULL DEFAULT '',
+    project_id VARCHAR(32) NOT NULL DEFAULT '',
     filename VARCHAR(255) NOT NULL DEFAULT '',
     path VARCHAR(512) NOT NULL DEFAULT '',
     width INT NOT NULL DEFAULT 0,
     height INT NOT NULL DEFAULT 0,
     file_hash VARCHAR(64) NOT NULL DEFAULT '',
-    created_at DOUBLE NOT NULL
+    created_at DOUBLE NOT NULL,
+    INDEX idx_images_project_id (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS parameters (
@@ -59,11 +71,13 @@ CREATE TABLE IF NOT EXISTS segments (
 CREATE TABLE IF NOT EXISTS examples (
     id VARCHAR(32) PRIMARY KEY,
     owner_id VARCHAR(32) NOT NULL DEFAULT '',
+    project_id VARCHAR(32) NOT NULL DEFAULT '',
     label VARCHAR(64) NOT NULL,
     feature JSON NOT NULL,
     source_segment_id VARCHAR(32) NULL,
     created_at DOUBLE NOT NULL,
-    INDEX idx_examples_label (label)
+    INDEX idx_examples_label (label),
+    INDEX idx_examples_project_id (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -114,9 +128,18 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
 
 # ---------- row <-> dataclass ----------
 
+def _row_to_project(r: dict) -> Project:
+    return Project(
+        id=r["id"], owner_id=r.get("owner_id", ""),
+        name=r.get("name", "未命名專案"), mode=r.get("mode", "novice"),
+        created_at=r["created_at"], updated_at=r.get("updated_at", r["created_at"]),
+    )
+
+
 def _row_to_image(r: dict) -> ImageRecord:
     return ImageRecord(
         id=r["id"], owner_id=r.get("owner_id", ""),
+        project_id=r.get("project_id", ""),
         filename=r["filename"], path=r["path"],
         width=r["width"], height=r["height"], file_hash=r["file_hash"],
         created_at=r["created_at"],
@@ -137,6 +160,7 @@ def _row_to_segment(r: dict) -> Segment:
 def _row_to_example(r: dict) -> LabelExample:
     return LabelExample(
         id=r["id"], owner_id=r.get("owner_id", ""),
+        project_id=r.get("project_id", ""),
         label=r["label"], feature=json.loads(r["feature"]),
         source_segment_id=r["source_segment_id"], created_at=r["created_at"],
     )
@@ -250,27 +274,26 @@ class MySQLRepository:
                     "CREATE INDEX idx_images_owner_id ON images (owner_id)"
                 )
 
-            cur.execute("SHOW COLUMNS FROM examples LIKE 'owner_id'")
+            cur.execute("SHOW COLUMNS FROM images LIKE 'project_id'")
+            if cur.fetchone() is None:
+                cur.execute(
+                    "ALTER TABLE images "
+                    "ADD COLUMN project_id VARCHAR(32) NOT NULL DEFAULT '' "
+                    "AFTER owner_id"
+                )
+                cur.execute(
+                    "CREATE INDEX idx_images_project_id ON images (project_id)"
+                )
+
+            cur.execute("SHOW COLUMNS FROM examples LIKE 'project_id'")
             if cur.fetchone() is None:
                 cur.execute(
                     "ALTER TABLE examples "
-                    "ADD COLUMN owner_id VARCHAR(32) NOT NULL DEFAULT '' "
-                    "AFTER id"
+                    "ADD COLUMN project_id VARCHAR(32) NOT NULL DEFAULT '' "
+                    "AFTER owner_id"
                 )
                 cur.execute(
-                    "CREATE INDEX idx_examples_owner_id ON examples (owner_id)"
-                )
-                # 可從來源片段追溯的舊範例，自動繼承圖片擁有者。
-                cur.execute(
-                    """
-                    UPDATE examples AS example
-                    JOIN segments AS segment
-                      ON segment.id = example.source_segment_id
-                    JOIN images AS image
-                      ON image.id = segment.image_id
-                    SET example.owner_id = image.owner_id
-                    WHERE example.owner_id = ''
-                    """
+                    "CREATE INDEX idx_examples_project_id ON examples (project_id)"
                 )
             # 舊任務補上已處理圖片欄位
             cur.execute(
@@ -353,15 +376,99 @@ class MySQLRepository:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """)
 
+    # ---------- 專案 ----------
+    def add_project(self, project: Project) -> Project:
+        with self._tx() as cur:
+            cur.execute(
+                "INSERT INTO projects (id, owner_id, name, mode, created_at, updated_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s)",
+                (project.id, project.owner_id, project.name, project.mode, project.created_at, project.updated_at),
+            )
+        return project
+
+    def get_project(self, project_id: str) -> Project | None:
+        with self._tx() as cur:
+            cur.execute("SELECT * FROM projects WHERE id=%s", (project_id,))
+            r = cur.fetchone()
+        return _row_to_project(r) if r else None
+
+    def list_projects_by_owner(self, owner_id: str) -> list[Project]:
+        with self._tx() as cur:
+            cur.execute("SELECT * FROM projects WHERE owner_id=%s ORDER BY created_at", (owner_id,))
+            rows = cur.fetchall()
+        return [_row_to_project(r) for r in rows]
+
+    def update_project(self, project: Project) -> Project:
+        project.updated_at = time.time()
+        with self._tx() as cur:
+            cur.execute(
+                "UPDATE projects SET name=%s, mode=%s, updated_at=%s WHERE id=%s",
+                (project.name, project.mode, project.updated_at, project.id),
+            )
+        return project
+
+    def delete_project(self, project_id: str) -> list[str]:
+        """刪除專案及其圖檔、遮罩檔與種子範例，回傳欲刪除的檔案路徑。"""
+        with self._tx() as cur:
+            cur.execute("SELECT id FROM projects WHERE id=%s FOR UPDATE", (project_id,))
+            if not cur.fetchone():
+                return []
+            
+            # 查出專案下的原圖與遮罩檔路徑
+            cur.execute("SELECT path FROM images WHERE project_id=%s", (project_id,))
+            paths = [r["path"] for r in cur.fetchall() if r.get("path")]
+
+            cur.execute(
+                "SELECT s.mask_path FROM segments s "
+                "JOIN images i ON i.id = s.image_id "
+                "WHERE i.project_id=%s",
+                (project_id,)
+            )
+            paths += [r["mask_path"] for r in cur.fetchall() if r.get("mask_path")]
+
+            # 清除 segments, images, examples, projects
+            cur.execute(
+                "DELETE s FROM segments s "
+                "JOIN images i ON i.id = s.image_id "
+                "WHERE i.project_id=%s",
+                (project_id,)
+            )
+            cur.execute("DELETE FROM images WHERE project_id=%s", (project_id,))
+            cur.execute("DELETE FROM examples WHERE project_id=%s", (project_id,))
+            cur.execute("DELETE FROM projects WHERE id=%s", (project_id,))
+
+        return [p for p in paths if p]
+
+    def get_or_create_default_project(self, owner_id: str) -> Project:
+        user_projects = self.list_projects_by_owner(owner_id)
+        if user_projects:
+            default_proj = user_projects[0]
+        else:
+            default_proj = Project(owner_id=owner_id, name="預設專案")
+            self.add_project(default_proj)
+
+        # 補綁定舊圖片與舊範例
+        with self._tx() as cur:
+            cur.execute(
+                "UPDATE images SET project_id=%s WHERE owner_id=%s AND (project_id IS NULL OR project_id='')",
+                (default_proj.id, owner_id)
+            )
+            cur.execute(
+                "UPDATE examples SET project_id=%s WHERE owner_id=%s AND (project_id IS NULL OR project_id='')",
+                (default_proj.id, owner_id)
+            )
+
+        return default_proj
+
     # ---------- 影像 ----------
     def add_image(self, img: ImageRecord) -> ImageRecord:
         with self._tx() as cur:
             cur.execute(
                 "INSERT INTO images "
-                "(id, owner_id, filename, path, width, height, file_hash, created_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "(id, owner_id, project_id, filename, path, width, height, file_hash, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
-                    img.id, img.owner_id, img.filename, img.path,
+                    img.id, img.owner_id, img.project_id, img.filename, img.path,
                     img.width, img.height, img.file_hash, img.created_at,
                 ),
             )
@@ -381,9 +488,12 @@ class MySQLRepository:
             r = cur.fetchone()
         return _row_to_image(r) if r else None
 
-    def list_images(self) -> list[ImageRecord]:
+    def list_images(self, project_id: str | None = None) -> list[ImageRecord]:
         with self._tx() as cur:
-            cur.execute("SELECT * FROM images ORDER BY created_at")
+            if project_id is None:
+                cur.execute("SELECT * FROM images ORDER BY created_at")
+            else:
+                cur.execute("SELECT * FROM images WHERE project_id=%s OR (project_id='' AND owner_id='') ORDER BY created_at", (project_id,))
             rows = cur.fetchall()
         return [_row_to_image(r) for r in rows]
 
@@ -482,39 +592,50 @@ class MySQLRepository:
         with self._tx() as cur:
             cur.execute(
                 "INSERT INTO examples "
-                "(id, owner_id, label, feature, source_segment_id, created_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s)",
+                "(id, owner_id, project_id, label, feature, source_segment_id, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (
-                    ex.id, ex.owner_id, ex.label, json.dumps(ex.feature),
+                    ex.id, ex.owner_id, ex.project_id, ex.label, json.dumps(ex.feature),
                     ex.source_segment_id, ex.created_at,
                 ),
             )
         return ex
 
-    def list_examples(self, owner_id: str | None = None) -> list[LabelExample]:
+    def list_examples(self, owner_id: str | None = None, project_id: str | None = None) -> list[LabelExample]:
         with self._tx() as cur:
-            if owner_id is None:
+            conditions = []
+            params = []
+            if owner_id is not None:
+                conditions.append("owner_id=%s")
+                params.append(owner_id)
+            if project_id is not None:
+                conditions.append("project_id=%s")
+                params.append(project_id)
+
+            if not conditions:
                 cur.execute("SELECT * FROM examples")
             else:
-                cur.execute(
-                    "SELECT * FROM examples WHERE owner_id=%s",
-                    (owner_id,),
-                )
+                where_clause = " WHERE " + " AND ".join(conditions)
+                cur.execute(f"SELECT * FROM examples{where_clause}", tuple(params))
             rows = cur.fetchall()
         return [_row_to_example(r) for r in rows]
 
-    def labels(self, owner_id: str | None = None) -> list[str]:
+    def labels(self, owner_id: str | None = None, project_id: str | None = None) -> list[str]:
         with self._tx() as cur:
-            if owner_id is None:
-                cur.execute(
-                    "SELECT DISTINCT label FROM examples ORDER BY label"
-                )
+            conditions = []
+            params = []
+            if owner_id is not None:
+                conditions.append("owner_id=%s")
+                params.append(owner_id)
+            if project_id is not None:
+                conditions.append("project_id=%s")
+                params.append(project_id)
+
+            if not conditions:
+                cur.execute("SELECT DISTINCT label FROM examples ORDER BY label")
             else:
-                cur.execute(
-                    "SELECT DISTINCT label FROM examples "
-                    "WHERE owner_id=%s ORDER BY label",
-                    (owner_id,),
-                )
+                where_clause = " WHERE " + " AND ".join(conditions)
+                cur.execute(f"SELECT DISTINCT label FROM examples{where_clause} ORDER BY label", tuple(params))
             rows = cur.fetchall()
         return [r["label"] for r in rows]
 

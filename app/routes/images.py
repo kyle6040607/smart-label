@@ -12,6 +12,7 @@ from werkzeug.utils import secure_filename
 from app.routes import (
     can_access_image,
     get_config,
+    get_current_project_id,
     get_current_user_id,
     get_owned_image,
     get_repo,
@@ -82,8 +83,10 @@ def upload():
 
         extension = f.filename.rsplit(".", 1)[1].lower()
         name = secure_filename(f.filename)
+        project_id = request.form.get("project_id") or get_current_project_id()
         rec = ImageRecord(
             owner_id=get_current_user_id(),
+            project_id=project_id,
             filename=name,
             file_hash=file_hash,
         )
@@ -144,9 +147,10 @@ def upload():
 
 @bp.get("")
 def list_images():
+    project_id = request.args.get("project_id") or get_current_project_id()
     return jsonify([
         image.to_dict()
-        for image in get_repo().list_images()
+        for image in get_repo().list_images(project_id=project_id)
         if can_access_image(image)
     ])
 

@@ -30,6 +30,23 @@ def get_current_user_id() -> str:
     return str(session.get("user_id") or "")
 
 
+def get_current_project_id() -> str:
+    """回傳目前活躍的專案 ID。若 session 無記錄，自動取得或建立預設專案。"""
+    user_id = get_current_user_id()
+    if not user_id:
+        return ""
+    repo = get_repo()
+    proj_id = session.get("active_project_id")
+    if proj_id:
+        proj = repo.get_project(str(proj_id))
+        if proj and proj.owner_id == user_id:
+            return proj.id
+
+    default_proj = repo.get_or_create_default_project(user_id)
+    session["active_project_id"] = default_proj.id
+    return default_proj.id
+
+
 def can_access_image(image) -> bool:
     """圖片只能由擁有者存取；舊的無主圖片僅開放管理者。"""
     user_id = get_current_user_id()

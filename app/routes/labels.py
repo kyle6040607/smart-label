@@ -4,6 +4,7 @@ from __future__ import annotations
 from flask import Blueprint, abort, jsonify, request
 
 from app.routes import (
+    get_current_project_id,
     get_current_user_id,
     get_owned_segment,
     get_pipeline,
@@ -15,7 +16,7 @@ bp = Blueprint("labels", __name__, url_prefix="/api")
 
 @bp.get("/labels")
 def list_labels():
-    return jsonify(get_repo().labels(get_current_user_id()))
+    return jsonify(get_repo().labels(get_current_user_id(), get_current_project_id()))
 
 
 @bp.post("/segments/<seg_id>/label")
@@ -34,7 +35,7 @@ def label_segment(seg_id: str):
 @bp.delete("/labels/<path:label>")
 def delete_label(label: str):
     """刪掉建錯的類別：移除它所有種子範例並回訓。"""
-    n = get_pipeline().delete_label(label, get_current_user_id())
+    n = get_pipeline().delete_label(label, get_current_user_id(), get_current_project_id())
     if n == 0:
         abort(404, "查無此類別")
     return jsonify({"deleted": label, "examples_removed": n})
@@ -44,5 +45,5 @@ def delete_label(label: str):
 def list_examples():
     return jsonify([
         example.to_dict()
-        for example in get_repo().list_examples(get_current_user_id())
+        for example in get_repo().list_examples(get_current_user_id(), get_current_project_id())
     ])
