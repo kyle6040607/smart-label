@@ -17,6 +17,7 @@ dependencies = [
     "opencv-python>=4.13.0.92",
     "pillow>=12.2.0",
     "pymysql>=1.2.0",
+    "py7zr>=0.22.0",
     "python-dotenv>=1.2.2",
     "scikit-learn>=1.9.0",
     "timm>=1.0.27",

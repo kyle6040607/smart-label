@@ -5,6 +5,16 @@ import hashlib
 import io
 import mimetypes
 
+import os
+import tarfile
+import tempfile
+import zipfile
+
+try:
+    import py7zr
+except ImportError:
+    py7zr = None
+
 from flask import Blueprint, abort, jsonify, request, send_file
 from PIL import Image, ImageOps
 from werkzeug.utils import secure_filename
@@ -27,12 +37,99 @@ def _allowed(filename: str, allowed: tuple[str, ...]) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed
 
 
-def _collect_known_hashes(repo, storage) -> set[str]:
-    """收齊目前使用者看得到的照片雜湊值，供上傳去重比對。
+def _is_archive(filename: str, allowed_archive_ext: tuple[str, ...]) -> bool:
+    if "." not in filename:
+        return False
+    lower = filename.lower()
+    return any(lower.endswith(f".{ext}") for ext in allowed_archive_ext)
 
-    舊資料（含 LIFF 上傳）沒存 file_hash，這裡補算後寫回 DB——
-    每個請求只做一次，否則多檔上傳會對同一批舊照片重複下載。
-    """
+
+def _extract_images_from_archive(
+    filename: str,
+    file_bytes: bytes,
+    allowed_image_ext: tuple[str, ...],
+    max_image_size: int,
+) -> list[tuple[str, bytes]]:
+    """從壓縮檔 (.zip, .7z, .tar, .tar.gz 等) 提取符合副檔名與大小限制的影像檔案。"""
+    extracted: list[tuple[str, bytes]] = []
+    lower_name = filename.lower()
+
+    def _should_keep(member_name: str) -> bool:
+        base = os.path.basename(member_name)
+        if not base or base.startswith(".") or member_name.startswith("__MACOSX"):
+            return False
+        if "." not in base:
+            return False
+        ext = base.rsplit(".", 1)[1].lower()
+        return ext in allowed_image_ext
+
+    # 1. ZIP 檔
+    if lower_name.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+                for member in zf.infolist():
+                    if member.is_dir():
+                        continue
+                    if _should_keep(member.filename):
+                        if member.file_size <= max_image_size:
+                            data = zf.read(member)
+                            base_name = os.path.basename(member.filename)
+                            extracted.append((base_name, data))
+        except Exception:
+            pass
+
+    # 2. 7Z 檔
+    elif lower_name.endswith(".7z") and py7zr is not None:
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with py7zr.SevenZipFile(io.BytesIO(file_bytes), mode="r") as sz:
+                    sz.extractall(path=tmpdir)
+                for root, _, files in os.walk(tmpdir):
+                    for fname in files:
+                        full_p = os.path.join(root, fname)
+                        if _should_keep(fname):
+                            if os.path.getsize(full_p) <= max_image_size:
+                                with open(full_p, "rb") as fp:
+                                    extracted.append((fname, fp.read()))
+        except Exception:
+            pass
+
+    # 3. TAR / GZ / BZ2 / XZ 檔
+    elif any(
+        lower_name.endswith(ext)
+        for ext in (
+            ".tar",
+            ".tar.gz",
+            ".tgz",
+            ".tar.bz2",
+            ".tbz2",
+            ".tar.xz",
+            ".txz",
+            ".gz",
+            ".bz2",
+            ".xz",
+        )
+    ):
+        try:
+            with tarfile.open(fileobj=io.BytesIO(file_bytes), mode="r:*") as tf:
+                for member in tf.getmembers():
+                    if not member.isfile():
+                        continue
+                    if _should_keep(member.name):
+                        if member.size <= max_image_size:
+                            f_obj = tf.extractfile(member)
+                            if f_obj is not None:
+                                data = f_obj.read()
+                                base_name = os.path.basename(member.name)
+                                extracted.append((base_name, data))
+        except Exception:
+            pass
+
+    return extracted
+
+
+def _collect_known_hashes(repo, storage) -> set[str]:
+    """收齊目前使用者看得到的照片雜湊值，供上傳去重比對。"""
     hashes = set()
 
     for img in repo.list_images():
@@ -57,33 +154,52 @@ def _collect_known_hashes(repo, storage) -> set[str]:
 
 @bp.post("")
 def upload():
-    """支援一次上傳多張。回傳建立的 ImageRecord 清單。"""
+    """支援一次上傳多張照片或壓縮檔 (zip/7z/tar)。回傳建立的 ImageRecord 清單。"""
     cfg, repo, storage = get_config(), get_repo(), get_storage()
     files = request.files.getlist("files") or request.files.getlist("file")
     if not files:
         abort(400, "沒有收到檔案（欄位名 files）")
 
+    items_to_process: list[tuple[str, bytes]] = []
+
+    for f in files:
+        if not f.filename:
+            continue
+
+        raw_bytes = f.read()
+        f.seek(0)
+
+        if _is_archive(f.filename, cfg.allowed_archive_ext):
+            extracted = _extract_images_from_archive(
+                f.filename,
+                raw_bytes,
+                cfg.allowed_ext,
+                cfg.max_image_size,
+            )
+            items_to_process.extend(extracted)
+        elif _allowed(f.filename, cfg.allowed_ext):
+            if len(raw_bytes) <= cfg.max_image_size:
+                items_to_process.append((f.filename, raw_bytes))
+
+    if not items_to_process:
+        abort(400, "沒有有效的影像檔或解壓後無支援格式影像")
+
     created = []
     duplicates = []
     known_hashes = _collect_known_hashes(repo, storage)
+    project_id = request.form.get("project_id") or get_current_project_id()
 
-    for f in files:
-        if not f.filename or not _allowed(f.filename, cfg.allowed_ext):
-            continue
-
-        # 計算檔案的 SHA-256 雜湊值
-        file_bytes = f.read()
-        f.seek(0)
+    for orig_filename, file_bytes in items_to_process:
+        # 計算檔案 SHA-256
         file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-        # 比對是否已有相同雜湊值的照片已上傳（含同一批次內的重複）
         if file_hash in known_hashes:
-            duplicates.append(f.filename)
+            duplicates.append(orig_filename)
             continue
 
-        extension = f.filename.rsplit(".", 1)[1].lower()
-        name = secure_filename(f.filename)
-        project_id = request.form.get("project_id") or get_current_project_id()
+        extension = orig_filename.rsplit(".", 1)[1].lower() if "." in orig_filename else "png"
+        name = secure_filename(orig_filename) or f"uploaded.{extension}"
+
         rec = ImageRecord(
             owner_id=get_current_user_id(),
             project_id=project_id,
@@ -91,42 +207,39 @@ def upload():
             file_hash=file_hash,
         )
 
-        if not name:
-            name = f"{rec.id}.{extension}"
-            rec.filename = name
+        try:
+            with Image.open(io.BytesIO(file_bytes)) as im:
+                save_format = im.format or extension.upper()
+                if save_format.upper() == "JPG":
+                    save_format = "JPEG"
+                processed_image = ImageOps.exif_transpose(im)
 
-        # 在記憶體中校正圖片方向及縮圖，再交給目前選用的儲存後端。
-        with Image.open(io.BytesIO(file_bytes)) as im:
-            save_format = im.format or extension.upper()
-            if save_format.upper() == "JPG":
-                save_format = "JPEG"
-            processed_image = ImageOps.exif_transpose(im)
+                max_side = 1024
+                if max(processed_image.size) > max_side:
+                    scale = max_side / max(processed_image.size)
+                    new_size = (
+                        int(processed_image.size[0] * scale),
+                        int(processed_image.size[1] * scale),
+                    )
+                    processed_image = processed_image.resize(
+                        new_size,
+                        Image.Resampling.LANCZOS,
+                    )
 
-            max_side = 1024
+                rec.width, rec.height = processed_image.size
 
-            if max(processed_image.size) > max_side:
-                scale = max_side / max(processed_image.size)
-                new_size = (
-                    int(processed_image.size[0] * scale),
-                    int(processed_image.size[1] * scale),
+                output = io.BytesIO()
+                processed_image.save(
+                    output,
+                    format=save_format,
                 )
-                processed_image = processed_image.resize(
-                    new_size,
-                    Image.Resampling.LANCZOS,
-                )
-
-            rec.width, rec.height = processed_image.size
-
-            output = io.BytesIO()
-            processed_image.save(
-                output,
-                format=save_format,
-            )
+        except Exception:
+            # 檔案格式無法解碼為圖片時略過
+            continue
 
         content_type = (
             Image.MIME.get(save_format.upper())
-            or f.mimetype
-            or "application/octet-stream"
+            or f"image/{extension}"
         )
         rec.path = storage.save_bytes(
             f"images/{rec.id}_{name}",

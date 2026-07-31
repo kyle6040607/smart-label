@@ -62,15 +62,31 @@
     <div class="left-col">
       <!-- 1. 上傳 -->
       <section class="panel">
-        <h2 style="margin-bottom: 8px;">1 · 上傳照片</h2>
-        <input type="file" id="fileInput" multiple accept="image/*" style="display: none;" />
-        <div id="dropZone" class="drop-zone">
-          <p>拖曳照片至此，或點選下方按鈕</p>
-          <div style="display: flex; justify-content: center; gap: 8px; align-items: center;">
-            <button id="selectFileBtn" type="button" class="btn-secondary">選擇檔案</button>
-            <button id="uploadBtn" type="button">上傳</button>
+        <h2 style="margin-bottom: 8px;">1 · 上傳照片與資料集</h2>
+        <input type="file" id="fileInput" multiple accept="image/*,.zip,.7z,.tar,.gz,.tgz,.bz2,.xz" style="display: none;" />
+        <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="點擊或拖曳檔案至此進行上傳">
+          <div class="drop-zone-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="36" height="36">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
           </div>
-          <span class="hint" id="fileCountHint" style="display: block; margin-top: 8px;">尚未選擇檔案</span>
+          <div class="drop-zone-content">
+            <p class="drop-zone-title">拖曳照片或資料集壓縮檔至此</p>
+            <p class="drop-zone-subtitle">或點擊此處選擇檔案 — 支援單張照片與資料集壓縮檔</p>
+            
+            <div class="drop-zone-specs">
+              <div class="spec-line"><span class="spec-label">單張照片 &lt;25 MB</span> — JPG, PNG, WEBP, BMP, TIFF, HEIC, AVIF</div>
+              <div class="spec-line"><span class="spec-label">資料集壓縮檔 &lt;8 GB</span> — ZIP, TAR, 7Z (自動解壓提取圖片)</div>
+            </div>
+
+            <div class="drop-zone-actions" style="display: flex; justify-content: center; gap: 8px; align-items: center; margin-top: 14px;">
+              <button id="uploadBtn" type="button" style="display: none;">開始上傳</button>
+              <button id="cancelUploadBtn" type="button" class="btn-danger" style="display: none; padding: 7px 14px; font-size: 13px;">取消上傳</button>
+            </div>
+            <span class="hint" id="fileCountHint" style="display: block; margin-top: 10px;">尚未選擇檔案</span>
+          </div>
         </div>
 
         <!-- 展開照片庫按鈕 (位置置中於上傳框下方) -->
