@@ -149,8 +149,8 @@ function setSegmentationLoading(active, message = "分割中…", showProgress =
   }
 
   $("drawBtn").disabled = active || !state.currentImage;
-  $("textPromptInput").disabled = active || !state.currentImage;
-  $("textSegBtn").disabled = active || !state.currentImage;
+  $("textPromptInput").disabled = active;
+  $("textSegBtn").disabled = active;
 }
 
 function updateProgressBar(percent) {
@@ -478,7 +478,7 @@ async function selectImageById(imageId, targetSegId = null) {
     const im = await res.json();
 
     const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${im.id}/file"]`) ||
-                     document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
+      document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
 
     selectImage(im, thumbImg, targetSegId);
   } catch (err) {
@@ -1203,7 +1203,7 @@ let reviewProgressChartInstance = null;
 function getCssVar(varName, fallback = '') {
   if (typeof window === "undefined" || !document.documentElement) return fallback;
   const val = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return val || fallback; 
+  return val || fallback;
 }
 
 function applyMode(mode) {
@@ -1672,6 +1672,8 @@ if (batchTextBtn) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let successCnt = 0;
+      let failCnt = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1688,8 +1690,23 @@ if (batchTextBtn) {
               const pct = Math.round((msg.current / msg.total) * 100);
               updateProgressBar(pct);
               setSegmentationLoading(true, `[${msg.current}/${msg.total}] 正在分析 ${msg.filename} (Prompt: '${prompt}')...`, true);
+            } else if (msg.event === "image_done") {
+              successCnt++;
+            } else if (msg.event === "image_error") {
+              failCnt++;
+              console.warn(`圖片 ${msg.filename} 標註失敗: ${msg.message}`);
             } else if (msg.event === "done") {
-              alert(`🎉 成功完成共 ${msg.total_images} 張圖片的 YOLO-World 批次自動標註！`);
+              const successNum = msg.success_images !== undefined ? msg.success_images : successCnt;
+              const totalNum = msg.total_images !== undefined ? msg.total_images : (successNum + failCnt);
+              const failedNum = totalNum - successNum;
+
+              if (successNum === totalNum && totalNum > 0) {
+                alert(`🎉 批次標註全數成功！共成功標註 ${successNum} 張圖片！`);
+              } else if (successNum === 0) {
+                alert(`❌ 批次標註全數失敗！共 ${totalNum} 張圖片皆無法處理（請檢查模型或圖片）。`);
+              } else {
+                alert(`⚠️ 批次標註部分完成！成功：${successNum} 張，失敗：${failedNum} 張。`);
+              }
             } else if (msg.event === "error") {
               alert("批次標註發生錯誤：" + msg.message);
             }
@@ -1699,8 +1716,8 @@ if (batchTextBtn) {
         }
       }
       await refreshSidebar();
-      if (state.currentImageId) {
-        await selectImage(state.currentImageId);
+      if (state.currentImage && state.currentImage.id) {
+        await selectImageById(state.currentImage.id);
       }
     } catch (err) {
       console.error("批次標註異常:", err);
