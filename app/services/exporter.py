@@ -4,7 +4,7 @@
 支援三種下游常見格式，使用者匯出時自選：
 
   - coco : COCO instance segmentation（images/ + annotations.json）
-  - yolo : YOLOv8-seg（images/ + labels/*.txt + data.yaml）
+  - yolo : YOLOv26x-seg（images/ + labels/*.txt + data.yaml）
   - mask : 語意分割 mask PNG（images/ + masks/*.png + classes.txt）
 
 只收已有最終類別（final_label）的片段——那才算「標好」的資料。
@@ -211,7 +211,7 @@ def _write_coco(z, repo, by_image, labels, storage):
     z.writestr("annotations.json", json.dumps(coco, ensure_ascii=False, indent=2))
 
 
-# ---------- YOLOv8 segmentation ----------
+# ---------- YOLOv26x-seg ----------
 def _write_yolo(z, repo, by_image, labels, storage):
     cls_idx = {name: i for i, name in enumerate(labels)}
     for image_id, segs in by_image.items():

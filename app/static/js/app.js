@@ -150,8 +150,8 @@ function setSegmentationLoading(active, message = "分割中…", showProgress =
   }
 
   $("drawBtn").disabled = active || !state.currentImage;
-  $("textPromptInput").disabled = active || !state.currentImage;
-  $("textSegBtn").disabled = active || !state.currentImage;
+  $("textPromptInput").disabled = active;
+  $("textSegBtn").disabled = active;
 }
 
 function updateProgressBar(percent) {
@@ -741,7 +741,7 @@ async function selectImageById(imageId, targetSegId = null) {
     const im = await res.json();
 
     const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${im.id}/file"]`) ||
-                     document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
+      document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
 
     selectImage(im, thumbImg, targetSegId);
   } catch (err) {
@@ -1694,7 +1694,7 @@ let reviewProgressChartInstance = null;
 function getCssVar(varName, fallback = '') {
   if (typeof window === "undefined" || !document.documentElement) return fallback;
   const val = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return val || fallback; 
+  return val || fallback;
 }
 
 function applyMode(mode) {
@@ -2112,3 +2112,111 @@ if (toggleBtn) {
 }
 
 applyMode(state.mode);
+
+// ==========================================
+// ⚡ 多圖批次文字標註 (Batch Auto-Labeling with Prompt)
+// ==========================================
+const batchTextBtn = $("batchTextSegBtn");
+if (batchTextBtn) {
+  batchTextBtn.onclick = async () => {
+    const promptInput = $("textPromptInput");
+    const prompt = promptInput ? promptInput.value.trim() : "";
+    if (!prompt) {
+      alert("請先在搜尋框輸入要批次標註的物件名稱（例如：strawberry）！");
+      if (promptInput) promptInput.focus();
+      return;
+    }
+
+    // 🔍 精確抓取網頁圖庫中所有打藍色勾勾 (.thumb-chk:checked) 的圖片 ID
+    const checkedChks = document.querySelectorAll(".thumb-chk:checked");
+    const selectedIds = Array.from(checkedChks).map(chk => chk.dataset.id).filter(Boolean);
+    const hasSelected = selectedIds.length > 0;
+    const targetText = hasSelected ? `已勾選的 ${selectedIds.length} 張圖片` : "圖庫內的所有圖片";
+
+    if (!confirm(`確定要對 ${targetText}，統一套用 Prompt: '${prompt}' 進行 YOLO-World 批次自動標註嗎？`)) {
+      return;
+    }
+
+    batchTextBtn.disabled = true;
+    batchTextBtn.textContent = "⚡ 標註處理中...";
+    setSegmentationLoading(true, `正在對 ${targetText} 進行批次標註 (${prompt})...`, true);
+
+    try {
+      const res = await fetch("/api/images/batch_segment_text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: prompt,
+          image_ids: hasSelected ? selectedIds : []
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        alert("批次標註失敗：" + (err.error || "未知錯誤"));
+        setSegmentationLoading(false);
+        batchTextBtn.disabled = false;
+        batchTextBtn.textContent = "⚡ 批次多圖標註";
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let successCnt = 0;
+      let failCnt = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.event === "progress") {
+              const pct = Math.round((msg.current / msg.total) * 100);
+              updateProgressBar(pct);
+              setSegmentationLoading(true, `[${msg.current}/${msg.total}] 正在分析 ${msg.filename} (Prompt: '${prompt}')...`, true);
+            } else if (msg.event === "image_done") {
+              successCnt++;
+            } else if (msg.event === "image_error") {
+              failCnt++;
+              console.warn(`圖片 ${msg.filename} 標註失敗: ${msg.message}`);
+            } else if (msg.event === "done") {
+              const successNum = msg.success_images !== undefined ? msg.success_images : successCnt;
+              const totalNum = msg.total_images !== undefined ? msg.total_images : (successNum + failCnt);
+              const failedNum = totalNum - successNum;
+
+              if (successNum === totalNum && totalNum > 0) {
+                alert(`🎉 批次標註全數成功！共成功標註 ${successNum} 張圖片！`);
+              } else if (successNum === 0) {
+                alert(`❌ 批次標註全數失敗！共 ${totalNum} 張圖片皆無法處理（請檢查模型或圖片）。`);
+              } else {
+                alert(`⚠️ 批次標註部分完成！成功：${successNum} 張，失敗：${failedNum} 張。`);
+              }
+            } else if (msg.event === "error") {
+              alert("批次標註發生錯誤：" + msg.message);
+            }
+          } catch (e) {
+            console.error("解析進度失敗", e);
+          }
+        }
+      }
+      await refreshSidebar();
+      if (state.currentImage && state.currentImage.id) {
+        await selectImageById(state.currentImage.id);
+      }
+    } catch (err) {
+      console.error("批次標註異常:", err);
+      alert("批次標註通訊失敗：" + err.message);
+    } finally {
+      setSegmentationLoading(false);
+      batchTextBtn.disabled = false;
+      batchTextBtn.textContent = "⚡ 批次多圖標註";
+    }
+  };
+}

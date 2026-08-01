@@ -185,8 +185,9 @@
         <div class="tool-group">
           <button id="autoSegBtn" class="layman-hide" disabled>自動分割整張</button>
           <div class="text-seg-wrap">
-            <input type="text" id="textPromptInput" placeholder="輸入文字搜尋物件（如：飛機）" disabled />
+            <input type="text" id="textPromptInput" placeholder="輸入文字搜尋物件（如：strawberry）" />
             <button id="textSegBtn" disabled class="btn-link text-seg-btn">🔍 文字分割</button>
+            <button id="batchTextSegBtn" class="btn-link text-seg-btn" style="background: #2563eb; color: white;">⚡ 批次多圖標註</button>
           </div>
         </div>
         <div class="tool-group layman-hide">
@@ -245,7 +246,7 @@
       <div class="export">
         <select id="exportFormat">
           <option value="coco">COCO（instance seg）</option>
-          <option value="yolo">YOLOv8-seg</option>
+          <option value="yolo">YOLOv26x-seg</option>
           <option value="mask">Mask PNG（語意分割）</option>
         </select>
         <button id="exportBtn">下載 ZIP</button>

@@ -180,15 +180,10 @@ class Pipeline:
         self,
         image: ImageRecord,
         prompt: str,
+        parsed_classes: list[str] | None = None,
         progress_callback: Callable[[dict], None] | None = None,
     ) -> list[Segment]:
-        """依文字提示分割圖片中的物件。
-
-        - prompt 會先移除前後空白，不可為空，最多 200 個字元。
-        - 回傳零到多個已完成遮罩存檔、分類與 Repository 寫入的 Segment。
-        - 找不到符合物件時回傳空列表，不視為錯誤。
-        - prompt 只是搜尋條件，不直接作為 human_label。
-        """
+        """依文字提示分割圖片中的物件。"""
         prompt = prompt.strip()
         if not prompt:
             raise ValueError("prompt 不可為空")
@@ -205,19 +200,21 @@ class Pipeline:
 
         img = self._read_rgb(image.path)
 
-        # 中文或超過 3 個英文單字時，交給 Gemini 解析物件類別
-        words = prompt.split()
-        has_chinese = any("\u4e00" <= c <= "\u9fff" for c in prompt)
-        use_gemini = has_chinese or len(words) > 3
+        if parsed_classes is None:
+            # 中文或超過 3 個英文單字時，交給 Gemini 解析物件類別
+            words = prompt.split()
+            has_chinese = any("\u4e00" <= c <= "\u9fff" for c in prompt)
+            use_gemini = has_chinese or len(words) > 3
 
-        parsed_classes = (
-            self.gemini_service.parse_prompt(prompt)
-            if use_gemini
-            else [prompt]
-        )
+            parsed_classes = (
+                self.gemini_service.parse_prompt(prompt)
+                if use_gemini
+                else [prompt]
+            )
 
         # Mock 測試模式：不載入真實模型
         if not self.config.use_real_sam:
+            print(f"⚠️ [Pipeline Status] 目前為 Mock 模擬模式 (use_real_sam=False)，跳過 YOLO-World 載入。若要接通真實 AI 模型，請確認 .env 中設為 USE_REAL_SAM=1。")
             mock_segments: list[Segment] = []
             h, w = img.shape[:2]
 
@@ -264,6 +261,7 @@ class Pipeline:
 
             return mock_segments
 
+        print(f"🚀 [Real AI Engine] 正在對圖片使用真實 YOLO-World + MobileSAM 進行 Prompt '{parsed_classes}' 標註分析...")
         # 動態載入 YOLO-World
         if self.yolo_detector is None:
             model_path = str(
