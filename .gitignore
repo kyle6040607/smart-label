@@ -27,6 +27,7 @@ coverage.xml
 htmlcov/
 *.log
 
+
 # IDE / editors
 .vscode/
 .idea/
@@ -52,6 +53,9 @@ _ppt_dump.txt
 models/*.pth
 models/*.pt
 weights/
+app/ml/GroundingDINO/
+
+
 
 # 環境變數
 .env

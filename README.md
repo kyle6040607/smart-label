@@ -101,6 +101,39 @@ USE_REAL_SAM=1 uv run python main.py
 
 > 正式環境產生金鑰範例：`python -c "import os; print(os.urandom(32).hex())"`，把結果設成 `SECRET_KEY`。同一部署（多 worker / 多容器）要用**同一把** key，session 才會一致。
 
+## 圖片與遮罩儲存
+
+預設存於本機 `data/uploads`、`data/masks`、`data/tasks`。若要改存
+Google Cloud Storage，在 `.env` 設定：
+
+```dotenv
+USE_GCS=1
+GCS_PROJECT_ID=smart-label-501610
+GCS_BUCKET=smart_label_bucket
+```
+
+GCS 物件分別存於 `images/`、`masks/`、`datasets/`。`USE_GCS=1`
+時若 GCS storage 未正確建立，應用程式會直接失敗，不會靜默改存本機。
+
+啟用 GCS 前，必須在仍可讀取舊本機檔案的機器上搬移既有資料：
+
+```bash
+uv run python scripts/migrate_files_to_gcs.py --dry-run
+uv run python scripts/migrate_files_to_gcs.py
+```
+
+腳本會上傳並改寫 `images.path`、`segments.mask_path` 及
+`annotation_tasks.dataset_zip_path`。它不會刪除本機來源檔案，且可以安全重跑。
+若 DB 記錄的舊路徑已搬到其他位置，可用 `--source-root` 指定舊 `data` 目錄。
+MySQL 資料量較大時可用 `--batch-size` 調整每批讀取筆數；正式遷移會先完成
+全量 preflight，任何來源缺檔時都不會開始上傳。也可使用
+`--preflight-only` 只做檢查。
+
+LIFF 任務 ZIP 會直接串流寫入目前 storage，不會先把整包 ZIP 放進記憶體。
+下載 GCS ZIP 時會優先產生 10 分鐘有效的 signed URL；Cloud Run service
+account 需具備 `iam.serviceAccounts.signBlob` 權限。若只有簽署權限缺失，
+系統會記錄 warning 並退回由應用程式分塊串流。
+
 ## API 一覽
 
 | 方法 | 路徑 | 用途 |

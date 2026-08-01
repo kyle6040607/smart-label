@@ -1,25 +1,33 @@
 """分割 API（提案 demo 第 3 步：系統自動分割，低信心標紅）。"""
 from __future__ import annotations
 
+import io
 import json
 import queue
 import threading
-from pathlib import Path
 
 from flask import Blueprint, abort, jsonify, request, send_file, Response
 
-from app.routes import get_pipeline, get_repo
+from app.routes import (
+    get_owned_image,
+    get_owned_segment,
+    get_pipeline,
+    get_repo,
+    get_storage,
+)
 
 bp = Blueprint("segment", __name__, url_prefix="/api")
+
+# YOLO-World 推論解析度的可接受範圍（Ultralytics 要求為 32 的倍數）
+YOLO_IMGSZ_MIN = 320
+YOLO_IMGSZ_MAX = 1536
 
 
 @bp.post("/images/<image_id>/segment")
 def segment_image(image_id: str):
     """對整張圖自動切割並分類，回傳所有片段（含信心、是否送審）與完成狀態。"""
     repo, pipeline = get_repo(), get_pipeline()
-    img = repo.get_image(image_id)
-    if not img:
-        abort(404)
+    img = get_owned_image(image_id)
 
     # 紀錄執行前的片段數量
     existing_count = len(repo.list_segments(image_id))
@@ -72,9 +80,7 @@ def segment_image(image_id: str):
 def segment_point(image_id: str):
     """互動式：在使用者點擊座標切出單一物件。body: {"x": int, "y": int}"""
     repo, pipeline = get_repo(), get_pipeline()
-    img = repo.get_image(image_id)
-    if not img:
-        abort(404)
+    img = get_owned_image(image_id)
     data = request.get_json(force=True)
     seg = pipeline.segment_point(img, (int(data["x"]), int(data["y"])))
     return jsonify(seg.to_dict()), 201
@@ -84,9 +90,7 @@ def segment_point(image_id: str):
 def segment_text(image_id: str):
     """自然語言分割。body: {"prompt": "cat"}，回傳零到多個 Segment。"""
     repo, pipeline = get_repo(), get_pipeline()
-    img = repo.get_image(image_id)
-    if not img:
-        abort(404, "找不到圖片")
+    img = get_owned_image(image_id)
 
     data = request.get_json(silent=True) or {}
     prompt = str(data.get("prompt", "")).strip()
@@ -133,9 +137,7 @@ def segment_text(image_id: str):
 def segment_polygon(image_id: str):
     """手動描邊：使用者沿邊界畫出多邊形。body: {"points": [[x,y], ...]}"""
     repo, pipeline = get_repo(), get_pipeline()
-    img = repo.get_image(image_id)
-    if not img:
-        abort(404)
+    img = get_owned_image(image_id)
     data = request.get_json(force=True)
     points = [(int(x), int(y)) for x, y in data.get("points", [])]
     if len(points) < 3:
@@ -146,6 +148,7 @@ def segment_polygon(image_id: str):
 
 @bp.get("/images/<image_id>/segments")
 def list_segments(image_id: str):
+    get_owned_image(image_id)
     return jsonify([s.to_dict() for s in get_repo().list_segments(image_id)])
 
 
@@ -153,11 +156,10 @@ def list_segments(image_id: str):
 def delete_segment(seg_id: str):
     """刪掉切壞/不要的片段，連同它的遮罩 PNG。"""
     repo = get_repo()
-    if not repo.get_segment(seg_id):
-        abort(404)
+    get_owned_segment(seg_id)
     mask = repo.delete_segment(seg_id)
     if mask:
-        Path(mask).unlink(missing_ok=True)
+        get_storage().delete(mask)
     return jsonify({"deleted": seg_id})
 
 
@@ -170,9 +172,11 @@ def delete_segments_batch():
     if not seg_ids:
         abort(400, "無效的片段 ID 清單")
 
+    for seg_id in seg_ids:
+        get_owned_segment(str(seg_id))
     paths = repo.delete_segments_batch(seg_ids)
     for p in paths:
-        Path(p).unlink(missing_ok=True)
+        get_storage().delete(p)
 
     return jsonify({"deleted_ids": seg_ids}), 200
 
@@ -180,10 +184,18 @@ def delete_segments_batch():
 @bp.get("/segments/<seg_id>/mask")
 def segment_mask(seg_id: str):
     """回傳遮罩 PNG，給前端疊圖。"""
-    seg = get_repo().get_segment(seg_id)
+    seg = get_owned_segment(seg_id)
     if not seg or not seg.mask_path:
         abort(404)
-    return send_file(Path(seg.mask_path), mimetype="image/png")
+    try:
+        data = get_storage().read_bytes(seg.mask_path)
+    except FileNotFoundError:
+        abort(404)
+    return send_file(
+        io.BytesIO(data),
+        mimetype="image/png",
+        download_name=f"{seg.id}.png",
+    )
 
 
 @bp.get("/parameters")
@@ -192,7 +204,8 @@ def get_parameters():
     pipeline = get_pipeline()
     return jsonify({
         "confidence_threshold": pipeline.config.confidence_threshold,
-        "yolo_world_confidence": pipeline.config.yolo_world_confidence
+        "yolo_world_confidence": pipeline.config.yolo_world_confidence,
+        "yolo_imgsz": pipeline.config.yolo_imgsz
     })
 
 
@@ -230,12 +243,35 @@ def update_parameters():
         pipeline.config.yolo_world_confidence = val
         repo.set_parameter("yolo_world_confidence", val)
 
+    if "yolo_imgsz" in data:
+        raw_val = data["yolo_imgsz"]
+        if isinstance(raw_val, bool):
+            return jsonify({"error": "yolo_imgsz 必須為有效的整數"}), 400
+        try:
+            num_val = float(raw_val)
+        except (ValueError, TypeError):
+            return jsonify({"error": "yolo_imgsz 必須為有效的整數"}), 400
+        if num_val != int(num_val):
+            return jsonify({"error": "yolo_imgsz 必須為有效的整數"}), 400
+        val = int(num_val)
+        # Ultralytics 會把非 32 倍數的值靜默調整，先擋掉避免實際生效值與顯示值不符
+        if not (YOLO_IMGSZ_MIN <= val <= YOLO_IMGSZ_MAX) or val % 32 != 0:
+            return jsonify({
+                "error": (
+                    f"yolo_imgsz 必須為 {YOLO_IMGSZ_MIN} 至 {YOLO_IMGSZ_MAX} 之間、"
+                    "且為 32 的倍數"
+                )
+            }), 400
+        pipeline.config.yolo_imgsz = val
+        repo.set_parameter("yolo_imgsz", val)
+
     pipeline.reclassify_pending()
 
     return jsonify({
         "status": "success",
         "parameters": {
             "confidence_threshold": pipeline.config.confidence_threshold,
-            "yolo_world_confidence": pipeline.config.yolo_world_confidence
+            "yolo_world_confidence": pipeline.config.yolo_world_confidence,
+            "yolo_imgsz": pipeline.config.yolo_imgsz
         }
     })

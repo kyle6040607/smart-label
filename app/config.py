@@ -20,6 +20,15 @@ MASK_DIR = DATA_DIR / "masks"
 DB_FILE = DATA_DIR / "store.json"
 
 
+def _env_bool(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 
 def _resolve_secret_key() -> str:
     """決定 session 簽章用的 SECRET_KEY。
@@ -53,6 +62,9 @@ class Config:
     confidence_strategy: str = os.getenv("CONFIDENCE_STRATEGY", "max_prob")
     confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.6"))
     yolo_world_confidence: float = float(os.getenv("YOLO_WORLD_CONFIDENCE", "0.4"))
+    # YOLO-World 推論解析度：越大越抓得到小物件，但速度與記憶體成本上升。
+    # Ultralytics 要求為 32 的倍數，可用範圍見 routes/segment.py 的驗證。
+    yolo_imgsz: int = int(os.getenv("YOLO_IMGSZ", "640"))
 
     # --- few-shot 分類器（提案第 6、7 頁）---
     # classifier: "knn" | "softmax"
@@ -75,6 +87,20 @@ class Config:
     # --- 後端模型開關：mock 先跑通流程，之後抽換真模型 ---
     use_real_sam: bool = os.getenv("USE_REAL_SAM", "0") == "1"
     use_real_embedding: bool = os.getenv("USE_REAL_EMBEDDING", "0") == "1"
+
+    # --- 檔案儲存（本機 / Google Cloud Storage）---
+    use_gcs: bool = _env_bool("USE_GCS")
+    gcs_project_id: str = (
+        os.getenv("GCS_PROJECT_ID", "")
+        or os.getenv("GCP_PROJECT_ID", "")
+        or os.getenv("GCP_PROJECT", "")
+        or os.getenv("GOOGLE_CLOUD_PROJECT", "")
+        or os.getenv("GCLOUD_PROJECT", "")
+    ).strip()
+    gcs_bucket_name: str = (
+        os.getenv("GCS_BUCKET_NAME", "")
+        or os.getenv("GCS_BUCKET", "")
+    ).strip()
 
     # --- LINE Bot（Messaging API channel）---
     line_channel_secret: str = os.getenv("LINE_CHANNEL_SECRET", "")

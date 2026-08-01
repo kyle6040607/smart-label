@@ -33,6 +33,15 @@ class Repository:
             self._save()
         return img
 
+    def set_image_hash(self, image_id: str, file_hash: str) -> None:
+        """補寫舊資料缺少的 file_hash；只在欄位仍為空時寫入。"""
+        with self._lock:
+            img = self.images.get(image_id)
+            if img is None or img.file_hash:
+                return
+            img.file_hash = file_hash
+            self._save()
+
     def get_image(self, image_id: str) -> ImageRecord | None:
         return self.images.get(image_id)
 
@@ -155,16 +164,34 @@ class Repository:
 
         with self._lock:
             for task in self.tasks.values():
-                if (
-                    task.line_user_id == line_user_id
-                    and not task.user_id
-                ):
+                if task.line_user_id != line_user_id:
+                    continue
+                if task.user_id and task.user_id != user_id:
+                    continue
+                if not task.user_id:
                     task.user_id = user_id
                     task.updated_at = time.time()
                     assigned_count += 1
+                if task.user_id == user_id:
+                    for image_id in task.image_ids:
+                        image = self.images.get(image_id)
+                        if image is not None and not image.owner_id:
+                            image.owner_id = user_id
+                    task_image_ids = set(task.image_ids)
+                    task_segment_ids = {
+                        segment.id
+                        for segment in self.segments.values()
+                        if segment.image_id in task_image_ids
+                    }
+                    for example in self.examples.values():
+                        if (
+                            not example.owner_id
+                            and example.source_segment_id in task_segment_ids
+                        ):
+                            example.owner_id = user_id
 
-            if assigned_count > 0:
-                self._save()
+            # 即使任務早已歸戶，也可能需要補上新版的圖片 owner_id。
+            self._save()
 
         return assigned_count
 
@@ -221,24 +248,46 @@ class Repository:
             self._save()
         return ex
 
-    def list_examples(self) -> list[LabelExample]:
-        return list(self.examples.values())
+    def list_examples(self, owner_id: str | None = None) -> list[LabelExample]:
+        examples = self.examples.values()
+        if owner_id is not None:
+            examples = [
+                example for example in examples
+                if example.owner_id == owner_id
+            ]
+        return list(examples)
 
-    def labels(self) -> list[str]:
-        return sorted({ex.label for ex in self.examples.values()})
+    def labels(self, owner_id: str | None = None) -> list[str]:
+        return sorted({
+            example.label for example in self.list_examples(owner_id)
+        })
 
-    def delete_label(self, label: str) -> int:
+    def delete_label(self, label: str, owner_id: str | None = None) -> int:
         """刪掉某類別的所有種子範例（標錯類別時用），回傳刪除的範例數。
 
         連帶把用這個錯誤類別人工標過的片段退回送審——類別都錯了，
         那些標記也不該留在匯出資料裡。回訓由上層 pipeline 負責。
         """
         with self._lock:
-            ids = [eid for eid, ex in self.examples.items() if ex.label == label]
+            ids = [
+                example_id
+                for example_id, example in self.examples.items()
+                if (
+                    example.label == label
+                    and (owner_id is None or example.owner_id == owner_id)
+                )
+            ]
             for eid in ids:
                 del self.examples[eid]
             for seg in self.segments.values():
-                if seg.human_label == label:
+                image = self.images.get(seg.image_id)
+                if (
+                    seg.human_label == label
+                    and (
+                        owner_id is None
+                        or (image is not None and image.owner_id == owner_id)
+                    )
+                ):
                     seg.human_label = None
                     seg.reviewed = False
                     seg.needs_review = True
@@ -275,6 +324,43 @@ class Repository:
 
     def list_users(self) -> list[User]:
         return list(self.users.values())
+
+    def transfer_ownership(self, from_user_id: str, to_user_id: str) -> dict[str, int]:
+        """把一個帳號名下的圖片、種子範例與任務全部轉移給另一個帳號。
+
+        用於 LINE 綁定時合併系統自動建立的佔位帳號。
+        回傳各類別實際轉移的筆數，讓呼叫端可以記錄。
+        Segment 沒有自己的 owner，擁有權由所屬圖片決定，因此不需處理。
+        """
+        moved = {"images": 0, "examples": 0, "tasks": 0}
+        if not from_user_id or from_user_id == to_user_id:
+            return moved
+
+        with self._lock:
+            for image in self.images.values():
+                if image.owner_id == from_user_id:
+                    image.owner_id = to_user_id
+                    moved["images"] += 1
+            for example in self.examples.values():
+                if example.owner_id == from_user_id:
+                    example.owner_id = to_user_id
+                    moved["examples"] += 1
+            for task in self.tasks.values():
+                if task.user_id == from_user_id:
+                    task.user_id = to_user_id
+                    task.updated_at = time.time()
+                    moved["tasks"] += 1
+            self._save()
+
+        return moved
+
+    def delete_user(self, user_id: str) -> bool:
+        """刪除帳號本身；名下資料請先用 transfer_ownership 轉移，否則會變成無主。"""
+        with self._lock:
+            if self.users.pop(user_id, None) is None:
+                return False
+            self._save()
+        return True
 
     # ---------- 統計（給準確率曲線 / 省下工時用）----------
     def stats(self) -> dict:
@@ -327,7 +413,16 @@ class Repository:
             d.pop("final_label", None)  # 衍生欄位不還原
             self.segments[d["id"]] = Segment(**{k: v for k, v in d.items() if k in Segment.__dataclass_fields__})
         for d in data.get("examples", []):
-            self.examples[d["id"]] = LabelExample(**{k: v for k, v in d.items() if k in LabelExample.__dataclass_fields__})
+            example = LabelExample(**{
+                k: v for k, v in d.items()
+                if k in LabelExample.__dataclass_fields__
+            })
+            if not example.owner_id and example.source_segment_id:
+                segment = self.segments.get(example.source_segment_id)
+                image = self.images.get(segment.image_id) if segment else None
+                if image is not None:
+                    example.owner_id = image.owner_id
+            self.examples[d["id"]] = example
         for d in data.get("users", []):
             self.users[d["id"]] = User(**{k: v for k, v in d.items() if k in User.__dataclass_fields__})
         for d in data.get("tasks", []):

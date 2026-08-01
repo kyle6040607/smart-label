@@ -2,8 +2,9 @@ from pathlib import Path
 
 from app.models import AnnotationTask
 from app.repository import Repository
-from app.services.exporter import build_dataset
+from app.services.exporter import write_dataset
 from app.services.pipeline import Pipeline
+from app.storage import LocalStorage, StorageService
 
 
 def process_task(
@@ -11,8 +12,35 @@ def process_task(
     pipeline: Pipeline,
     task: AnnotationTask,
     output_dir: Path,
+    *,
+    storage: StorageService | None = None,
 ) -> AnnotationTask:
     """執行單一 LIFF 標註任務並產生 YOLO ZIP。"""
+    if storage is None:
+        storage = getattr(pipeline, "storage", None)
+
+    pipeline_config = getattr(pipeline, "config", None)
+    if (
+        bool(getattr(pipeline_config, "use_gcs", False))
+        and (
+            storage is None
+            or storage.backend_name != "gcs"
+        )
+    ):
+        raise RuntimeError(
+            "USE_GCS=1，但 task_processor 沒有取得 GCS storage"
+        )
+
+    if storage is None:
+        storage = StorageService(
+            local=LocalStorage(
+                data_dir=output_dir.parent,
+                upload_dir=output_dir.parent / "uploads",
+                mask_dir=output_dir.parent / "masks",
+                dataset_dir=output_dir,
+            )
+        )
+
     processed_image_ids = set(task.processed_image_ids)
     pending_image_ids = [
         image_id
@@ -42,9 +70,7 @@ def process_task(
             )
 
             for mask_path in mask_paths:
-                Path(mask_path).unlink(
-                    missing_ok=True
-                )
+                storage.delete(mask_path)
 
         segments = pipeline.segment_text(
             image,
@@ -57,31 +83,29 @@ def process_task(
             f"找不到符合標註內容的物件：{task.prompt}"
         )
 
-    zip_bytes = build_dataset(
-        repo,
-        "yolo",
-        image_ids=set(task.image_ids),
-    )
-
-    task_dir = output_dir / task.id
-    task_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
     next_dataset_version = task.dataset_version + 1
-    zip_path = task_dir / f"dataset_v{next_dataset_version}.zip"
-    temporary_zip_path = zip_path.with_suffix(".tmp")
-
-    temporary_zip_path.write_bytes(zip_bytes)
-    temporary_zip_path.replace(zip_path)
+    object_name = (
+        f"datasets/{task.id}/"
+        f"dataset_v{next_dataset_version}.zip"
+    )
+    with storage.open_writer(
+        object_name,
+        "application/zip",
+    ) as (output, dataset_reference):
+        write_dataset(
+            repo,
+            "yolo",
+            output=output,
+            image_ids=set(task.image_ids),
+            storage=storage,
+        )
 
     task.processed_image_ids = list(dict.fromkeys([
         *task.processed_image_ids,
         *pending_image_ids,
     ]))
     task.dataset_version = next_dataset_version
-    task.dataset_zip_path = str(zip_path)
+    task.dataset_zip_path = dataset_reference
     task.status = "completed"
     task.error_message = ""
 

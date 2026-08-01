@@ -12,6 +12,10 @@ __pycache__
 
 runs/
 data/
+# 權重一律不進 build context，改由 Dockerfile 在建置階段下載並驗證雜湊值。
+# 這個 repo 對 *.pt 用 Git LFS（見 .gitattributes），Cloud Build 的 checkout
+# 只會拿到 133 bytes 的 LFS 指標檔；放行的話它會被 COPY . . 蓋掉 curl 下來的
+# 真檔案，torch.load 讀到純文字直接崩潰（曾造成線上服務中斷）。
 models/*.pth
 models/*.pt
 weights/

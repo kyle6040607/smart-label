@@ -19,15 +19,21 @@ from app.ml.embedding import build_embedder
 from app.ml.sam import build_segmenter
 from app.models import ImageRecord, LabelExample, Segment
 from app.repository import Repository
-from app.utils import imread, imwrite
 from app.ml.yolo_world import YoloWorldDetector
 from app.services.gemini import GeminiService
+from app.storage import (StorageService, require_configured_storage,)
 
 
 class Pipeline:
-    def __init__(self, config: Config, repo: Repository):
+    def __init__(
+        self,
+        config: Config,
+        repo: Repository,
+        storage: StorageService | None = None,
+    ):
         self.config = config
         self.repo = repo
+        self.storage = require_configured_storage(config, storage,)
         self.yolo_detector = None
         self.gemini_service = GeminiService(config.gemini_api_key)
         self.segmenter = build_segmenter(
@@ -41,23 +47,65 @@ class Pipeline:
             min_mask_region_area=config.sam_min_mask_region_area,
         )
         self.embedder = build_embedder(config.use_real_embedding)
-        self.classifier = FewShotClassifier(
-            kind=config.classifier_kind, k=config.knn_k, temperature=config.softmax_temperature
-        )
+        # 每位使用者各自擁有分類器，避免範例、類別與預測互相污染。
+        # classifier 保留為 owner_id="" 的相容別名，供舊資料與既有測試使用。
+        self.classifiers: dict[str, FewShotClassifier] = {}
+        self.classifier = self._new_classifier()
+        self.classifiers[""] = self.classifier
         self.refit()
 
+    def _new_classifier(self) -> FewShotClassifier:
+        return FewShotClassifier(
+            kind=self.config.classifier_kind,
+            k=self.config.knn_k,
+            temperature=self.config.softmax_temperature,
+        )
+
+    def _classifier_for(self, owner_id: str) -> FewShotClassifier:
+        classifier = self.classifiers.get(owner_id)
+        if classifier is None:
+            classifier = self._new_classifier()
+            classifier.fit(self.repo.list_examples(owner_id))
+            self.classifiers[owner_id] = classifier
+        return classifier
+
+    def _owner_for_segment(self, segment: Segment) -> str:
+        image = self.repo.get_image(segment.image_id)
+        return image.owner_id if image is not None else ""
+
     # ---------- 影像 IO ----------
-    @staticmethod
-    def _read_rgb(path: str) -> np.ndarray:
-        bgr = imread(path, cv2.IMREAD_COLOR)
+    def _read_rgb(self, reference: str) -> np.ndarray:
+        encoded = np.frombuffer(
+            self.storage.read_bytes(reference),
+            dtype=np.uint8,
+        )
+        bgr = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
         if bgr is None:
-            raise FileNotFoundError(path)
+            raise ValueError(f"無法解碼圖片：{reference}")
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
     def _save_mask(self, image_id: str, seg_id: str, mask: np.ndarray) -> str:
-        out = self.config.mask_dir / f"{image_id}_{seg_id}.png"
-        imwrite(str(out), (mask > 0).astype(np.uint8) * 255)
-        return str(out)
+        ok, encoded = cv2.imencode(
+            ".png",
+            (mask > 0).astype(np.uint8) * 255,
+        )
+        if not ok:
+            raise ValueError("遮罩 PNG 編碼失敗")
+        return self.storage.save_bytes(
+            f"masks/{image_id}_{seg_id}.png",
+            encoded.tobytes(),
+            "image/png",
+        )
+
+    def _read_mask(self, reference: str) -> np.ndarray:
+        encoded = np.frombuffer(
+            self.storage.read_bytes(reference),
+            dtype=np.uint8,
+        )
+        mask = cv2.imdecode(encoded, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError(f"無法解碼遮罩：{reference}")
+        return mask
 
     # ---------- 自動分割整張圖（提案 demo 第 1 步：自動分割）----------
     def segment_image(self, image: ImageRecord, progress_callback: Callable[[dict], None] | None = None) -> list[Segment]:
@@ -226,6 +274,7 @@ class Pipeline:
                 cls_name,
                 device=self.segmenter.device,
                 conf=self.config.yolo_world_confidence,
+                imgsz=self.config.yolo_imgsz,
             )
             detections.extend(
                 (cls_name, bbox)
@@ -320,8 +369,9 @@ class Pipeline:
     # ---------- 對單一片段做分類 + 信心判斷 ----------
     def _classify_segment(self, img: np.ndarray, seg: Segment, mask: np.ndarray) -> None:
         feat = self.embedder.encode(img, mask)
-        if self.classifier.ready:
-            probs = self.classifier.predict(feat)
+        classifier = self._classifier_for(self._owner_for_segment(seg))
+        if classifier.ready:
+            probs = classifier.predict(feat)
             seg.probs = probs
             seg.predicted_label = max(probs, key=probs.get) if probs else None
             seg.confidence = confidence_score(probs, self.config.confidence_strategy)
@@ -332,10 +382,19 @@ class Pipeline:
 
     # ---------- 把某片段存成 few-shot 種子範例（提案第 3 頁第 1 步）----------
     def add_example_from_segment(self, seg: Segment, label: str) -> LabelExample:
-        img = self._read_rgb(self.repo.get_image(seg.image_id).path)
-        mask = imread(seg.mask_path, cv2.IMREAD_GRAYSCALE)
+        image = self.repo.get_image(seg.image_id)
+        if image is None:
+            raise ValueError("找不到片段所屬圖片")
+        owner_id = image.owner_id
+        img = self._read_rgb(image.path)
+        mask = self._read_mask(seg.mask_path)
         feat = self.embedder.encode(img, mask)
-        ex = LabelExample(label=label, feature=feat.tolist(), source_segment_id=seg.id)
+        ex = LabelExample(
+            owner_id=owner_id,
+            label=label,
+            feature=feat.tolist(),
+            source_segment_id=seg.id,
+        )
         self.repo.add_example(ex)
 
         # 人也順手把這片段標好
@@ -345,34 +404,56 @@ class Pipeline:
         self.repo.update_segment(seg)
 
         # 主動學習迴圈：回訓 + 重新預測未審片段
-        self.refit()
-        self.reclassify_pending()
+        self.refit(owner_id)
+        self.reclassify_pending(owner_id)
         return ex
 
     # ---------- 刪掉標錯的類別（連帶回訓）----------
-    def delete_label(self, label: str) -> int:
-        n = self.repo.delete_label(label)
-        self.refit()
-        self.reclassify_pending()
+    def delete_label(self, label: str, owner_id: str = "") -> int:
+        n = self.repo.delete_label(label, owner_id)
+        self.refit(owner_id)
+        self.reclassify_pending(owner_id)
         return n
 
     # ---------- 重建分類器 ----------
-    def refit(self) -> None:
-        self.classifier.fit(self.repo.list_examples())
+    def refit(self, owner_id: str | None = None) -> None:
+        if owner_id is None:
+            owner_ids = {
+                example.owner_id for example in self.repo.list_examples()
+            }
+            owner_ids.update(self.classifiers)
+            owner_ids.add("")
+        else:
+            owner_ids = {owner_id}
+
+        for current_owner_id in owner_ids:
+            classifier = self.classifiers.get(current_owner_id)
+            if classifier is None:
+                classifier = self._new_classifier()
+                self.classifiers[current_owner_id] = classifier
+            classifier.fit(self.repo.list_examples(current_owner_id))
+
+        self.classifier = self.classifiers[""]
 
     # ---------- 回訓後重新預測尚未人工審核的片段 ----------
-    def reclassify_pending(self) -> None:
+    def reclassify_pending(self, owner_id: str | None = None) -> None:
         cache: dict[str, np.ndarray] = {}
         for seg in self.repo.list_segments():
             if seg.reviewed:
                 continue
-            if not self.classifier.ready:
+            image = self.repo.get_image(seg.image_id)
+            if image is None:
+                continue
+            if owner_id is not None and image.owner_id != owner_id:
+                continue
+            classifier = self._classifier_for(image.owner_id)
+            if not classifier.ready:
                 # 範例被刪光、分類器失效 → 清掉舊預測，退回送審（別殘留 stale label）
                 seg.probs, seg.predicted_label, seg.confidence, seg.needs_review = {}, None, 0.0, True
                 self.repo.update_segment(seg)
                 continue
             if seg.image_id not in cache:
-                cache[seg.image_id] = self._read_rgb(self.repo.get_image(seg.image_id).path)
-            mask = imread(seg.mask_path, cv2.IMREAD_GRAYSCALE)
+                cache[seg.image_id] = self._read_rgb(image.path)
+            mask = self._read_mask(seg.mask_path)
             self._classify_segment(cache[seg.image_id], seg, mask)
             self.repo.update_segment(seg)

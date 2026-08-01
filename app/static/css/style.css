@@ -1,11 +1,31 @@
-:root {
+:root, [data-theme="dark"] {
   --bg: #0f1419;
   --panel: #1a2230;
+  --panel-sub: rgba(255, 255, 255, 0.02);
   --accent: #4f9cff;
   --danger: #ff5470;
   --ok: #36d399;
   --text: #e6edf3;
   --muted: #8b97a7;
+  --border: #28323f;
+  --input-bg: rgba(15, 20, 25, 0.7);
+  --mode-switch-bg: #111822;
+  --shadow: rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="light"] {
+  --bg: #f7f5f0;
+  --panel: #fffdfa;
+  --panel-sub: #f3efe6;
+  --accent: #2563eb;
+  --danger: #dc2626;
+  --ok: #059669;
+  --text: #2c2825;
+  --muted: #736b63;
+  --border: #e4decb;
+  --input-bg: #f5f1e8;
+  --mode-switch-bg: #e9e3d5;
+  --shadow: rgba(60, 50, 40, 0.08);
 }
 
 * { box-sizing: border-box; }
@@ -15,6 +35,7 @@ body {
   font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
 header {
@@ -23,7 +44,7 @@ header {
   justify-content: space-between;
   gap: 16px;
   padding: 16px 24px;
-  border-bottom: 1px solid #28323f;
+  border-bottom: 1px solid var(--border);
 }
 header h1 { margin: 0; font-size: 22px; }
 .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
@@ -57,10 +78,11 @@ main {
 
 .panel {
   background: var(--panel);
-  border: 1px solid #28323f;
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
   min-width: 0; /* 防止網格項目被大內容撐開 */
+  transition: background 0.3s ease, border-color 0.3s ease;
 }
 .panel h2 { margin-top: 0; font-size: 15px; color: var(--accent); }
 .panel h3 { font-size: 13px; color: var(--muted); }
@@ -84,10 +106,11 @@ button.on { background: #ffd93d; color: #1a2230; font-weight: 600; }
   flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 12px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid #28323f;
+  background: var(--panel-sub);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 14px;
+  transition: background 0.3s ease, border-color 0.3s ease;
 }
 .tool-group {
   display: flex;
@@ -118,19 +141,100 @@ button.on { background: #ffd93d; color: #1a2230; font-weight: 600; }
   font-size: 14px;
 }
 
-.thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.thumb { position: relative; }
-.thumb img {
-  width: 64px; height: 64px; object-fit: cover;
-  border-radius: 6px; cursor: pointer; border: 2px solid transparent;
-  display: block;
+.panel-header-with-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
-.thumb img.active { border-color: var(--accent); }
+
+.gallery-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--mode-switch-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gallery-toggle-btn:hover {
+  background: var(--panel-sub);
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px var(--shadow);
+}
+
+.thumbs-wrapper {
+  position: relative;
+  max-height: 380px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel-sub);
+  margin-top: 10px;
+  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, padding 0.35s ease, margin 0.35s ease;
+}
+
+.queue-wrapper {
+  position: relative;
+  max-height: 420px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel-sub);
+  margin-top: 8px;
+  margin-bottom: 16px;
+}
+
+/* 預設/折疊狀態：隱藏整個縮圖視窗與所有圖片 */
+.thumbs-wrapper.collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  border: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+/* 4x4 / 5x4 網格排版 */
+.thumbs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.thumb { position: relative; width: 100%; }
+.thumb img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  display: block;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+.thumb img:hover { transform: scale(1.03); }
+.thumb img.active { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .thumb-del {
   position: absolute; top: -6px; right: -6px;
   width: 20px; height: 20px; padding: 0; line-height: 1;
   border-radius: 50%; background: var(--danger); color: #fff;
   font-size: 14px; opacity: 0; transition: opacity .15s;
+  z-index: 6;
 }
 .thumb:hover .thumb-del { opacity: 1; }
 
@@ -139,7 +243,7 @@ button.on { background: #ffd93d; color: #1a2230; font-weight: 600; }
   overflow: auto;
   max-height: 70vh;
   min-height: 80px;
-  border: 1px solid #28323f;
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 canvas {
@@ -160,7 +264,7 @@ canvas {
   gap: 10px;
   min-width: 100%;
   min-height: 100%;
-  background: rgb(15 20 25 / 72%);
+  background: var(--shadow);
   color: var(--text);
   font-size: 14px;
   font-weight: 600;
@@ -169,7 +273,7 @@ canvas {
 .spinner {
   width: 20px;
   height: 20px;
-  border: 3px solid rgb(255 255 255 / 28%);
+  border: 3px solid var(--border);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin .8s linear infinite;
@@ -185,14 +289,15 @@ canvas {
 .queue { list-style: none; padding: 0; margin: 0; }
 .queue li {
   padding: 8px; border-radius: 6px; margin-bottom: 6px;
-  background: #232f3f; border-left: 3px solid var(--danger);
+  background: var(--panel-sub); border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
   font-size: 12px;
 }
 .queue li .probs { color: var(--muted); }
 .queue li .queue-item { display: flex; gap: 8px; align-items: flex-start; }
 .queue li .seg-thumb {
   width: 56px; height: 56px; flex-shrink: 0;
-  border-radius: 4px; background: #1a2332;
+  border-radius: 4px; background: var(--input-bg);
 }
 .queue li .queue-body { flex: 1; min-width: 0; }
 .queue li input:not([type="checkbox"]) { width: 90px; margin-right: 6px; }
@@ -202,7 +307,7 @@ canvas {
 .labels li {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 6px 4px 10px; border-radius: 14px;
-  background: #232f3f; font-size: 12px;
+  background: var(--panel-sub); border: 1px solid var(--border); font-size: 12px;
 }
 .label-del {
   width: 18px; height: 18px; padding: 0; line-height: 1;
@@ -211,18 +316,21 @@ canvas {
 
 .export { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .export select {
-  background: #232f3f; color: var(--text);
-  border: 1px solid #28323f; border-radius: 6px; padding: 7px 8px; font-size: 13px;
+  background: var(--input-bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; font-size: 13px;
+}
+.export select option {
+  background: var(--panel); color: var(--text);
 }
 .export .hint { flex-basis: 100%; margin: 2px 0 0; }
 
 /* 拖曳上傳區域 (Drag & Drop Zone) */
 .drop-zone {
-  border: 2px dashed #28323f;
+  border: 2px dashed var(--border);
   border-radius: 8px;
   padding: 24px 16px;
   text-align: center;
-  background: rgb(26 34 48 / 40%);
+  background: var(--panel-sub);
   transition: border-color 0.2s, background-color 0.2s;
   margin-top: 8px;
   margin-bottom: 12px;
@@ -245,17 +353,22 @@ canvas {
   background: rgb(79 156 255 / 10%);
 }
 
-/* 批次管理控制條 */
+/* 批次管理控制條 (置頂浮動) */
 .batch-control-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid #28323f;
+  background: var(--panel-sub);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 10px;
-  margin-top: 10px;
-  margin-bottom: 12px;
+  margin-top: 0;
+  margin-bottom: 8px;
+  box-shadow: 0 2px 6px var(--shadow);
 }
 
 /* 批次管理危險按鈕 */
@@ -319,11 +432,16 @@ button.btn-danger:disabled {
 #textPromptInput {
   padding: 8px 12px;
   border-radius: 6px;
-  border: 1px solid #3f4e60;
-  background: #1e293b;
-  color: #fff;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
   width: 220px;
   font-size: 13px;
+  outline: none;
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+#textPromptInput:focus {
+  border-color: var(--accent);
 }
 .text-seg-btn {
   background: var(--accent) !important;
@@ -391,11 +509,74 @@ button.btn-danger:disabled {
   }
 }
 
+/* 標頭中央操作區（雙模式 + 主題切換） */
+.header-center-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.theme-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--mode-switch-bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.theme-toggle-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  transform: scale(1.08);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+.theme-toggle-btn .theme-icon {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+  position: absolute;
+}
+
+/* 深色模式顯示太陽，點擊可切換成淺色 */
+:root:not([data-theme="light"]) .sun-icon,
+[data-theme="dark"] .sun-icon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+:root:not([data-theme="light"]) .moon-icon,
+[data-theme="dark"] .moon-icon {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.5);
+}
+
+/* 淺色模式顯示月亮，點擊可切換成深色 */
+[data-theme="light"] .sun-icon {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.5);
+}
+
+[data-theme="light"] .moon-icon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
 /* 雙模式切換器 */
 .mode-switch-wrapper {
   display: flex;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid #28323f;
+  background: var(--mode-switch-bg);
+  border: 1px solid var(--border);
   border-radius: 20px;
   padding: 3px;
   position: relative;
@@ -477,27 +658,31 @@ button.btn-danger:disabled {
 .param-val-input {
   font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
   font-weight: 600;
-  color: #4f9cff;
+  color: var(--accent);
   font-size: 17px;
-  background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.9));
-  border: 1px solid rgba(79, 156, 255, 0.3);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 4px 10px;
   width: 80px;
   text-align: center;
   outline: none;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.2);
+  box-shadow: inset 0 1px 3px var(--shadow);
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   font-variant-numeric: tabular-nums;
 }
+.param-val-input option {
+  background: var(--panel);
+  color: var(--text);
+}
 .param-val-input:hover {
-  border-color: rgba(79, 156, 255, 0.6);
-  background: linear-gradient(135deg, rgba(35, 48, 68, 0.8), rgba(20, 30, 48, 0.95));
+  border-color: var(--accent);
+  background: var(--panel-sub);
 }
 .param-val-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 12px rgba(79, 156, 255, 0.4), inset 0 2px 4px rgba(0, 0, 0, 0.4);
-  background: linear-gradient(135deg, rgba(40, 56, 80, 0.9), rgba(25, 36, 56, 0.98));
+  box-shadow: 0 0 8px var(--shadow);
+  background: var(--panel-sub);
 }
 
 .slider-wrap {
@@ -521,7 +706,7 @@ button.btn-danger:disabled {
   background: var(--accent);
   border-radius: 2px;
   pointer-events: none;
-  box-shadow: 0 0 8px rgba(79, 156, 255, 0.9);
+  box-shadow: 0 0 8px var(--shadow);
   z-index: 1;
 }
 
@@ -531,10 +716,10 @@ button.btn-danger:disabled {
   width: 100%;
   height: 8px;
   border-radius: 999px;
-  background: #1b2636;
+  background: var(--mode-switch-bg);
   outline: none;
   margin: 12px 0 8px 0;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+  box-shadow: inset 0 1px 3px var(--shadow);
   cursor: pointer;
   transition: background 0.3s;
 }

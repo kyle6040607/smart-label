@@ -275,6 +275,7 @@ $("uploadBtn").onclick = async () => {
     // 增量渲染：直接將這批剛創好的照片 append 到縮圖區
     if (Array.isArray(createdImages) && createdImages.length > 0) {
       appendThumbs(createdImages);
+      expandGallery();
     }
 
     if (fileCountHint) {
@@ -351,6 +352,39 @@ function createThumbElement(im) {
   return wrap;
 }
 
+// 照片庫折疊控制
+function initGalleryCollapse() {
+  const toggleBtn = $("toggleGalleryCollapseBtn");
+  const wrapper = $("thumbsWrapper");
+  if (!toggleBtn || !wrapper) return;
+
+  toggleBtn.onclick = () => {
+    const isCollapsed = wrapper.classList.toggle("collapsed");
+    updateGalleryToggleUI(!isCollapsed);
+  };
+}
+
+function updateGalleryToggleUI(isExpanded) {
+  const icon = $("galleryToggleIcon");
+  const text = $("galleryToggleText");
+  const box = $("thumbs");
+  const count = box ? box.querySelectorAll(".thumb").length : 0;
+  const wrapper = $("thumbsWrapper");
+  const isCurrentlyCollapsed = wrapper ? wrapper.classList.contains("collapsed") : true;
+
+  if (icon) icon.textContent = isCurrentlyCollapsed ? "▼" : "▲";
+  if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${count})` : `折疊照片庫 (${count})`;
+}
+
+function expandGallery() {
+  const wrapper = $("thumbsWrapper");
+  if (wrapper && wrapper.classList.contains("collapsed")) {
+    wrapper.classList.remove("collapsed");
+  }
+  updateGalleryToggleUI(true);
+}
+initGalleryCollapse();
+
 function appendThumbs(newImages) {
   const box = $("thumbs");
   if (!box || !newImages || !newImages.length) return;
@@ -368,6 +402,7 @@ function appendThumbs(newImages) {
     $("selectAllImgs").checked = false;
     updateImgBatchBtnState();
   }
+  updateGalleryToggleUI();
 }
 
 async function loadThumbs() {
@@ -379,6 +414,7 @@ async function loadThumbs() {
   box.classList.toggle("batch-active", state.imgBatchMode);
 
   appendThumbs(imgs);
+  updateGalleryToggleUI();
 }
 
 async function deleteImage(im) {
@@ -396,11 +432,11 @@ async function deleteImage(im) {
 }
 
 // ---------- 選圖並畫到 canvas ----------
-function selectImage(im, el) {
+function selectImage(im, el, targetSegId = null) {
   if (state.segmenting) return;
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
-  el.classList.add("active");
+  if (el) el.classList.add("active");
 
   state.autoSegCompleted = false;
   updateAutoSegBtn(true);
@@ -423,7 +459,7 @@ function selectImage(im, el) {
       if (!res.ok) return;
       const segments = await res.json();
       if (!state.currentImage || state.currentImage.id !== im.id) return;
-      await redraw(segments);
+      await redraw(segments, targetSegId);
 
       state.autoSegCompleted = (segments.length > 0);
       updateAutoSegBtn();
@@ -432,6 +468,22 @@ function selectImage(im, el) {
     }
   };
   pic.src = `/api/images/${im.id}/file`;
+}
+
+async function selectImageById(imageId, targetSegId = null) {
+  if (state.segmenting) return;
+  try {
+    const res = await fetch(`/api/images/${imageId}`);
+    if (!res.ok) return;
+    const im = await res.json();
+
+    const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${im.id}/file"]`) ||
+                     document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
+
+    selectImage(im, thumbImg, targetSegId);
+  } catch (err) {
+    console.error("選取照片失敗:", err);
+  }
 }
 
 // ---------- 自動分割整張 ----------
@@ -800,13 +852,26 @@ async function refreshSidebar() {
       updateSegBatchBtnState();
     };
 
-    // 點擊片段預覽圖也可切換勾選狀態
+    // 點擊片段預覽圖：批次模式下勾選，非批次模式下自動切換並選取該張照片 (並高亮該片段)
     const thumbCanvas = li.querySelector(".seg-thumb");
-    thumbCanvas.onclick = () => {
+    thumbCanvas.style.cursor = "pointer";
+    thumbCanvas.title = "點擊自動切換並選取這張照片";
+    thumbCanvas.onclick = (e) => {
+      e.stopPropagation();
       if (state.segBatchMode) {
         chk.checked = !chk.checked;
         updateSegBatchBtnState();
+      } else {
+        selectImageById(s.image_id, s.id);
       }
+    };
+
+    // 點擊整張待審卡片空白處亦可直接切換至該照片
+    li.style.cursor = "pointer";
+    li.onclick = (e) => {
+      if (["INPUT", "BUTTON", "LABEL"].includes(e.target.tagName)) return;
+      if (state.segBatchMode) return;
+      selectImageById(s.image_id, s.id);
     };
 
     // 縮圖：以 bbox 為中心裁一塊正方形（外擴 15% 留點上下文）
@@ -896,7 +961,18 @@ const selectFileBtn = $("selectFileBtn");
 const fileCountHint = $("fileCountHint");
 
 if (dropZone && fileInput && selectFileBtn && fileCountHint) {
-  selectFileBtn.onclick = () => fileInput.click();
+  selectFileBtn.onclick = (e) => {
+    e.stopPropagation();
+    fileInput.value = "";
+    fileInput.click();
+  };
+
+  dropZone.onclick = (e) => {
+    if (e.target.id !== "uploadBtn" && e.target.id !== "selectFileBtn") {
+      fileInput.value = "";
+      fileInput.click();
+    }
+  };
 
   fileInput.onchange = () => {
     const count = fileInput.files.length;
@@ -1195,6 +1271,14 @@ async function loadParameters() {
       $("yoloConfInput").value = data.yolo_world_confidence;
       $("yoloConfValue").value = Number(data.yolo_world_confidence).toFixed(2);
       updateSliderFill($("yoloConfInput"));
+      if (data.yolo_imgsz != null) {
+        const imgszEl = $("yoloImgszInput");
+        // 後端若回傳下拉選單沒有的值（例如用環境變數設的），補一個選項再選取
+        if (!Array.from(imgszEl.options).some((o) => o.value === String(data.yolo_imgsz))) {
+          imgszEl.add(new Option(String(data.yolo_imgsz), String(data.yolo_imgsz)));
+        }
+        imgszEl.value = String(data.yolo_imgsz);
+      }
     }
   } catch (err) {
     console.error("載入參數失敗:", err);
@@ -1401,6 +1485,23 @@ if (switchWrapper) {
   };
 }
 
+// 深色 / 淺色主題切換控制 (Dark / Light Mode Toggle)
+function initThemeToggle() {
+  const themeBtn = document.getElementById("themeToggleBtn");
+  const savedTheme = localStorage.getItem("app_theme") || "dark";
+  document.documentElement.setAttribute("data-theme", savedTheme);
+
+  if (themeBtn) {
+    themeBtn.onclick = () => {
+      const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
+      const nextTheme = currentTheme === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", nextTheme);
+      localStorage.setItem("app_theme", nextTheme);
+    };
+  }
+}
+initThemeToggle();
+
 function bindNumericInputGuard(inputEl, sliderEl, minVal, maxVal, onUpdate) {
   if (!inputEl) return;
 
@@ -1487,12 +1588,13 @@ $("saveParamsBtn").onclick = async () => {
   if (isNaN(yolo_world_confidence)) {
     yolo_world_confidence = parseFloat($("yoloConfInput").value);
   }
+  const yolo_imgsz = parseInt($("yoloImgszInput").value, 10);
 
   try {
     const res = await fetch("/api/parameters", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confidence_threshold, yolo_world_confidence })
+      body: JSON.stringify({ confidence_threshold, yolo_world_confidence, yolo_imgsz })
     });
     if (res.ok) {
       alert("參數儲存與重新預測成功！");

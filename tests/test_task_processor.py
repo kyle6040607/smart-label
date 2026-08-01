@@ -21,6 +21,7 @@ def test_process_task_creates_yolo_zip(tmp_path):
     )
     cfg.use_real_sam = False
     cfg.use_real_embedding = False
+    cfg.use_gcs = False
     cfg.ensure_dirs()
 
     repo = Repository(cfg.db_file)
@@ -138,6 +139,69 @@ def test_process_task_rejects_empty_detection(tmp_path):
         / task.id
         / "dataset_v1.zip"
     ).exists()
+
+
+def test_process_task_rejects_local_fallback_when_gcs_is_enabled(
+    tmp_path,
+):
+    class GcsPipelineWithoutStorage:
+        class PipelineConfig:
+            use_gcs = True
+
+        config = PipelineConfig()
+
+        def segment_text(self, image, prompt):
+            pytest.fail("storage 驗證應在處理圖片前發生")
+
+    repo = Repository(tmp_path / "store.json")
+    task = repo.add_task(
+        AnnotationTask(
+            prompt="cat",
+            image_ids=["image-1"],
+            status="processing",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="USE_GCS=1"):
+        process_task(
+            repo,
+            GcsPipelineWithoutStorage(),
+            task,
+            tmp_path / "tasks",
+        )
+
+
+def test_process_task_rejects_explicit_local_storage_in_gcs_mode(
+    tmp_path,
+):
+    class GcsPipeline:
+        class PipelineConfig:
+            use_gcs = True
+
+        config = PipelineConfig()
+
+    class LocalStorageStub:
+        backend_name = "local"
+
+    repo = Repository(tmp_path / "store.json")
+    task = repo.add_task(
+        AnnotationTask(
+            prompt="cat",
+            image_ids=["image-1"],
+            status="processing",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="GCS storage"):
+        process_task(
+            repo,
+            GcsPipeline(),
+            task,
+            tmp_path / "tasks",
+            storage=LocalStorageStub(),
+        )
+
+
 def test_process_task_only_processes_new_images(
     tmp_path,
     monkeypatch,
@@ -152,13 +216,22 @@ def test_process_task_only_processes_new_images(
 
     dataset_image_ids = []
 
-    def fake_build_dataset(repo, fmt, image_ids=None):
+    def fake_write_dataset(
+        repo,
+        fmt,
+        output,
+        image_ids=None,
+        storage=None,
+    ):
+        del repo, fmt, storage
         dataset_image_ids.append(set(image_ids or set()))
-        return f"version-{len(dataset_image_ids)}".encode()
+        output.write(
+            f"version-{len(dataset_image_ids)}".encode()
+        )
 
     monkeypatch.setattr(
-        "app.services.task_processor.build_dataset",
-        fake_build_dataset,
+        "app.services.task_processor.write_dataset",
+        fake_write_dataset,
     )
 
     repo = Repository(tmp_path / "store.json")

@@ -34,25 +34,29 @@
 - 任務清單只回傳該 LINE 使用者自己的任務。
 - 狀態查詢與 ZIP 下載必須驗證任務的隨機 token。
 """
-import os
+import hashlib
+import io
 import secrets
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
+from google.auth.exceptions import TransportError
 from flask import (
     Blueprint,
+    Response,
     current_app,
     jsonify,
+    redirect,
     render_template,
     request,
-    send_file,
+    stream_with_context,
     url_for,
 )
 
 from werkzeug.utils import secure_filename
 
 from app.models import AnnotationTask, ImageRecord
-from app.routes import get_config, get_repo
+from app.routes import get_config, get_repo, get_storage
 from app.services import line_login
 
 
@@ -61,6 +65,15 @@ bp = Blueprint(
     __name__,
     url_prefix="/liff",
 )
+
+_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+def _stream_file(storage, reference: str):
+    """固定大小串流檔案，避免把整個 ZIP 載入記憶體。"""
+    with storage.open_reader(reference) as reader:
+        while chunk := reader.read(_DOWNLOAD_CHUNK_SIZE):
+            yield chunk
 
 
 def _verify_liff_profile(id_token: str):
@@ -219,6 +232,7 @@ def upload_task():
 
     cfg = get_config()
     repo = get_repo()
+    storage = get_storage()
 
     validated_images = []
 
@@ -240,9 +254,12 @@ def upload_task():
             )
         try:
             image.stream.seek(0)
+            image_bytes = image.stream.read()
 
-            with Image.open(image.stream) as uploaded_image:
-                uploaded_image.verify()
+            with Image.open(io.BytesIO(image_bytes)) as uploaded_image:
+                uploaded_image.load()
+                width = uploaded_image.width
+                height = uploaded_image.height
 
         except (UnidentifiedImageError, OSError):
             image.stream.seek(0)
@@ -257,7 +274,15 @@ def upload_task():
             )
 
         image.stream.seek(0)
-        validated_images.append((image, extension))
+        validated_images.append(
+            (
+                image,
+                extension,
+                image_bytes,
+                width,
+                height,
+            )
+        )
 
     display_name = profile.get("name", "")
 
@@ -270,31 +295,36 @@ def upload_task():
         user.display_name or user.username if user is not None else display_name
     )
 
-    upload_dir = cfg.upload_dir
-
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     saved_images = []
 
-    for image, extension in validated_images:
+    for (
+        image,
+        extension,
+        image_bytes,
+        width,
+        height,
+    ) in validated_images:
         safe_original_filename = secure_filename(image.filename)
 
         if not safe_original_filename:
             safe_original_filename = f"upload.{extension}"
 
-        image_record = ImageRecord(filename=safe_original_filename)
+        # 一併存下雜湊值，否則網頁端去重時得回頭把整張圖抓下來重算
+        image_record = ImageRecord(
+            owner_id=web_user_id,
+            filename=safe_original_filename,
+            file_hash=hashlib.sha256(image_bytes).hexdigest(),
+        )
 
         saved_filename = f"{image_record.id}.{extension}"
 
-        save_path = upload_dir / saved_filename
-
-        image.save(save_path)
-
-        with Image.open(save_path) as saved_image:
-            image_record.width = saved_image.width
-            image_record.height = saved_image.height
-
-        image_record.path = str(save_path)
+        image_record.width = width
+        image_record.height = height
+        image_record.path = storage.save_bytes(
+            f"images/{saved_filename}",
+            image_bytes,
+            image.mimetype or "application/octet-stream",
+        )
 
         repo.add_image(image_record)
 
@@ -408,14 +438,36 @@ def download_task_dataset(task_id: str):
     if not task.dataset_zip_path:
         return jsonify({"ok": False, "message": "任務沒有可下載的 ZIP"}), 404
 
-    zip_path = Path(task.dataset_zip_path)
-
-    if not zip_path.is_file():
+    storage = get_storage()
+    if not storage.exists(task.dataset_zip_path):
         return jsonify({"ok": False, "message": "ZIP 檔案不存在"}), 404
 
-    return send_file(
-        zip_path,
+    download_name = f"smart_label_{task.id}_yolo.zip"
+    try:
+        signed_url = storage.generate_download_url(
+            task.dataset_zip_path,
+            download_name,
+        )
+    except (AttributeError, TransportError):
+        current_app.logger.warning(
+            "無法產生 GCS signed URL，改由應用程式串流：%s",
+            task.dataset_zip_path,
+            exc_info=True,
+        )
+        signed_url = None
+
+    if signed_url is not None:
+        return redirect(signed_url, code=302)
+
+    return Response(
+        stream_with_context(
+            _stream_file(storage, task.dataset_zip_path)
+        ),
         mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"smart_label_{task.id}_yolo.zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{download_name}"'
+            ),
+            "X-Accel-Buffering": "no",
+        },
     )

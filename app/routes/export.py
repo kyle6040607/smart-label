@@ -9,7 +9,7 @@ import io
 
 from flask import Blueprint, abort, request, send_file
 
-from app.routes import get_repo
+from app.routes import can_access_image, get_repo, get_storage
 from app.services.exporter import FORMATS, build_dataset
 
 bp = Blueprint("export", __name__, url_prefix="/api")
@@ -21,7 +21,16 @@ def export_dataset():
     fmt = (request.args.get("format") or "coco").lower()
     if fmt not in FORMATS:
         abort(400, f"未知格式：{fmt}（可用：{', '.join(FORMATS)}）")
-    data = build_dataset(get_repo(), fmt)
+    repo = get_repo()
+    image_ids = {
+        image.id for image in repo.list_images() if can_access_image(image)
+    }
+    data = build_dataset(
+        repo,
+        fmt,
+        image_ids=image_ids,
+        storage=get_storage(),
+    )
     return send_file(
         io.BytesIO(data),
         mimetype="application/zip",

@@ -12,6 +12,7 @@ from app.config import Config, config as default_config
 from app.models import User
 from app.services.pipeline import Pipeline
 from app.repository import Repository
+from app.storage import build_storage
 
 
 def _seed_default_user(repo: Repository, cfg: Config) -> None:
@@ -43,7 +44,12 @@ def create_app(config: Config | None = None) -> Flask:
         app.repo = MySQLRepository(cfg)  # type: ignore[attr-defined]
     else:
         app.repo = Repository(cfg.db_file)  # type: ignore[attr-defined]
-    app.pipeline = Pipeline(cfg, app.repo)  # type: ignore[attr-defined]
+    app.storage = build_storage(cfg)  # type: ignore[attr-defined]
+    app.pipeline = Pipeline(  # type: ignore[attr-defined]
+        cfg,
+        app.repo,
+        storage=app.storage,
+    )
 
     # 還原持久化的參數設定
     saved_params = app.repo.get_parameters()
@@ -51,6 +57,8 @@ def create_app(config: Config | None = None) -> Flask:
         app.pipeline.config.confidence_threshold = float(saved_params["confidence_threshold"])
     if "yolo_world_confidence" in saved_params:
         app.pipeline.config.yolo_world_confidence = float(saved_params["yolo_world_confidence"])
+    if "yolo_imgsz" in saved_params:
+        app.pipeline.config.yolo_imgsz = int(saved_params["yolo_imgsz"])
 
     _seed_default_user(app.repo, cfg)
 

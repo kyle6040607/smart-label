@@ -12,9 +12,11 @@ def client(tmp_path):
         mask_dir=tmp_path / "mask", db_file=tmp_path / "store.json",
     )
     cfg.ensure_dirs()
+    cfg.db_backend = "json"
     # 我們不希望用真的 SAM/embedding 來跑測試，強制設為 mock 模式
     cfg.use_real_sam = False
     cfg.use_real_embedding = False
+    cfg.use_gcs = False
     
     app = create_app(cfg)
     app.config["TESTING"] = True
@@ -76,7 +78,9 @@ def test_delete_segments_batch(client, tmp_path):
     # 建立 Repo
     from flask import current_app
     repo = current_app.repo
-    
+
+    repo.add_image(ImageRecord(id="img1", filename="img1.png"))
+
     # 新增遮罩到資料庫
     seg1 = repo.add_segment(Segment(id="seg1", image_id="img1", mask_path=str(mask_path1)))
     seg2 = repo.add_segment(Segment(id="seg2", image_id="img1", mask_path=str(mask_path2)))
