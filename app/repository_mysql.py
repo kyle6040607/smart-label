@@ -568,6 +568,7 @@ class MySQLRepository:
             r = cur.fetchone()
             if r is None:
                 return None
+            cur.execute("DELETE FROM examples WHERE source_segment_id=%s", (seg_id,))
             cur.execute("DELETE FROM segments WHERE id=%s", (seg_id,))
         return r["mask_path"] or None
 
@@ -579,6 +580,7 @@ class MySQLRepository:
             fmt = ",".join(["%s"] * len(seg_ids))
             cur.execute(f"SELECT mask_path FROM segments WHERE id IN ({fmt}) FOR UPDATE", tuple(seg_ids))
             paths = [r["mask_path"] for r in cur.fetchall() if r.get("mask_path")]
+            cur.execute(f"DELETE FROM examples WHERE source_segment_id IN ({fmt})", tuple(seg_ids))
             cur.execute(f"DELETE FROM segments WHERE id IN ({fmt})", tuple(seg_ids))
         return [p for p in paths if p]
 
@@ -600,6 +602,10 @@ class MySQLRepository:
                 ),
             )
         return ex
+
+    def delete_example(self, example_id: str) -> None:
+        with self._tx() as cur:
+            cur.execute("DELETE FROM examples WHERE id=%s", (example_id,))
 
     def list_examples(self, owner_id: str | None = None, project_id: str | None = None) -> list[LabelExample]:
         with self._tx() as cur:

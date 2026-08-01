@@ -305,6 +305,9 @@ class Repository:
             seg = self.segments.pop(seg_id, None)
             if seg is None:
                 return None
+            eids = [eid for eid, ex in self.examples.items() if getattr(ex, "source_segment_id", None) == seg_id]
+            for eid in eids:
+                self.examples.pop(eid, None)
             self._save()
         return seg.mask_path or None
 
@@ -316,6 +319,9 @@ class Repository:
                 seg = self.segments.pop(seg_id, None)
                 if seg and seg.mask_path:
                     paths.append(seg.mask_path)
+                eids = [eid for eid, ex in self.examples.items() if getattr(ex, "source_segment_id", None) == seg_id]
+                for eid in eids:
+                    self.examples.pop(eid, None)
             self._save()
         return [p for p in paths if p]
 
@@ -331,6 +337,11 @@ class Repository:
             self.examples[ex.id] = ex
             self._save()
         return ex
+
+    def delete_example(self, example_id: str) -> None:
+        with self._lock:
+            self.examples.pop(example_id, None)
+            self._save()
 
     def list_examples(self, owner_id: str | None = None, project_id: str | None = None) -> list[LabelExample]:
         examples = self.examples.values()

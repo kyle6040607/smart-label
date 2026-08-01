@@ -155,28 +155,42 @@ def list_segments(image_id: str):
 @bp.delete("/segments/<seg_id>")
 def delete_segment(seg_id: str):
     """刪掉切壞/不要的片段，連同它的遮罩 PNG。"""
-    repo = get_repo()
-    get_owned_segment(seg_id)
+    repo, pipeline = get_repo(), get_pipeline()
+    seg = get_owned_segment(seg_id)
+    image = repo.get_image(seg.image_id) if seg else None
     mask = repo.delete_segment(seg_id)
     if mask:
         get_storage().delete(mask)
+
+    if image:
+        pipeline.refit(image.owner_id, image.project_id)
+        pipeline.reclassify_pending(image.owner_id, image.project_id)
+
     return jsonify({"deleted": seg_id})
 
 
 @bp.post("/segments/delete_batch")
 def delete_segments_batch():
     """批次刪除選定的遮罩片段，連同其遮罩檔案。"""
-    repo = get_repo()
+    repo, pipeline = get_repo(), get_pipeline()
     data = request.get_json(silent=True) or {}
     seg_ids = data.get("segment_ids", [])
     if not seg_ids:
         abort(400, "無效的片段 ID 清單")
 
+    first_image = None
     for seg_id in seg_ids:
-        get_owned_segment(str(seg_id))
+        seg = get_owned_segment(str(seg_id))
+        if first_image is None and seg:
+            first_image = repo.get_image(seg.image_id)
+
     paths = repo.delete_segments_batch(seg_ids)
     for p in paths:
         get_storage().delete(p)
+
+    if first_image:
+        pipeline.refit(first_image.owner_id, first_image.project_id)
+        pipeline.reclassify_pending(first_image.owner_id, first_image.project_id)
 
     return jsonify({"deleted_ids": seg_ids}), 200
 

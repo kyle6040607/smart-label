@@ -13,6 +13,8 @@ const state = {
   imgBatchMode: false,
   segBatchMode: false,
   autoSegCompleted: false,
+  undoStack: [],
+  redoStack: [],
 };
 const $ = (id) => document.getElementById(id);
 
@@ -684,7 +686,7 @@ async function loadThumbs() {
 async function deleteImage(im) {
   if (!confirm(`確定刪除「${im.filename}」？連同它的遮罩會一起清掉。`)) return;
   const res = await fetch(`/api/images/${im.id}`, { method: "DELETE" });
-  if (!res.ok) return alert("刪除失敗：" + (await res.text()));
+  if (!res.ok) return showToast("刪除失敗：" + (await res.text()), "error");
   // 若刪的是目前選中的圖，清空畫布
   if (state.currentImage && state.currentImage.id === im.id) {
     state.currentImage = null;
@@ -694,6 +696,7 @@ async function deleteImage(im) {
   await loadThumbs();
   await refreshSidebar();
   updateImgNavUI();
+  showToast("已刪除照片", "info");
 }
 
 // ---------- 照片切換導航 (上一張 / 下一張 + 鍵盤捷徑) ----------
@@ -764,20 +767,80 @@ function switchNextImage() {
   }
 }
 
+function pushUndoAction(action) {
+  // 只記錄目前照片的操作
+  if (!state.currentImage || action.imageId !== state.currentImage.id) return;
+  state.undoStack.push(action);
+  updateUndoUI();
+}
+
+function updateUndoUI() {
+  const undoBtn = $("undoBtn");
+  if (undoBtn) undoBtn.disabled = state.undoStack.length === 0;
+}
+
+async function performUndo() {
+  if (state.undoStack.length === 0 || state.segmenting) return;
+  const action = state.undoStack.pop();
+  updateUndoUI();
+
+  try {
+    if (action.type === "REVIEW_SEGMENT") {
+      if (action.prevLabel) {
+        await fetch(`/api/segments/${action.segId}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: action.prevLabel }),
+        });
+      } else {
+        // 原本沒有人工審核標籤，復原即取消審核狀態並刪除範例數量
+        await fetch(`/api/segments/${action.segId}/unreview`, { method: "POST" });
+      }
+      await refreshAfterSegChange();
+    } else if (action.type === "CREATE_SEGMENTS") {
+      // 復原新分割的區塊 (刪除那些 segments)
+      if (Array.isArray(action.segIds) && action.segIds.length > 0) {
+        for (const id of action.segIds) {
+          try {
+            await fetch(`/api/segments/${id}`, { method: "DELETE" });
+          } catch (e) {}
+        }
+      }
+      state.autoSegCompleted = false;
+      updateAutoSegBtn();
+      await refreshAfterSegChange();
+    }
+  } catch (err) {
+    console.error("復原失敗:", err);
+  } finally {
+    updateUndoUI();
+  }
+}
+
 function initImgNavEvents() {
   const prevBtn = $("prevImgBtn");
   const nextBtn = $("nextImgBtn");
+  const undoBtn = $("undoBtn");
+
   if (prevBtn) prevBtn.onclick = () => switchPrevImage();
   if (nextBtn) nextBtn.onclick = () => switchNextImage();
+  if (undoBtn) undoBtn.onclick = () => performUndo();
 
   window.addEventListener("keydown", (e) => {
-    // 防呆：若正在輸入框打字、彈窗開啟中、或正進行 AI 分割，忽略快捷鍵
+    // 若正在輸入框打字、彈窗開啟中、或正進行 AI 分割，忽略快捷鍵
     const activeEl = document.activeElement;
     if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT" || activeEl.isContentEditable)) {
       return;
     }
     const modalOverlay = $("modalOverlay");
     if (modalOverlay && modalOverlay.classList.contains("active")) {
+      return;
+    }
+
+    // Ctrl+Z (Undo)
+    if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      performUndo();
       return;
     }
 
@@ -800,6 +863,10 @@ function selectImage(im, el, targetSegId = null) {
   if (el) el.classList.add("active");
 
   updateImgNavUI();
+
+  // 切換圖片時，清空歷史紀錄並停用復原按鈕
+  state.undoStack = [];
+  updateUndoUI();
 
   state.autoSegCompleted = false;
   updateAutoSegBtn(true);
@@ -876,6 +943,10 @@ $("autoSegBtn").onclick = async () => {
     await redraw(data.segments);
     await refreshSidebar();
 
+    if (Array.isArray(data.segments) && data.segments.length > 0) {
+      pushUndoAction({ type: "CREATE_SEGMENTS", segIds: data.segments.map((s) => s.id), imageId });
+    }
+
     state.autoSegCompleted = true;
     updateAutoSegBtn();
   } catch (error) {
@@ -888,9 +959,10 @@ $("autoSegBtn").onclick = async () => {
 
 // ---------- 自然語言分割 (YOLO-World) ----------
 $("textSegBtn").onclick = async () => {
+  if (!state.currentImage) return alert("請先從左側照片庫或導航按鈕選取一張照片，再進行文字分割");
+  if (state.segmenting) return;
   const promptVal = $("textPromptInput").value.trim();
   if (!promptVal) return alert("請輸入想搜尋的物件名稱（例如：飛機）");
-  if (!state.currentImage || state.segmenting) return;
 
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, `正在搜尋「${promptVal}」並進行分割…`, true);
@@ -917,6 +989,10 @@ $("textSegBtn").onclick = async () => {
 
     await redraw(data.segments);
     await refreshSidebar();
+
+    if (Array.isArray(data.segments) && data.segments.length > 0) {
+      pushUndoAction({ type: "CREATE_SEGMENTS", segIds: data.segments.map((s) => s.id), imageId });
+    }
   } catch (error) {
     console.error(error);
     alert(error instanceof Error ? error.message : "文字分割失敗");
@@ -946,7 +1022,6 @@ $("drawBtn").onclick = () => {
 // ---------- 單點分割（一般模式：點 canvas）----------
 canvas.onclick = async (e) => {
   if (!state.currentImage || state.drawMode || state.segmenting) return;
-  if (state.mode === "layman") return;
   const { x, y } = toImageXY(e);
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, "單點分割中…");
@@ -963,7 +1038,9 @@ canvas.onclick = async (e) => {
     const all = await listRes.json();
     await redraw(all);
     await refreshSidebar();
-    promptLabel(seg);
+
+    pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId });
+    await promptLabel(seg, true);
   } catch (error) {
     console.error(error);
     alert(error instanceof Error ? error.message : "單點分割失敗");
@@ -1012,7 +1089,9 @@ canvas.onmouseup = async () => {
   const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
   await redraw(all);
   await refreshSidebar();
-  promptLabel(seg);
+
+  pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId: state.currentImage.id });
+  await promptLabel(seg, true);
 };
 
 // 行動端觸控事件繪圖支援
@@ -1060,7 +1139,9 @@ canvas.addEventListener("touchend", async (e) => {
     const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
     await redraw(all);
     await refreshSidebar();
-    promptLabel(seg);
+
+    pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId: state.currentImage.id });
+    await promptLabel(seg, true);
   } catch (err) {
     console.error(err);
   } finally {
@@ -1119,7 +1200,7 @@ async function redraw(segments, highlightId = null) {
 }
 
 // 點完一塊後問使用者類別，存成種子範例
-async function promptLabel(seg) {
+async function promptLabel(seg, isNewSegment = false) {
   const label = prompt("這塊是什麼類別？（留空跳過）");
   if (!label) return;
   await fetch(`/api/segments/${seg.id}/label`, {
@@ -1127,6 +1208,16 @@ async function promptLabel(seg) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
   });
+  if (!isNewSegment) {
+    pushUndoAction({
+      type: "REVIEW_SEGMENT",
+      segId: seg.id,
+      prevLabel: seg.final_label || "",
+      predictedLabel: seg.predicted_label || "",
+      newLabel: label,
+      imageId: seg.image_id
+    });
+  }
   const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
   await redraw(all);
   await refreshSidebar();
@@ -1266,7 +1357,7 @@ async function refreshSidebar() {
         label = pred; // 輸入框留白時，直接採納 AI 預測標籤！
       }
       if (!label) {
-        alert("請輸入正確類別標籤");
+        showToast("請輸入類別標籤", "warning");
         return;
       }
 
@@ -1281,12 +1372,21 @@ async function refreshSidebar() {
           body: JSON.stringify({ label }),
         });
         if (!res.ok) throw new Error("審核失敗");
+        pushUndoAction({
+          type: "REVIEW_SEGMENT",
+          segId: s.id,
+          prevLabel: s.final_label || "",
+          predictedLabel: s.predicted_label || "",
+          newLabel: label,
+          imageId: s.image_id
+        });
         await refreshAfterSegChange();
+        showToast(`標籤審核完成：「${label}」`, "success");
       } catch (err) {
         console.error(err);
         li.style.opacity = "1";
         li.style.pointerEvents = "auto";
-        alert("審核失敗，請重試");
+        showToast("審核失敗，請重試", "error");
       }
     };
     li.querySelector(".confirm").onclick = submitReview;
@@ -1300,14 +1400,15 @@ async function refreshSidebar() {
       try {
         const res = await fetch(`/api/segments/${s.id}`, { method: "DELETE" });
         if (!res.ok) {
-          return alert("刪除失敗：" + (await res.text()));
+          return showToast("刪除失敗：" + (await res.text()), "error");
         }
         state.autoSegCompleted = false;
         updateAutoSegBtn();
         await refreshAfterSegChange();
+        showToast("已刪除遮罩片段", "info");
       } catch (error) {
         console.error(error);
-        alert("刪除時發生錯誤");
+        showToast("刪除時發生錯誤", "error");
       }
     };
     ul.appendChild(li);
@@ -1520,8 +1621,9 @@ $("batchDelImgsBtn").onclick = async () => {
     $("thumbs").classList.remove("batch-active");
     await loadThumbs();
     await refreshSidebar();
+    showToast(`成功刪除 ${deletedTotal} 張照片`, "success");
   } catch (err) {
-    alert("批次刪除失敗: " + err.message);
+    showToast("批次刪除失敗: " + err.message, "error");
     await loadThumbs();
   } finally {
     btn.textContent = originalText;
@@ -1570,8 +1672,9 @@ $("batchDelSegsBtn").onclick = async () => {
     $("selectAllSegsLabel").style.display = "none";
     $("reviewQueue").classList.remove("batch-active");
     await refreshAfterSegChange();
+    showToast(`成功刪除 ${ids.length} 個遮罩片段`, "success");
   } catch (err) {
-    alert("批次刪除失敗: " + err.message);
+    showToast("批次刪除失敗: " + err.message, "error");
   } finally {
     btn.textContent = originalText;
     btn.disabled = false;
