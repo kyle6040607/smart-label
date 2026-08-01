@@ -18,6 +18,50 @@ const state = {
 };
 const $ = (id) => document.getElementById(id);
 
+// ---------- 右下角輕量 Toast 通知機制 ----------
+function showToast(message, type = "info", duration = 3000) {
+  const container = $("toastContainer");
+  if (!container) return;
+
+  const icons = {
+    success: "✓",
+    error: "✕",
+    warning: "⚠️",
+    info: "ℹ️"
+  };
+
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[type] || "ℹ️"}</span>
+    <div class="toast-content">${message}</div>
+    <button type="button" class="toast-close" title="關閉">✕</button>
+  `;
+
+  const closeBtn = toast.querySelector(".toast-close");
+  const dismiss = () => {
+    toast.classList.remove("show");
+    toast.style.transform = "translateY(10px)";
+    toast.style.opacity = "0";
+    setTimeout(() => {
+      if (toast.parentElement) toast.parentElement.removeChild(toast);
+    }, 300);
+  };
+
+  closeBtn.onclick = dismiss;
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      toast.classList.add("show");
+    });
+  });
+
+  if (duration > 0) {
+    setTimeout(dismiss, duration);
+  }
+}
+
 // 原圖快取：縮圖與重繪共用同一份，避免重複下載解碼
 const imageCache = new Map();
 function loadImage(imageId) {
@@ -949,9 +993,10 @@ $("autoSegBtn").onclick = async () => {
 
     state.autoSegCompleted = true;
     updateAutoSegBtn();
+    showToast("整張自動分割完成！", "success");
   } catch (error) {
     console.error(error);
-    alert(error instanceof Error ? error.message : "自動分割失敗");
+    showToast(error instanceof Error ? error.message : "自動分割失敗", "error");
   } finally {
     setSegmentationLoading(false);
   }
@@ -959,10 +1004,10 @@ $("autoSegBtn").onclick = async () => {
 
 // ---------- 自然語言分割 (YOLO-World) ----------
 $("textSegBtn").onclick = async () => {
-  if (!state.currentImage) return alert("請先從左側照片庫或導航按鈕選取一張照片，再進行文字分割");
+  if (!state.currentImage) return showToast("請先從左側照片庫或導航按鈕選取一張照片", "warning");
   if (state.segmenting) return;
   const promptVal = $("textPromptInput").value.trim();
-  if (!promptVal) return alert("請輸入想搜尋的物件名稱（例如：飛機）");
+  if (!promptVal) return showToast("請輸入想搜尋的物件名稱（例如：飛機）", "warning");
 
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, `正在搜尋「${promptVal}」並進行分割…`, true);
@@ -992,10 +1037,13 @@ $("textSegBtn").onclick = async () => {
 
     if (Array.isArray(data.segments) && data.segments.length > 0) {
       pushUndoAction({ type: "CREATE_SEGMENTS", segIds: data.segments.map((s) => s.id), imageId });
+      showToast(`搜尋「${promptVal}」完成，找到 ${data.segments.length} 個物件`, "success");
+    } else {
+      showToast(`搜尋「${promptVal}」未找到符合物件`, "info");
     }
   } catch (error) {
     console.error(error);
-    alert(error instanceof Error ? error.message : "文字分割失敗");
+    showToast(error instanceof Error ? error.message : "文字分割失敗", "error");
   } finally {
     setSegmentationLoading(false);
   }
@@ -1040,10 +1088,11 @@ canvas.onclick = async (e) => {
     await refreshSidebar();
 
     pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId });
+    showToast("單點分割完成", "success");
     await promptLabel(seg, true);
   } catch (error) {
     console.error(error);
-    alert(error instanceof Error ? error.message : "單點分割失敗");
+    showToast(error instanceof Error ? error.message : "單點分割失敗", "error");
   } finally {
     setSegmentationLoading(false);
   }
@@ -1084,13 +1133,14 @@ canvas.onmouseup = async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ points }),
   });
-  if (!res.ok) return alert("描邊失敗：" + (await res.text()));
+  if (!res.ok) return showToast("描邊失敗：" + (await res.text()), "error");
   const seg = await res.json();
   const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
   await redraw(all);
   await refreshSidebar();
 
   pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId: state.currentImage.id });
+  showToast("手動描邊分割完成", "success");
   await promptLabel(seg, true);
 };
 
@@ -1134,16 +1184,18 @@ canvas.addEventListener("touchend", async (e) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ points }),
     });
-    if (!res.ok) return alert("描邊失敗：" + (await res.text()));
+    if (!res.ok) return showToast("描邊失敗：" + (await res.text()), "error");
     const seg = await res.json();
     const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
     await redraw(all);
     await refreshSidebar();
 
     pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId: state.currentImage.id });
+    showToast("手動描邊分割完成", "success");
     await promptLabel(seg, true);
   } catch (err) {
     console.error(err);
+    showToast("描邊分割失敗", "error");
   } finally {
     setSegmentationLoading(false);
   }
