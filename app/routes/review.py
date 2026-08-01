@@ -5,6 +5,7 @@ from flask import Blueprint, abort, jsonify, request
 
 from app.routes import (
     can_access_image,
+    get_current_project_id,
     get_current_user_id,
     get_owned_segment,
     get_pipeline,
@@ -18,8 +19,9 @@ bp = Blueprint("review", __name__, url_prefix="/api")
 def review_queue():
     """待人工審核的低信心片段（被標紅的）。"""
     repo = get_repo()
+    project_id = request.args.get("project_id") or get_current_project_id()
     owned_image_ids = {
-        image.id for image in repo.list_images() if can_access_image(image)
+        image.id for image in repo.list_images(project_id=project_id) if can_access_image(image)
     }
     return jsonify([
         segment.to_dict()
@@ -48,8 +50,9 @@ def review_segment(seg_id: str):
 def stats():
     """整體統計：自動接受比例 ≈ 省下的工時、送審數量等。"""
     repo = get_repo()
+    project_id = request.args.get("project_id") or get_current_project_id()
     owned_image_ids = {
-        image.id for image in repo.list_images() if can_access_image(image)
+        image.id for image in repo.list_images(project_id=project_id) if can_access_image(image)
     }
     segments = [
         segment for segment in repo.list_segments()
@@ -68,7 +71,7 @@ def stats():
             label_counts[segment.final_label] = (
                 label_counts.get(segment.final_label, 0) + 1
             )
-    examples = repo.list_examples(get_current_user_id())
+    examples = repo.list_examples(get_current_user_id(), project_id=project_id)
     return jsonify({
         "total_segments": total,
         "auto_accepted": auto_accepted,
