@@ -99,8 +99,16 @@
 
         <!-- 縮圖容器 (可折疊 + 固定高度滾動) -->
         <div id="thumbsWrapper" class="thumbs-wrapper collapsed">
-          <!-- 批次管理控制條 -->
+          <!-- 批次管理與篩選控制條 -->
           <div class="batch-control-bar">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <label for="imgFilterSelect" style="font-size: 12px; margin: 0; white-space: nowrap; opacity: 0.85;">篩選：</label>
+              <select id="imgFilterSelect" class="btn-secondary" style="padding: 3px 8px; font-size: 12px; border-radius: 4px; cursor: pointer;">
+                <option value="all">全部照片</option>
+                <option value="unsegmented">未標記/未分割 (0 遮罩)</option>
+                <option value="segmented">已標記/已有遮罩 (≥1 遮罩)</option>
+              </select>
+            </div>
             <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
               <input type="checkbox" id="selectAllImgs" /> 全選
             </label>

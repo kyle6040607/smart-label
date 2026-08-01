@@ -798,15 +798,69 @@ function initGalleryCollapse() {
   });
 }
 
+function getFilteredImages() {
+  if (!state.allImages) return [];
+  const filter = state.imgFilter || "all";
+  if (filter === "all") return state.allImages;
+  if (filter === "unsegmented") {
+    return state.allImages.filter((im) => (im.segment_count || 0) === 0);
+  }
+  if (filter === "segmented") {
+    return state.allImages.filter((im) => (im.segment_count || 0) > 0);
+  }
+  if (filter.startsWith("tag:")) {
+    const tagName = filter.substring(4);
+    return state.allImages.filter((im) => (im.segment_tags || []).includes(tagName));
+  }
+  return state.allImages;
+}
+
+function updateImgFilterOptions() {
+  const sel = $("imgFilterSelect");
+  if (!sel) return;
+
+  const currentValue = sel.value || state.imgFilter || "all";
+  const tagsSet = new Set();
+  (state.allImages || []).forEach((im) => {
+    (im.segment_tags || []).forEach((t) => tagsSet.add(t));
+  });
+
+  let html = `
+    <option value="all">全部照片</option>
+    <option value="unsegmented">未標記/未分割 (0 遮罩)</option>
+    <option value="segmented">已標記/已有遮罩 (≥1 遮罩)</option>
+  `;
+
+  if (tagsSet.size > 0) {
+    html += `<optgroup label="依標籤類別篩選">`;
+    Array.from(tagsSet).sort().forEach((tag) => {
+      html += `<option value="tag:${tag}">類別：${tag}</option>`;
+    });
+    html += `</optgroup>`;
+  }
+
+  sel.innerHTML = html;
+  if (sel.querySelector(`option[value="${currentValue}"]`)) {
+    sel.value = currentValue;
+  } else {
+    sel.value = "all";
+    state.imgFilter = "all";
+  }
+}
+
 function updateGalleryToggleUI(isExpanded) {
   const icon = $("galleryToggleIcon");
   const text = $("galleryToggleText");
+  const filtered = getFilteredImages();
   const totalCount = state.allImages ? state.allImages.length : 0;
+  const filteredCount = filtered.length;
   const wrapper = $("thumbsWrapper");
   const isCurrentlyCollapsed = wrapper ? wrapper.classList.contains("collapsed") : true;
 
+  const countStr = filteredCount === totalCount ? `${totalCount}` : `${filteredCount}/${totalCount}`;
+
   if (icon) icon.textContent = isCurrentlyCollapsed ? "▼" : "▲";
-  if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${totalCount})` : `折疊照片庫 (${totalCount})`;
+  if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${countStr})` : `折疊照片庫 (${countStr})`;
 }
 
 function expandGallery() {
@@ -819,8 +873,9 @@ function expandGallery() {
 initGalleryCollapse();
 
 function renderMoreThumbs() {
-  if (!state.allImages || state.renderedImageCount >= state.allImages.length) return;
-  const nextSlice = state.allImages.slice(state.renderedImageCount, state.renderedImageCount + GALLERY_PAGE_SIZE);
+  const images = getFilteredImages();
+  if (!images || state.renderedImageCount >= images.length) return;
+  const nextSlice = images.slice(state.renderedImageCount, state.renderedImageCount + GALLERY_PAGE_SIZE);
   state.renderedImageCount += nextSlice.length;
 
   const box = $("thumbs");
@@ -852,6 +907,8 @@ function appendThumbs(newImages) {
     }
   });
 
+  updateImgFilterOptions();
+
   const box = $("thumbs");
   if (!box) return;
 
@@ -876,6 +933,8 @@ async function loadThumbs() {
   const imgs = await (await fetch("/api/images")).json();
   state.allImages = Array.isArray(imgs) ? imgs : [];
   state.renderedImageCount = 0;
+
+  updateImgFilterOptions();
 
   const box = $("thumbs");
   if (box) {
@@ -931,9 +990,10 @@ function updateImgNavUI() {
 }
 
 function switchPrevImage() {
-  if (!state.allImages || state.allImages.length === 0 || state.segmenting) return;
-  const total = state.allImages.length;
-  let currentIdx = state.currentImage ? state.allImages.findIndex((img) => img.id === state.currentImage.id) : -1;
+  const images = getFilteredImages();
+  if (!images || images.length === 0 || state.segmenting) return;
+  const total = images.length;
+  let currentIdx = state.currentImage ? images.findIndex((img) => img.id === state.currentImage.id) : -1;
 
   let targetIdx;
   if (currentIdx === -1) {
@@ -944,7 +1004,7 @@ function switchPrevImage() {
     targetIdx = currentIdx - 1;
   }
 
-  const targetImg = state.allImages[targetIdx];
+  const targetImg = images[targetIdx];
   if (targetImg) {
     const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${targetImg.id}/file"]`) ||
                      document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
@@ -953,9 +1013,10 @@ function switchPrevImage() {
 }
 
 function switchNextImage() {
-  if (!state.allImages || state.allImages.length === 0 || state.segmenting) return;
-  const total = state.allImages.length;
-  let currentIdx = state.currentImage ? state.allImages.findIndex((img) => img.id === state.currentImage.id) : -1;
+  const images = getFilteredImages();
+  if (!images || images.length === 0 || state.segmenting) return;
+  const total = images.length;
+  let currentIdx = state.currentImage ? images.findIndex((img) => img.id === state.currentImage.id) : -1;
 
   let targetIdx;
   if (currentIdx === -1 || currentIdx >= total - 1) {
@@ -964,7 +1025,7 @@ function switchNextImage() {
     targetIdx = currentIdx + 1;
   }
 
-  const targetImg = state.allImages[targetIdx];
+  const targetImg = images[targetIdx];
   if (targetImg) {
     const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${targetImg.id}/file"]`) ||
                      document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
@@ -1800,7 +1861,8 @@ if (dropZone && fileInput && selectFileBtn && fileCountHint) {
 function updateImgBatchBtnState() {
   if (!state.selectedImageIds) state.selectedImageIds = new Set();
   const count = state.selectedImageIds.size;
-  const total = state.allImages ? state.allImages.length : 0;
+  const filtered = getFilteredImages();
+  const total = filtered.length;
   const btn = $("batchDelImgsBtn");
   if (btn) {
     btn.disabled = count === 0;
@@ -1854,13 +1916,27 @@ function toggleSegBatchUI(isBatch) {
 $("toggleSegBatchModeBtn").onclick = () => toggleSegBatchUI(true);
 $("cancelSegBatchBtn").onclick = () => toggleSegBatchUI(false);
 
-// 照片全選 (包含未渲染至 DOM 的巨量照片)
+// 照片篩選器變更事件
+const filterSelectEl = $("imgFilterSelect");
+if (filterSelectEl) {
+  filterSelectEl.onchange = (e) => {
+    state.imgFilter = e.target.value;
+    state.renderedImageCount = 0;
+    const box = $("thumbs");
+    if (box) box.innerHTML = "";
+    renderMoreThumbs();
+    updateGalleryToggleUI();
+  };
+}
+
+// 照片全選 (根據目前篩選結果進行全選)
 $("selectAllImgs").onchange = (e) => {
   const isChecked = e.target.checked;
   if (!state.selectedImageIds) state.selectedImageIds = new Set();
+  const images = getFilteredImages();
 
   if (isChecked) {
-    (state.allImages || []).forEach((im) => state.selectedImageIds.add(im.id));
+    (images || []).forEach((im) => state.selectedImageIds.add(im.id));
   } else {
     state.selectedImageIds.clear();
   }
