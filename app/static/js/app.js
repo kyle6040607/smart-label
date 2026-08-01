@@ -15,8 +15,141 @@ const state = {
   autoSegCompleted: false,
   undoStack: [],
   redoStack: [],
+  tagColors: {},
 };
 const $ = (id) => document.getElementById(id);
+
+// ---------- 類別色彩管理機制 (Tag Color Palette Manager) ----------
+const DEFAULT_PALETTE = [
+  "#4F9CFF", // Soft Blue
+  "#36D399", // Emerald Green
+  "#FFD166", // Amber Yellow
+  "#A78BFA", // Violet Purple
+  "#FF885B", // Coral Orange
+  "#F472B6", // Hot Pink
+  "#14B8A6", // Teal
+  "#F59E0B", // Gold
+  "#8B5CF6", // Purple
+  "#3B82F6", // Royal Blue
+  "#EC4899", // Magenta
+  "#84CC16", // Lime Green
+  "#06B6D4", // Cyan
+  "#E11D48", // Crimson
+  "#64748B"  // Slate Gray
+];
+
+function loadTagColors() {
+  try {
+    const saved = localStorage.getItem("smart_label_tag_colors");
+    return saved ? JSON.parse(saved) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+state.tagColors = loadTagColors();
+
+function saveTagColors() {
+  try {
+    localStorage.setItem("smart_label_tag_colors", JSON.stringify(state.tagColors));
+  } catch (e) { }
+}
+
+function getTagColor(label) {
+  if (!label) return "#36d399";
+  if (state.tagColors && state.tagColors[label]) {
+    return state.tagColors[label];
+  }
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) {
+    hash = label.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const idx = Math.abs(hash) % DEFAULT_PALETTE.length;
+  return DEFAULT_PALETTE[idx];
+}
+
+function setTagColor(label, color) {
+  if (!state.tagColors) state.tagColors = {};
+  state.tagColors[label] = color;
+  saveTagColors();
+}
+
+let activeColorPopover = null;
+
+function closeColorPickerPopover() {
+  if (activeColorPopover) {
+    if (activeColorPopover.parentElement) {
+      activeColorPopover.parentElement.removeChild(activeColorPopover);
+    }
+    activeColorPopover = null;
+  }
+}
+
+function openColorPickerPopover(e, label) {
+  e.stopPropagation();
+  closeColorPickerPopover();
+
+  const popover = document.createElement("div");
+  popover.className = "color-picker-popover";
+
+  const rect = e.target.getBoundingClientRect();
+  popover.style.top = `${Math.min(window.innerHeight - 180, rect.bottom + 6)}px`;
+  popover.style.left = `${Math.min(window.innerWidth - 230, rect.left - 80)}px`;
+
+  const currentColor = getTagColor(label);
+
+  popover.innerHTML = `
+    <div class="color-picker-header">
+      <span>「${label}」色彩預設</span>
+      <button type="button" class="toast-close" style="font-size:14px;">✕</button>
+    </div>
+    <div class="color-presets-grid">
+      ${DEFAULT_PALETTE.map((c) => `
+        <div class="color-swatch ${c.toLowerCase() === currentColor.toLowerCase() ? "active" : ""}" style="background-color: ${c};" data-color="${c}"></div>
+      `).join("")}
+    </div>
+    <div class="custom-color-row">
+      <span>自訂色彩：</span>
+      <input type="color" value="${currentColor}" />
+    </div>
+  `;
+
+  popover.querySelector(".toast-close").onclick = (evt) => {
+    evt.stopPropagation();
+    closeColorPickerPopover();
+  };
+
+  const applyColor = async (newColor) => {
+    setTagColor(label, newColor);
+    closeColorPickerPopover();
+    if (state.currentImage && state.lastSegments) {
+      await redraw(state.lastSegments);
+    }
+    await refreshSidebar();
+    showToast(`已更新「${label}」的標籤色彩`, "success");
+  };
+
+  popover.querySelectorAll(".color-swatch").forEach((swatch) => {
+    swatch.onclick = (evt) => {
+      evt.stopPropagation();
+      applyColor(swatch.dataset.color);
+    };
+  });
+
+  const customColorInput = popover.querySelector("input[type='color']");
+  customColorInput.onchange = (evt) => {
+    applyColor(evt.target.value);
+  };
+
+  document.body.appendChild(popover);
+  activeColorPopover = popover;
+}
+
+document.addEventListener("click", (e) => {
+  if (activeColorPopover && !activeColorPopover.contains(e.target)) {
+    closeColorPickerPopover();
+  }
+});
 
 // ---------- 右下角輕量 Toast 通知機制 ----------
 function showToast(message, type = "info", duration = 3000) {
@@ -615,6 +748,31 @@ function createThumbElement(im) {
   del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
 
   wrap.append(chk, el, del);
+
+  // 💡 若照片已有分割紀錄，動態繪製左上角標記徽章與右下角類別顏色圓點
+  const segCount = im.segment_count || 0;
+  if (segCount > 0) {
+    const badge = document.createElement("div");
+    badge.className = "thumb-seg-badge";
+    badge.title = `這張照片已有 ${segCount} 個遮罩片段`;
+    badge.innerHTML = `✓ ${segCount}`;
+    wrap.appendChild(badge);
+
+    const tags = im.segment_tags || [];
+    if (tags.length > 0) {
+      const dotsContainer = document.createElement("div");
+      dotsContainer.className = "thumb-tag-dots";
+      dotsContainer.title = `包含類別：${tags.join("、")}`;
+      tags.forEach((tag) => {
+        const dot = document.createElement("span");
+        dot.className = "thumb-tag-dot";
+        dot.style.backgroundColor = getTagColor(tag);
+        dotsContainer.appendChild(dot);
+      });
+      wrap.appendChild(dotsContainer);
+    }
+  }
+
   return wrap;
 }
 
@@ -1214,7 +1372,9 @@ async function redraw(segments, highlightId = null) {
   // 💡 步驟 1：先畫所有不規則的 SAM 遮罩（Mask），著色結果按 (segId, color) 快取，hover 重繪只剩 drawImage
   for (const s of segments) {
     const hi = s.id === highlightId;
-    const color = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
+    const label = s.final_label || s.predicted_label;
+    const tagColor = getTagColor(label);
+    const color = hi ? "#ffd166" : (s.needs_review && !s.final_label ? "#ff5470" : tagColor);
     const tinted = getTintedMask(s, color);
 
     if (tinted) {
@@ -1241,12 +1401,14 @@ async function redraw(segments, highlightId = null) {
 
   // 💡 步驟 2：只畫文字標籤（方框已移除）
   for (const s of segments) {
-    if (s.final_label) {
+    const label = s.final_label || s.predicted_label;
+    if (label) {
       const [x, y] = s.bbox;
       const hi = s.id === highlightId;
-      ctx.fillStyle = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
+      const tagColor = getTagColor(label);
+      ctx.fillStyle = hi ? "#ffd166" : (s.needs_review && !s.final_label ? "#ff5470" : tagColor);
       ctx.font = "14px sans-serif";
-      ctx.fillText(`${s.final_label} ${s.confidence.toFixed(2)}`, x + 2, y + 14);
+      ctx.fillText(`${label} ${s.confidence.toFixed(2)}`, x + 2, y + 14);
     }
   }
 }
@@ -1275,16 +1437,55 @@ async function promptLabel(seg, isNewSegment = false) {
   await refreshSidebar();
 }
 
-// 刪掉建錯的類別（連同它的種子範例，並回訓）
+// 刪掉類別（連同它的種子範例與關聯遮罩片段，並回訓）
 async function deleteLabel(name) {
-  if (!confirm(`刪除類別「${name}」？它的種子範例會一起清掉。`)) return;
+  if (!confirm(`確定刪除類別「${name}」？其所有範例與標有此類別的遮罩將會一併刪除。`)) return;
   const res = await fetch(`/api/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
-  if (!res.ok) return alert("刪除失敗：" + (await res.text()));
+  if (!res.ok) return showToast("刪除失敗：" + (await res.text()), "error");
   if (state.currentImage) {
     const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
     await redraw(all);
   }
   await refreshSidebar();
+  showToast(`已刪除類別「${name}」及其所有遮罩`, "info");
+}
+
+// 重新命名或合併類別標籤
+async function renameLabel(name) {
+  const newName = prompt(`請輸入「${name}」的新類別名稱：`, name);
+  if (!newName || !newName.trim() || newName.trim() === name) return;
+  const targetName = newName.trim();
+
+  let res = await fetch("/api/labels/rename", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ old_label: name, new_label: targetName, combine: false }),
+  });
+
+  if (res.status === 409) {
+    if (confirm(`類別「${targetName}」已存在！\n是否要將「${name}」的所有標記與範例合併至「${targetName}」？`)) {
+      res = await fetch("/api/labels/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ old_label: name, new_label: targetName, combine: true }),
+      });
+      if (!res.ok) return showToast("合併類別失敗：" + (await res.text()), "error");
+      await refreshAfterSegChange();
+      showToast(`已成功將類別「${name}」合併至「${targetName}」`, "success");
+      return;
+    } else {
+      return;
+    }
+  }
+
+  if (!res.ok) return showToast("重命名失敗：" + (await res.text()), "error");
+  if (state.tagColors && state.tagColors[name]) {
+    state.tagColors[targetName] = state.tagColors[name];
+    delete state.tagColors[name];
+    saveTagColors();
+  }
+  await refreshAfterSegChange();
+  showToast(`已將類別「${name}」重新命名為「${targetName}」`, "success");
 }
 
 // 片段有變動後重畫目前的圖 + 更新側欄
@@ -1294,6 +1495,7 @@ async function refreshAfterSegChange() {
     await redraw(all);
   }
   await refreshSidebar();
+  await loadThumbs();
 }
 
 // ---------- 右側：統計 + 審核佇列 ----------
@@ -1315,13 +1517,66 @@ async function refreshSidebar() {
   if (!labels.length) ll.innerHTML = "<li class='hint'>尚未建立任何類別</li>";
   labels.forEach((name) => {
     const li = document.createElement("li");
-    li.textContent = name;
+    li.style.display = "flex";
+    li.style.alignItems = "center";
+    li.style.justifyContent = "space-between";
+    li.style.gap = "6px";
+
+    const leftGroup = document.createElement("div");
+    leftGroup.style.display = "flex";
+    leftGroup.style.alignItems = "center";
+    leftGroup.style.gap = "8px";
+    leftGroup.style.flex = "1";
+    leftGroup.style.minWidth = "0";
+
+    const colorDot = document.createElement("span");
+    colorDot.className = "tag-color-dot";
+    colorDot.style.width = "14px";
+    colorDot.style.height = "14px";
+    colorDot.style.borderRadius = "50%";
+    colorDot.style.backgroundColor = getTagColor(name);
+    colorDot.style.cursor = "pointer";
+    colorDot.style.flexShrink = "0";
+    colorDot.style.border = "1.5px solid rgba(255, 255, 255, 0.3)";
+    colorDot.style.boxShadow = "0 1px 3px rgba(0,0,0,0.3)";
+    colorDot.style.display = "inline-block";
+    colorDot.title = `點擊更換「${name}」的標籤色彩`;
+    colorDot.onclick = (e) => openColorPickerPopover(e, name);
+
+    const span = document.createElement("span");
+    span.textContent = name;
+    span.style.overflow = "hidden";
+    span.style.textOverflow = "ellipsis";
+    span.style.whiteSpace = "nowrap";
+
+    leftGroup.appendChild(colorDot);
+    leftGroup.appendChild(span);
+    li.appendChild(leftGroup);
+
+    const btnGroup = document.createElement("div");
+    btnGroup.style.display = "flex";
+    btnGroup.style.gap = "4px";
+    btnGroup.style.alignItems = "center";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "btn-secondary";
+    editBtn.style.padding = "1px 5px";
+    editBtn.style.fontSize = "11px";
+    editBtn.textContent = "✏️";
+    editBtn.title = "重命名或合併此類別";
+    editBtn.onclick = () => renameLabel(name);
+
     const del = document.createElement("button");
+    del.type = "button";
     del.className = "label-del";
     del.textContent = "×";
     del.title = "刪除這個類別";
     del.onclick = () => deleteLabel(name);
-    li.appendChild(del);
+
+    btnGroup.appendChild(editBtn);
+    btnGroup.appendChild(del);
+    li.appendChild(btnGroup);
     ll.appendChild(li);
   });
 
@@ -2103,16 +2358,7 @@ function updateCharts(stats) {
   const counts = Object.values(labelCounts);
   $("categorySub").innerHTML = `已建立類別數: <b>${stats.num_labels}</b>`;
 
-  const roygbivColors = [
-    '#ff5470', // Red
-    '#ff9f43', // Orange
-    '#ffd166', // Yellow
-    '#36d399', // Green
-    '#4f9cff', // Blue
-    '#706fd3', // Indigo
-    '#b33771'  // Violet
-  ];
-  const colors = labels.map((_, idx) => roygbivColors[idx % roygbivColors.length]);
+  const colors = labels.map((lbl) => getTagColor(lbl));
 
   const cType = state.categoryChartType || "bar";
   if (categoryDistributionChartInstance && categoryDistributionChartInstance.config.type !== cType) {

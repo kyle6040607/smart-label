@@ -369,11 +369,23 @@ def upload():
 @bp.get("")
 def list_images():
     project_id = request.args.get("project_id") or get_current_project_id()
-    return jsonify([
-        image.to_dict()
-        for image in get_repo().list_images(project_id=project_id)
-        if can_access_image(image)
-    ])
+    repo = get_repo()
+    images = repo.list_images(project_id=project_id)
+    accessible = [image for image in images if can_access_image(image)]
+
+    result = []
+    for image in accessible:
+        d = image.to_dict()
+        segs = repo.list_segments(image.id)
+        d["segment_count"] = len(segs)
+        tags = set()
+        for s in segs:
+            lbl = s.final_label or s.predicted_label
+            if lbl:
+                tags.add(lbl)
+        d["segment_tags"] = list(tags)
+        result.append(d)
+    return jsonify(result)
 
 
 @bp.get("/<image_id>")

@@ -453,7 +453,20 @@ class Pipeline:
 
     # ---------- 刪掉標錯的類別（連帶回訓）----------
     def delete_label(self, label: str, owner_id: str = "", project_id: str = "") -> int:
-        n = self.repo.delete_label(label, owner_id)
+        n, mask_paths = self.repo.delete_label(label, owner_id, project_id)
+        if hasattr(self, "storage") and self.storage:
+            for p in mask_paths:
+                try:
+                    self.storage.delete(p)
+                except Exception:
+                    pass
+        self.refit(owner_id, project_id)
+        self.reclassify_pending(owner_id, project_id)
+        return n
+
+    # ---------- 重命名 / 合併類別（連帶回訓）----------
+    def rename_label(self, old_label: str, new_label: str, owner_id: str = "", project_id: str = "") -> int:
+        n = self.repo.rename_label(old_label, new_label, owner_id, project_id)
         self.refit(owner_id, project_id)
         self.reclassify_pending(owner_id, project_id)
         return n
