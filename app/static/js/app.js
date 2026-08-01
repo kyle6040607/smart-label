@@ -16,25 +16,238 @@ const state = {
 };
 const $ = (id) => document.getElementById(id);
 
-// 原圖快取：縮圖與重繪共用同一份，避免重複下載解碼
+// 圖片載入器：限制同時下載數，並針對 Cloud Run 暫時性錯誤退避重試。
+const IMAGE_FETCH_CONCURRENCY = 4;
+const IMAGE_MAX_RETRIES = 3;
+const RETRYABLE_IMAGE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const imageFetchQueue = [];
+const imageResourcePromises = new Map();
+const imageObjectUrls = new Map();
+const imageResourceVersions = new Map();
 const imageCache = new Map();
-function loadImage(imageId) {
+const settledImageCacheIds = new Set();
+const MAX_DECODED_IMAGE_CACHE = 24;
+let activeImageFetches = 0;
+let sessionExpiryHandled = false;
+
+class ImageHttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = "ImageHttpError";
+    this.status = status;
+  }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pumpImageFetchQueue() {
+  while (activeImageFetches < IMAGE_FETCH_CONCURRENCY && imageFetchQueue.length) {
+    const item = imageFetchQueue.shift();
+    activeImageFetches += 1;
+    Promise.resolve()
+      .then(item.task)
+      .then(item.resolve, item.reject)
+      .finally(() => {
+        activeImageFetches -= 1;
+        pumpImageFetchQueue();
+      });
+  }
+}
+
+function enqueueImageFetch(task) {
+  return new Promise((resolve, reject) => {
+    imageFetchQueue.push({ task, resolve, reject });
+    pumpImageFetchQueue();
+  });
+}
+
+async function fetchImageBlobWithRetry(url) {
+  for (let attempt = 0; attempt <= IMAGE_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, { credentials: "same-origin" });
+      if (response.ok) return await response.blob();
+
+      const error = new ImageHttpError(
+        response.status,
+        `圖片載入失敗（HTTP ${response.status}）`,
+      );
+      if (!RETRYABLE_IMAGE_STATUSES.has(response.status) || attempt === IMAGE_MAX_RETRIES) {
+        throw error;
+      }
+    } catch (error) {
+      const status = error instanceof ImageHttpError ? error.status : 0;
+      const retryable = status === 0 || RETRYABLE_IMAGE_STATUSES.has(status);
+      if (!retryable || attempt === IMAGE_MAX_RETRIES) throw error;
+    }
+
+    const baseDelay = 500 * (2 ** attempt);
+    await delay(baseDelay + Math.floor(Math.random() * 250));
+  }
+  throw new Error("圖片載入失敗");
+}
+
+function releaseObjectUrl(resourceKey) {
+  imageResourceVersions.set(
+    resourceKey,
+    (imageResourceVersions.get(resourceKey) || 0) + 1,
+  );
+  const objectUrl = imageObjectUrls.get(resourceKey);
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+    imageObjectUrls.delete(resourceKey);
+  }
+  imageResourcePromises.delete(resourceKey);
+}
+
+function getImageObjectUrl(resourceKey, url) {
+  const cachedUrl = imageObjectUrls.get(resourceKey);
+  if (cachedUrl) return Promise.resolve(cachedUrl);
+
+  const pending = imageResourcePromises.get(resourceKey);
+  if (pending) return pending;
+
+  const resourceVersion = imageResourceVersions.get(resourceKey) || 0;
+  let promise;
+  promise = enqueueImageFetch(() => fetchImageBlobWithRetry(url))
+    .then((blob) => {
+      if ((imageResourceVersions.get(resourceKey) || 0) !== resourceVersion) {
+        throw new Error("圖片資源已被釋放");
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      const previousUrl = imageObjectUrls.get(resourceKey);
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      imageObjectUrls.set(resourceKey, objectUrl);
+      return objectUrl;
+    })
+    .finally(() => {
+      if (imageResourcePromises.get(resourceKey) === promise) {
+        imageResourcePromises.delete(resourceKey);
+      }
+    });
+
+  imageResourcePromises.set(resourceKey, promise);
+  return promise;
+}
+
+function decodeImageUrl(objectUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("瀏覽器無法解碼圖片"));
+    image.src = objectUrl;
+  });
+}
+
+function releaseSegmentResources(segmentId) {
+  delete maskImages[segmentId];
+  maskImageOwners.delete(segmentId);
+  releaseObjectUrl(`mask:${segmentId}`);
+  for (const key of tintedMaskCache.keys()) {
+    if (key.startsWith(`${segmentId}:`)) tintedMaskCache.delete(key);
+  }
+}
+
+function releaseOriginalImageResource(imageId) {
+  imageCache.delete(imageId);
+  settledImageCacheIds.delete(imageId);
+  releaseObjectUrl(`image:${imageId}`);
+}
+
+function releaseImageMaskResources(imageId) {
+  for (const [segmentId, ownerImageId] of maskImageOwners.entries()) {
+    if (ownerImageId === imageId) releaseSegmentResources(segmentId);
+  }
+}
+
+function releaseImageResources(imageId) {
+  releaseOriginalImageResource(imageId);
+  releaseObjectUrl(`thumb:${imageId}`);
+  releaseImageMaskResources(imageId);
+}
+
+function trimDecodedImageCache() {
+  while (settledImageCacheIds.size > MAX_DECODED_IMAGE_CACHE) {
+    const oldestImageId = settledImageCacheIds.values().next().value;
+    releaseOriginalImageResource(oldestImageId);
+  }
+}
+
+function releaseAllImageResources() {
+  imageCache.clear();
+  settledImageCacheIds.clear();
+  const resourceKeys = new Set([
+    ...imageResourcePromises.keys(),
+    ...imageObjectUrls.keys(),
+  ]);
+  for (const resourceKey of resourceKeys) {
+    releaseObjectUrl(resourceKey);
+  }
+  for (const segmentId of Object.keys(maskImages)) delete maskImages[segmentId];
+  maskImageOwners.clear();
+  tintedMaskCache.clear();
+}
+
+function releaseMissingImageResources(liveImageIds) {
+  const staleImageIds = new Set();
+  for (const imageId of imageCache.keys()) {
+    if (!liveImageIds.has(imageId)) staleImageIds.add(imageId);
+  }
+  for (const resourceKey of imageObjectUrls.keys()) {
+    if (!resourceKey.startsWith("image:") && !resourceKey.startsWith("thumb:")) continue;
+    const imageId = resourceKey.slice(resourceKey.indexOf(":") + 1);
+    if (!liveImageIds.has(imageId)) staleImageIds.add(imageId);
+  }
+  for (const resourceKey of imageResourcePromises.keys()) {
+    if (!resourceKey.startsWith("image:") && !resourceKey.startsWith("thumb:")) continue;
+    const imageId = resourceKey.slice(resourceKey.indexOf(":") + 1);
+    if (!liveImageIds.has(imageId)) staleImageIds.add(imageId);
+  }
+  staleImageIds.forEach(releaseImageResources);
+}
+
+function handleImageLoadError(error) {
+  if (error instanceof ImageHttpError && error.status === 401 && !sessionExpiryHandled) {
+    sessionExpiryHandled = true;
+    window.location.assign("/login");
+  }
+}
+
+function loadImage(imageId, { force = false } = {}) {
+  if (force) releaseOriginalImageResource(imageId);
+  if (settledImageCacheIds.delete(imageId)) {
+    settledImageCacheIds.add(imageId);
+  }
   if (!imageCache.has(imageId)) {
-    imageCache.set(imageId, new Promise((resolve, reject) => {
-      const pic = new Image();
-      pic.onload = () => resolve(pic);
-      pic.onerror = reject;
-      pic.src = `/api/images/${imageId}/file`;
-    }));
+    const promise = getImageObjectUrl(
+      `image:${imageId}`,
+      `/api/images/${imageId}/file`,
+    )
+      .then(decodeImageUrl)
+      .then((image) => {
+        settledImageCacheIds.add(imageId);
+        trimDecodedImageCache();
+        return image;
+      })
+      .catch((error) => {
+        releaseOriginalImageResource(imageId);
+        handleImageLoadError(error);
+        throw error;
+      });
+    imageCache.set(imageId, promise);
   }
   return imageCache.get(imageId);
 }
 
 // 遮罩影像快取（同步快取 Image 物件，防止非同步 await 造成的時序交錯與閃爍）
 const maskImages = {};
+const maskImageOwners = new Map();
 
 // 著色後的遮罩快取：key = "segId:color"，value = 裁到 bbox 的小 canvas
 const tintedMaskCache = new Map();
+
+window.addEventListener("beforeunload", releaseAllImageResources);
 
 // 取得（或建立）指定顏色的著色遮罩，尚未下載完成時回傳 null
 function getTintedMask(s, color) {
@@ -198,17 +411,18 @@ async function fetchWithProgress(url, options, onProgress) {
   }
 
   if (buffer.trim()) {
+    let data;
     try {
-      const data = JSON.parse(buffer);
-      if (data.event === "progress") {
-        onProgress(data);
-      } else if (data.event === "done") {
-        finalResult = data;
-      } else if (data.event === "error") {
-        throw new Error(data.message || "發生錯誤");
-      }
-    } catch (e) {
-      // ignore
+      data = JSON.parse(buffer);
+    } catch {
+      throw new Error("伺服器回傳了無法解析的分割結果");
+    }
+    if (data.event === "progress") {
+      onProgress(data);
+    } else if (data.event === "done") {
+      finalResult = data;
+    } else if (data.event === "error") {
+      throw new Error(data.message || "發生錯誤");
     }
   }
 
@@ -528,13 +742,44 @@ $("uploadBtn").onclick = async (e) => {
   }
 };
 
+async function loadThumbnailElement(el, im, { force = false } = {}) {
+  if (force) releaseObjectUrl(`thumb:${im.id}`);
+  el.dataset.loadState = "loading";
+  el.classList.remove("image-load-failed");
+  el.alt = `正在載入 ${im.filename}`;
+
+  try {
+    const objectUrl = await getImageObjectUrl(
+      `thumb:${im.id}`,
+      `/api/images/${im.id}/file`,
+    );
+    if (el.dataset.imageId !== im.id) return;
+    await new Promise((resolve, reject) => {
+      el.onload = resolve;
+      el.onerror = () => reject(new Error("瀏覽器無法解碼縮圖"));
+      el.src = objectUrl;
+    });
+    el.dataset.loadState = "loaded";
+    el.alt = im.filename;
+    releaseObjectUrl(`thumb:${im.id}`);
+  } catch (error) {
+    if (el.dataset.imageId !== im.id) return;
+    releaseObjectUrl(`thumb:${im.id}`);
+    handleImageLoadError(error);
+    el.dataset.loadState = "failed";
+    el.classList.add("image-load-failed");
+    el.alt = "載入失敗，點擊重試";
+    console.warn("縮圖載入失敗:", im.id, error);
+  }
+}
+
 function createThumbElement(im) {
   const wrap = document.createElement("div");
   wrap.className = "thumb";
 
   const el = document.createElement("img");
   el.loading = "lazy";
-  el.src = `/api/images/${im.id}/file`;
+  el.dataset.imageId = im.id;
   el.title = im.filename;
   el.onclick = () => {
     if (state.imgBatchMode) {
@@ -543,6 +788,10 @@ function createThumbElement(im) {
       if (chk.checked) state.selectedImageIds.add(im.id);
       else state.selectedImageIds.delete(im.id);
       updateImgBatchBtnState();
+      return;
+    }
+    if (el.dataset.loadState === "failed") {
+      void loadThumbnailElement(el, im, { force: true });
       return;
     }
     selectImage(im, el);
@@ -569,6 +818,7 @@ function createThumbElement(im) {
   del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
 
   wrap.append(chk, el, del);
+  void loadThumbnailElement(el, im);
   return wrap;
 }
 
@@ -667,7 +917,9 @@ function appendThumbs(newImages) {
 
 async function loadThumbs() {
   const imgs = await (await fetch("/api/images")).json();
-  state.allImages = Array.isArray(imgs) ? imgs : [];
+  const imageList = Array.isArray(imgs) ? imgs : [];
+  releaseMissingImageResources(new Set(imageList.map((image) => image.id)));
+  state.allImages = imageList;
   state.renderedImageCount = 0;
 
   const box = $("thumbs");
@@ -684,6 +936,7 @@ async function deleteImage(im) {
   if (!confirm(`確定刪除「${im.filename}」？連同它的遮罩會一起清掉。`)) return;
   const res = await fetch(`/api/images/${im.id}`, { method: "DELETE" });
   if (!res.ok) return alert("刪除失敗：" + (await res.text()));
+  releaseImageResources(im.id);
   // 若刪的是目前選中的圖，清空畫布
   if (state.currentImage && state.currentImage.id === im.id) {
     state.currentImage = null;
@@ -695,8 +948,12 @@ async function deleteImage(im) {
 }
 
 // ---------- 選圖並畫到 canvas ----------
-function selectImage(im, el, targetSegId = null) {
+async function selectImage(im, el, targetSegId = null) {
   if (state.segmenting) return;
+  const previousImageId = state.currentImage ? state.currentImage.id : null;
+  if (previousImageId && previousImageId !== im.id) {
+    releaseImageMaskResources(previousImageId);
+  }
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
   if (el) el.classList.add("active");
@@ -708,8 +965,8 @@ function selectImage(im, el, targetSegId = null) {
   $("textPromptInput").disabled = false;
   $("textSegBtn").disabled = false;
 
-  const pic = new Image();
-  pic.onload = async () => {
+  try {
+    const pic = await loadImage(im.id);
     // 防呆防競態：確認加載完成時，使用者沒有切換到其他張圖
     if (!state.currentImage || state.currentImage.id !== im.id) return;
     canvas.width = pic.width;
@@ -729,8 +986,12 @@ function selectImage(im, el, targetSegId = null) {
     } catch (err) {
       console.error("載入已標記區塊失敗:", err);
     }
-  };
-  pic.src = `/api/images/${im.id}/file`;
+  } catch (error) {
+    console.error("載入圖片失敗:", error);
+    if (state.currentImage && state.currentImage.id === im.id) {
+      alert(error instanceof Error ? error.message : "圖片載入失敗，請重試");
+    }
+  }
 }
 
 async function selectImageById(imageId, targetSegId = null) {
@@ -740,7 +1001,7 @@ async function selectImageById(imageId, targetSegId = null) {
     if (!res.ok) return;
     const im = await res.json();
 
-    const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${im.id}/file"]`) ||
+    const thumbImg = document.querySelector(`.thumb img[data-image-id="${im.id}"]`) ||
       document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
 
     selectImage(im, thumbImg, targetSegId);
@@ -754,7 +1015,7 @@ $("autoSegBtn").onclick = async () => {
   if (!state.currentImage || state.segmenting) return;
 
   const imageId = state.currentImage.id;
-  setSegmentationLoading(true, "自動分割中…", true);
+  setSegmentationLoading(true, "正在準備模型並執行自動分割…", true);
   startFakeProgress(10, 75);
   try {
     const data = await fetchWithProgress(
@@ -793,7 +1054,7 @@ $("textSegBtn").onclick = async () => {
   if (!state.currentImage || state.segmenting) return;
 
   const imageId = state.currentImage.id;
-  setSegmentationLoading(true, `正在搜尋「${promptVal}」並進行分割…`, true);
+  setSegmentationLoading(true, `正在準備模型並搜尋「${promptVal}」…`, true);
   startFakeProgress(10, 75);
 
   try {
@@ -849,7 +1110,7 @@ canvas.onclick = async (e) => {
   if (state.mode === "layman") return;
   const { x, y } = toImageXY(e);
   const imageId = state.currentImage.id;
-  setSegmentationLoading(true, "單點分割中…");
+  setSegmentationLoading(true, "正在準備模型並執行單點分割…");
   try {
     const res = await fetch(`/api/images/${imageId}/segment_point`, {
       method: "POST",
@@ -968,6 +1229,33 @@ canvas.addEventListener("touchend", async (e) => {
   }
 }, { passive: false });
 
+function startMaskImageLoad(segment, segments, highlightId, ownerImageId) {
+  const image = new Image();
+  maskImages[segment.id] = image;
+  maskImageOwners.set(segment.id, ownerImageId);
+
+  getImageObjectUrl(
+    `mask:${segment.id}`,
+    `/api/segments/${segment.id}/mask`,
+  )
+    .then((objectUrl) => new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error("瀏覽器無法解碼遮罩"));
+      image.src = objectUrl;
+    }))
+    .then(() => {
+      // segments 若已被較新的 redraw 取代，就不要用舊資料蓋回去
+      if (state.lastSegments === segments) void redraw(segments, highlightId);
+    })
+    .catch((error) => {
+      if (maskImages[segment.id] === image) {
+        releaseSegmentResources(segment.id);
+      }
+      handleImageLoadError(error);
+      console.warn("Mask 下載失敗:", segment.id, error);
+    });
+}
+
 // ---------- 把遮罩疊回圖上：高信心綠框、低信心紅框 ----------
 // highlightId：審核卡片 hover 時，把對應的框加粗變黃
 async function redraw(segments, highlightId = null) {
@@ -992,17 +1280,7 @@ async function redraw(segments, highlightId = null) {
       ctx.restore();
     } else if (!maskImages[s.id]) {
       // 若尚未下載，則啟動非同步下載，下載成功後觸發重繪
-      const img = new Image();
-      img.src = `/api/segments/${s.id}/mask`;
-      img.onload = () => {
-        // segments 若已被較新的 redraw 取代，就不要用舊資料蓋回去
-        if (state.lastSegments === segments) redraw(segments, highlightId);
-      };
-      img.onerror = () => {
-        console.warn("Mask 下載失敗:", s.id);
-        delete maskImages[s.id]; // 移除失敗紀錄，讓下次 redraw 能重試
-      };
-      maskImages[s.id] = img;
+      startMaskImageLoad(s, segments, highlightId, currentImageId);
     }
   }
 
@@ -1192,6 +1470,7 @@ async function refreshSidebar() {
         if (!res.ok) {
           return alert("刪除失敗：" + (await res.text()));
         }
+        releaseSegmentResources(s.id);
         state.autoSegCompleted = false;
         updateAutoSegBtn();
         await refreshAfterSegChange();
@@ -1388,8 +1667,18 @@ $("batchDelImgsBtn").onclick = async () => {
       });
 
       if (!res.ok) throw new Error(await res.text());
+      batchIds.forEach(releaseImageResources);
       deletedTotal += batchIds.length;
     }
+
+    // 增量 DOM 移除：直接將已被刪除的照片縮圖元素從畫面清掉（0ms 延遲）
+    ids.forEach((id) => {
+      const chk = document.querySelector(`.thumb-chk[data-id="${id}"]`);
+      if (chk) {
+        const thumb = chk.closest(".thumb");
+        if (thumb) thumb.remove();
+      }
+    });
 
     // 如果刪除的照片包含當前選擇的圖片，清空畫布
     if (state.currentImage && ids.includes(state.currentImage.id)) {
@@ -1440,6 +1729,8 @@ $("batchDelSegsBtn").onclick = async () => {
     });
 
     if (!res.ok) throw new Error(await res.text());
+
+    ids.forEach(releaseSegmentResources);
 
     // 增量 DOM 移除：直接移除清單項目
     ids.forEach((id) => {

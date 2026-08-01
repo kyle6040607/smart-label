@@ -229,6 +229,18 @@ button.on { background: #ffd93d; color: #1a2230; font-weight: 600; }
 }
 .thumb img:hover { transform: scale(1.03); }
 .thumb img.active { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.thumb img[data-load-state="loading"] {
+  background: linear-gradient(110deg, var(--panel) 30%, var(--border) 45%, var(--panel) 60%);
+  background-size: 200% 100%;
+  animation: thumb-loading 1.2s linear infinite;
+}
+.thumb img.image-load-failed {
+  background: var(--panel);
+  border-color: var(--danger);
+}
+@keyframes thumb-loading {
+  to { background-position-x: -200%; }
+}
 .thumb-del {
   position: absolute; top: -6px; right: -6px;
   width: 20px; height: 20px; padding: 0; line-height: 1;
@@ -999,4 +1011,3 @@ body.layman-mode canvas {
   gap: 10px;
   margin-top: 8px;
 }
-

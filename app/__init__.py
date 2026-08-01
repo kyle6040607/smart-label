@@ -10,7 +10,7 @@ from werkzeug.security import generate_password_hash
 
 from app.config import Config, config as default_config
 from app.models import User
-from app.services.pipeline import Pipeline
+from app.services.pipeline import InferenceBusyError, Pipeline
 from app.repository import Repository
 from app.storage import build_storage
 
@@ -111,5 +111,15 @@ def create_app(config: Config | None = None) -> Flask:
     @app.get("/healthz")
     def healthz():
         return {"status": "ok"}
+
+    @app.errorhandler(InferenceBusyError)
+    def inference_busy(error: InferenceBusyError):
+        response = jsonify({
+            "error": "model_busy",
+            "message": str(error),
+        })
+        response.status_code = 503
+        response.headers["Retry-After"] = "5"
+        return response
 
     return app

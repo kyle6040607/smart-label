@@ -24,7 +24,7 @@ def test_predict_boxes_accepts_pipeline_kwargs():
 
 def test_pipeline_still_passes_tunables_to_detector():
     """pipeline.segment_text 必須把兩個可調參數都帶給偵測器，面板才有作用。"""
-    source = inspect.getsource(Pipeline.segment_text)
+    source = inspect.getsource(Pipeline._segment_text_locked)
 
     assert "predict_boxes(" in source
     assert "conf=self.config.yolo_world_confidence" in source
