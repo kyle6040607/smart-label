@@ -678,6 +678,7 @@ async function loadThumbs() {
 
   renderMoreThumbs();
   updateGalleryToggleUI();
+  updateImgNavUI();
 }
 
 async function deleteImage(im) {
@@ -692,7 +693,104 @@ async function deleteImage(im) {
   }
   await loadThumbs();
   await refreshSidebar();
+  updateImgNavUI();
 }
+
+// ---------- 照片切換導航 (上一張 / 下一張 + 鍵盤捷徑) ----------
+function updateImgNavUI() {
+  const prevBtn = $("prevImgBtn");
+  const nextBtn = $("nextImgBtn");
+  const counter = $("imgNavCounter");
+  if (!prevBtn || !nextBtn || !counter) return;
+
+  const total = state.allImages ? state.allImages.length : 0;
+  if (total === 0) {
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    counter.textContent = "0 / 0";
+    return;
+  }
+
+  prevBtn.disabled = total <= 1;
+  nextBtn.disabled = total <= 1;
+
+  const currentIdx = state.currentImage ? state.allImages.findIndex((img) => img.id === state.currentImage.id) : -1;
+  if (currentIdx > -1) {
+    counter.textContent = `${currentIdx + 1} / ${total}`;
+  } else {
+    counter.textContent = `0 / ${total}`;
+  }
+}
+
+function switchPrevImage() {
+  if (!state.allImages || state.allImages.length === 0 || state.segmenting) return;
+  const total = state.allImages.length;
+  let currentIdx = state.currentImage ? state.allImages.findIndex((img) => img.id === state.currentImage.id) : -1;
+
+  let targetIdx;
+  if (currentIdx === -1) {
+    targetIdx = 0;
+  } else if (currentIdx === 0) {
+    targetIdx = total - 1; // 循環到最後一張
+  } else {
+    targetIdx = currentIdx - 1;
+  }
+
+  const targetImg = state.allImages[targetIdx];
+  if (targetImg) {
+    const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${targetImg.id}/file"]`) ||
+                     document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
+    selectImage(targetImg, thumbImg);
+  }
+}
+
+function switchNextImage() {
+  if (!state.allImages || state.allImages.length === 0 || state.segmenting) return;
+  const total = state.allImages.length;
+  let currentIdx = state.currentImage ? state.allImages.findIndex((img) => img.id === state.currentImage.id) : -1;
+
+  let targetIdx;
+  if (currentIdx === -1 || currentIdx >= total - 1) {
+    targetIdx = 0; // 循環到第一張
+  } else {
+    targetIdx = currentIdx + 1;
+  }
+
+  const targetImg = state.allImages[targetIdx];
+  if (targetImg) {
+    const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${targetImg.id}/file"]`) ||
+                     document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
+    selectImage(targetImg, thumbImg);
+  }
+}
+
+function initImgNavEvents() {
+  const prevBtn = $("prevImgBtn");
+  const nextBtn = $("nextImgBtn");
+  if (prevBtn) prevBtn.onclick = () => switchPrevImage();
+  if (nextBtn) nextBtn.onclick = () => switchNextImage();
+
+  window.addEventListener("keydown", (e) => {
+    // 防呆：若正在輸入框打字、彈窗開啟中、或正進行 AI 分割，忽略快捷鍵
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT" || activeEl.isContentEditable)) {
+      return;
+    }
+    const modalOverlay = $("modalOverlay");
+    if (modalOverlay && modalOverlay.classList.contains("active")) {
+      return;
+    }
+
+    if (e.key === "a" || e.key === "A" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      switchPrevImage();
+    } else if (e.key === "d" || e.key === "D" || e.key === "ArrowRight") {
+      e.preventDefault();
+      switchNextImage();
+    }
+  });
+}
+initImgNavEvents();
 
 // ---------- 選圖並畫到 canvas ----------
 function selectImage(im, el, targetSegId = null) {
@@ -700,6 +798,8 @@ function selectImage(im, el, targetSegId = null) {
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
   if (el) el.classList.add("active");
+
+  updateImgNavUI();
 
   state.autoSegCompleted = false;
   updateAutoSegBtn(true);
@@ -1094,6 +1194,10 @@ async function refreshSidebar() {
     const probs = Object.entries(s.probs)
       .map(([k, v]) => `${k}:${v.toFixed(2)}`)
       .join(" · ") || "（尚無範例可分類）";
+    const pred = (s.predicted_label || "").trim();
+    const placeholderText = pred ? `預設：${pred}` : "正確類別";
+    const confirmTitle = pred ? `按「確認」或 Enter 將直接採納預測標籤：「${pred}」` : "確認標籤";
+
     li.innerHTML = `
       <div class="queue-item">
         <input type="checkbox" class="seg-chk" data-id="${s.id}" />
@@ -1101,9 +1205,9 @@ async function refreshSidebar() {
         <div class="queue-body">
           <div>預測：${s.predicted_label ?? "—"} · 信心 ${s.confidence.toFixed(2)}</div>
           <div class="probs">${probs}</div>
-          <div style="margin-top:6px">
-            <input placeholder="正確類別" data-seg="${s.id}" />
-            <button class="confirm">確認</button>
+          <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+            <input placeholder="${placeholderText}" data-seg="${s.id}" style="flex:1; min-width:80px;" />
+            <button class="confirm" title="${confirmTitle}">確認</button>
             <button class="seg-del" title="刪掉這個切壞的片段">刪除</button>
           </div>
         </div>
@@ -1157,10 +1261,16 @@ async function refreshSidebar() {
     };
     const inputEl = li.querySelector("input[data-seg]");
     const submitReview = async () => {
-      const label = inputEl.value.trim();
-      if (!label) return;
+      let label = inputEl.value.trim();
+      if (!label && pred) {
+        label = pred; // 輸入框留白時，直接採納 AI 預測標籤！
+      }
+      if (!label) {
+        alert("請輸入正確類別標籤");
+        return;
+      }
 
-      //  樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
+      // 樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
       li.style.opacity = "0.3";
       li.style.pointerEvents = "none";
 
