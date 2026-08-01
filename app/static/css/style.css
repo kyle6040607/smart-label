@@ -230,13 +230,35 @@ button.on { background: #ffd93d; color: #1a2230; font-weight: 600; }
 .thumb img:hover { transform: scale(1.03); }
 .thumb img.active { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .thumb-del {
-  position: absolute; top: -6px; right: -6px;
-  width: 20px; height: 20px; padding: 0; line-height: 1;
-  border-radius: 50%; background: var(--danger); color: #fff;
-  font-size: 14px; opacity: 0; transition: opacity .15s;
-  z-index: 6;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--danger, #ef4444);
+  color: #fff;
+  font-size: 14px;
+  font-weight: bold;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
+  z-index: 10;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
-.thumb:hover .thumb-del { opacity: 1; }
+.thumb:hover .thumb-del {
+  opacity: 1;
+}
+.thumb-del:hover {
+  transform: scale(1.15);
+  background: #dc2626;
+}
 
 .canvas-wrap {
   position: relative;
@@ -449,13 +471,19 @@ button.btn-danger:disabled {
   position: absolute;
   top: 4px;
   left: 4px;
-  z-index: 5;
+  z-index: 10;
   width: 18px;
   height: 18px;
   cursor: pointer;
+  accent-color: var(--accent, #6366f1);
 }
 .thumbs.batch-active .thumb-chk {
   display: block;
+}
+
+/* 批次管理模式下，將遮罩數量徽章向右位移避開勾選框 */
+.thumbs.batch-active .thumb-seg-badge {
+  left: 28px;
 }
 
 /* 待審佇列勾選框 */
@@ -1286,6 +1314,7 @@ body.layman-mode canvas {
   top: 4px;
   left: 4px;
   z-index: 5;
+  transition: left 0.15s ease;
   background: rgba(15, 23, 42, 0.85);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);

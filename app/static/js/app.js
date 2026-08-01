@@ -715,6 +715,9 @@ function createThumbElement(im) {
   el.loading = "lazy";
   el.src = `/api/images/${im.id}/file`;
   el.title = im.filename;
+  if (state.currentImage && state.currentImage.id === im.id) {
+    el.classList.add("active");
+  }
   el.onclick = () => {
     if (state.imgBatchMode) {
       chk.checked = !chk.checked;
@@ -1142,8 +1145,7 @@ $("autoSegBtn").onclick = async () => {
 
 
 
-    await redraw(data.segments);
-    await refreshSidebar();
+    await refreshAfterSegChange();
 
     if (Array.isArray(data.segments) && data.segments.length > 0) {
       pushUndoAction({ type: "CREATE_SEGMENTS", segIds: data.segments.map((s) => s.id), imageId });
@@ -1190,8 +1192,7 @@ $("textSegBtn").onclick = async () => {
       }
     );
 
-    await redraw(data.segments);
-    await refreshSidebar();
+    await refreshAfterSegChange();
 
     if (Array.isArray(data.segments) && data.segments.length > 0) {
       pushUndoAction({ type: "CREATE_SEGMENTS", segIds: data.segments.map((s) => s.id), imageId });
@@ -1416,7 +1417,12 @@ async function redraw(segments, highlightId = null) {
 // 點完一塊後問使用者類別，存成種子範例
 async function promptLabel(seg, isNewSegment = false) {
   const label = prompt("這塊是什麼類別？（留空跳過）");
-  if (!label) return;
+  if (!label) {
+    if (isNewSegment) {
+      await refreshAfterSegChange();
+    }
+    return;
+  }
   await fetch(`/api/segments/${seg.id}/label`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1432,9 +1438,7 @@ async function promptLabel(seg, isNewSegment = false) {
       imageId: seg.image_id
     });
   }
-  const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
-  await redraw(all);
-  await refreshSidebar();
+  await refreshAfterSegChange();
 }
 
 // 刪掉類別（連同它的種子範例與關聯遮罩片段，並回訓）
@@ -1442,11 +1446,7 @@ async function deleteLabel(name) {
   if (!confirm(`確定刪除類別「${name}」？其所有範例與標有此類別的遮罩將會一併刪除。`)) return;
   const res = await fetch(`/api/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
   if (!res.ok) return showToast("刪除失敗：" + (await res.text()), "error");
-  if (state.currentImage) {
-    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
-    await redraw(all);
-  }
-  await refreshSidebar();
+  await refreshAfterSegChange();
   showToast(`已刪除類別「${name}」及其所有遮罩`, "info");
 }
 
