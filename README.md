@@ -134,6 +134,24 @@ LIFF 任務 ZIP 會直接串流寫入目前 storage，不會先把整包 ZIP 放
 account 需具備 `iam.serviceAccounts.signBlob` 權限。若只有簽署權限缺失，
 系統會記錄 warning 並退回由應用程式分塊串流。
 
+## LIFF 背景任務 Worker
+
+獨立 Worker 使用短交易領取一個 `pending` 任務並立即提交 `processing`
+狀態，模型推論與 ZIP 打包不會持有資料庫 row lock。無任務時的輪詢間隔由
+`TASK_WORKER_POLL_SECONDS` 控制。
+
+```bash
+# 常駐輪詢（適合 Cloud Run Worker Pool）
+python scripts/task_worker.py --mode loop
+
+# 清空目前佇列後離開（適合 Cloud Run Job）
+python scripts/task_worker.py --mode drain
+```
+
+`loop` 模式必須使用 MySQL。JSON Repository 無法由 Web 與獨立 Worker
+跨程序安全共用，因此 Worker 會拒絕以 JSON 後端啟動。Web 與 Worker 必須
+連到同一個 MySQL 服務。
+
 ## API 一覽
 
 | 方法 | 路徑 | 用途 |
