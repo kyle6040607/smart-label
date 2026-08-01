@@ -252,6 +252,29 @@
         <button id="exportBtn">下載 ZIP</button>
         <p class="hint">只匯出已標好類別的片段（圖 + 遮罩 + 標籤）</p>
       </div>
+
+      <!-- YOLOv26x-seg 訓練區塊 -->
+      <div class="training-panel" style="margin-top: 18px; padding: 14px; background: var(--card-bg, rgba(255,255,255,0.04)); border: 1px solid var(--border-color, rgba(255,255,255,0.1)); border-radius: 10px;">
+        <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+          <span>🤖 YOLOv26x-seg 線上訓練</span>
+        </h3>
+        <button id="startTrainingBtn" class="btn-primary" style="width: 100%; padding: 8px 12px; font-weight: 600; background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none; border-radius: 6px; color: #fff; cursor: pointer; transition: all 0.2s;">
+          🚀 開始訓練 YOLOv26x-seg
+        </button>
+        <div id="trainingStatusContainer" style="margin-top: 10px; font-size: 12px; line-height: 1.5;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span id="trainingStatusBadge" style="display: inline-block; padding: 2px 8px; border-radius: 12px; font-weight: 600; font-size: 11px; background: #9ca3af; color: #fff;">
+              ⚪ 尚未訓練
+            </span>
+          </div>
+          <p id="trainingStatusText" style="margin: 6px 0 0 0; color: var(--muted, #888); word-break: break-all;"></p>
+          <div id="trainingModelDownload" style="margin-top: 8px; display: none;">
+            <a id="downloadModelLink" href="#" target="_blank" class="btn-link" style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; text-decoration: none; color: #3b82f6;">
+              📦 下載最佳模型權重檔 (.pt)
+            </a>
+          </div>
+        </div>
+      </div>
     </aside>
 
     <!-- 4. 工程師儀表板 -->

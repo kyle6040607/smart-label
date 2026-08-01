@@ -295,6 +295,24 @@ class Repository:
             segs = [s for s in segs if s.image_id == image_id]
         return list(segs)
 
+    def list_labeled_segments_by_project(
+        self,
+        owner_id: str,
+        project_id: str | None = None,
+    ) -> list[Segment]:
+        """撈出特定使用者與專案下已標註 (final_label IS NOT NULL) 的片段。"""
+        user_image_ids = {
+            img.id
+            for img in self.images.values()
+            if (not owner_id or img.owner_id == owner_id)
+            and (not project_id or img.project_id == project_id)
+        }
+        return [
+            s
+            for s in self.segments.values()
+            if s.image_id in user_image_ids and bool(s.final_label)
+        ]
+
     def list_review_queue(self) -> list[Segment]:
         """待人工審核的低信心片段（提案第 8 頁標紅送審）。"""
         return [s for s in self.segments.values() if s.needs_review and not s.reviewed]

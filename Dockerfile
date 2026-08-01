@@ -58,6 +58,17 @@ RUN curl -fsSL -o models/yolov8x-worldv2.pt \
     echo "41e771bfbbb8894dd857f3fef7cac3b3578dffd49fd3547101efa6a606a02a0e  models/yolov8x-worldv2.pt" \
       | sha256sum -c -
 
+RUN curl -fsSL -o models/yolo26x-seg.pt \
+      https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-seg.pt && \
+    echo "92b3de0065766a17180d6219858717dc9d03cdce8a3ca9576c97fd75aabb64f3  models/yolo26x-seg.pt" \
+      | sha256sum -c -
+
+RUN curl -fsSL -o models/yolo26n.pt \
+      https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt && \
+    echo "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef  models/yolo26n.pt" \
+      | sha256sum -c -
+
+
 # CLIP 權重（ViT-B/32，約 338MB）預先抓進 image 的快取目錄，否則第一次
 # set_classes() 會在執行期下載。build 與執行期同為 root，快取路徑一致。
 RUN python -c "import clip; clip.load('ViT-B/32', device='cpu')"
