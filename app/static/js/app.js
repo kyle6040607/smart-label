@@ -74,6 +74,60 @@ function setTagColor(label, color) {
   saveTagColors();
 }
 
+function updateThumbTagDots(label, newColor) {
+  document.querySelectorAll(".thumb-tag-dot").forEach((dot) => {
+    if (dot.dataset.tag === label) {
+      dot.style.backgroundColor = newColor;
+    }
+  });
+}
+
+function hsvToHex(h, s, v) {
+  s /= 100;
+  v /= 100;
+  let r = 0, g = 0, b = 0;
+  let i = Math.floor((h / 60) % 6);
+  let f = (h / 60) - Math.floor(h / 60);
+  let p = v * (1 - s);
+  let q = v * (1 - f * s);
+  let t = v * (1 - (1 - f) * s);
+  switch (i) {
+    case 0: r = v; g = t; b = p; break;
+    case 1: r = q; g = v; b = p; break;
+    case 2: r = p; g = v; b = t; break;
+    case 3: r = p; g = q; b = v; break;
+    case 4: r = t; g = p; b = v; break;
+    case 5: r = v; g = p; b = q; break;
+  }
+  const toHex = x => Math.round(x * 255).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function hexToHsv(hex) {
+  let c = hex.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  let r = parseInt(c.substring(0, 2), 16) / 255 || 0;
+  let g = parseInt(c.substring(2, 4), 16) / 255 || 0;
+  let b = parseInt(c.substring(4, 6), 16) / 255 || 0;
+
+  let max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0, v = max;
+  let d = max - min;
+  s = max === 0 ? 0 : d / max;
+
+  if (max === min) {
+    h = 0;
+  } else {
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return { h: Math.round(h * 360), s: Math.round(s * 100), v: Math.round(v * 100) };
+}
+
 let activeColorPopover = null;
 
 function closeColorPickerPopover() {
@@ -93,14 +147,15 @@ function openColorPickerPopover(e, label) {
   popover.className = "color-picker-popover";
 
   const rect = e.target.getBoundingClientRect();
-  popover.style.top = `${Math.min(window.innerHeight - 180, rect.bottom + 6)}px`;
-  popover.style.left = `${Math.min(window.innerWidth - 230, rect.left - 80)}px`;
+  popover.style.top = `${Math.min(window.innerHeight - 300, Math.max(10, rect.bottom + 6))}px`;
+  popover.style.left = `${Math.min(window.innerWidth - 250, Math.max(10, rect.left - 80))}px`;
 
   const currentColor = getTagColor(label);
+  const currentHsv = hexToHsv(currentColor);
 
   popover.innerHTML = `
     <div class="color-picker-header">
-      <span>「${label}」色彩預設</span>
+      <span>「${label}」標籤色彩</span>
       <button type="button" class="toast-close" style="font-size:14px;">✕</button>
     </div>
     <div class="color-presets-grid">
@@ -108,9 +163,20 @@ function openColorPickerPopover(e, label) {
         <div class="color-swatch ${c.toLowerCase() === currentColor.toLowerCase() ? "active" : ""}" style="background-color: ${c};" data-color="${c}"></div>
       `).join("")}
     </div>
-    <div class="custom-color-row">
-      <span>自訂色彩：</span>
-      <input type="color" value="${currentColor}" />
+    <div class="custom-picker-section">
+      <div class="sv-box" id="svBox">
+        <div class="sv-handle" id="svHandle"></div>
+      </div>
+      <div class="hue-bar" id="hueBar">
+        <div class="hue-handle" id="hueHandle"></div>
+      </div>
+      <div class="color-inputs-row">
+        <div class="color-preview-box" id="colorPreviewBox"></div>
+        <div class="hex-input-wrap">
+          <span style="opacity:0.6; font-size:11px; font-weight:600;">HEX</span>
+          <input type="text" id="hexInput" class="hex-input" maxLength="7" value="${currentColor}" />
+        </div>
+      </div>
     </div>
   `;
 
@@ -119,28 +185,117 @@ function openColorPickerPopover(e, label) {
     closeColorPickerPopover();
   };
 
-  const applyColor = async (newColor) => {
+  const svBox = popover.querySelector("#svBox");
+  const svHandle = popover.querySelector("#svHandle");
+  const hueBar = popover.querySelector("#hueBar");
+  const hueHandle = popover.querySelector("#hueHandle");
+  const previewBox = popover.querySelector("#colorPreviewBox");
+  const hexInput = popover.querySelector("#hexInput");
+
+  const applyColor = async (newColor, notify = true) => {
     setTagColor(label, newColor);
-    closeColorPickerPopover();
+    updateThumbTagDots(label, newColor);
     if (state.currentImage && state.lastSegments) {
       await redraw(state.lastSegments);
     }
     await refreshSidebar();
-    showToast(`已更新「${label}」的標籤色彩`, "success");
+    if (notify) {
+      showToast(`已更新「${label}」的標籤色彩`, "success");
+    }
   };
+
+  const updateUIFromHsv = (skipApply = false) => {
+    const hex = hsvToHex(currentHsv.h, currentHsv.s, currentHsv.v);
+    svBox.style.backgroundColor = `hsl(${currentHsv.h}, 100%, 50%)`;
+    svHandle.style.left = `${currentHsv.s}%`;
+    svHandle.style.top = `${100 - currentHsv.v}%`;
+    hueHandle.style.left = `${(currentHsv.h / 360) * 100}%`;
+    previewBox.style.backgroundColor = hex;
+    hexInput.value = hex;
+
+    popover.querySelectorAll(".color-swatch").forEach((s) => {
+      s.classList.toggle("active", s.dataset.color.toLowerCase() === hex.toLowerCase());
+    });
+
+    if (!skipApply) {
+      applyColor(hex, false);
+    }
+  };
+
+  let isDraggingSV = false;
+  let isDraggingHue = false;
+
+  const handleSVMove = (evt) => {
+    const boxRect = svBox.getBoundingClientRect();
+    const x = Math.max(0, Math.min(boxRect.width, evt.clientX - boxRect.left));
+    const y = Math.max(0, Math.min(boxRect.height, evt.clientY - boxRect.top));
+    currentHsv.s = Math.round((x / boxRect.width) * 100);
+    currentHsv.v = Math.round((1 - y / boxRect.height) * 100);
+    updateUIFromHsv();
+  };
+
+  const handleHueMove = (evt) => {
+    const barRect = hueBar.getBoundingClientRect();
+    const x = Math.max(0, Math.min(barRect.width, evt.clientX - barRect.left));
+    currentHsv.h = Math.round((x / barRect.width) * 360);
+    updateUIFromHsv();
+  };
+
+  svBox.addEventListener("mousedown", (evt) => {
+    isDraggingSV = true;
+    handleSVMove(evt);
+    evt.preventDefault();
+  });
+
+  hueBar.addEventListener("mousedown", (evt) => {
+    isDraggingHue = true;
+    handleHueMove(evt);
+    evt.preventDefault();
+  });
+
+  const onGlobalMouseMove = (evt) => {
+    if (isDraggingSV) handleSVMove(evt);
+    else if (isDraggingHue) handleHueMove(evt);
+  };
+
+  const onGlobalMouseUp = () => {
+    if (isDraggingSV || isDraggingHue) {
+      isDraggingSV = false;
+      isDraggingHue = false;
+      applyColor(hsvToHex(currentHsv.h, currentHsv.s, currentHsv.v), true);
+    }
+  };
+
+  window.addEventListener("mousemove", onGlobalMouseMove);
+  window.addEventListener("mouseup", onGlobalMouseUp);
 
   popover.querySelectorAll(".color-swatch").forEach((swatch) => {
     swatch.onclick = (evt) => {
       evt.stopPropagation();
-      applyColor(swatch.dataset.color);
+      const col = swatch.dataset.color;
+      const parsed = hexToHsv(col);
+      currentHsv.h = parsed.h;
+      currentHsv.s = parsed.s;
+      currentHsv.v = parsed.v;
+      updateUIFromHsv(false);
+      applyColor(col, true);
     };
   });
 
-  const customColorInput = popover.querySelector("input[type='color']");
-  customColorInput.onchange = (evt) => {
-    applyColor(evt.target.value);
+  hexInput.oninput = (evt) => {
+    let val = evt.target.value.trim();
+    if (!val.startsWith("#")) val = "#" + val;
+    if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+      const parsed = hexToHsv(val);
+      currentHsv.h = parsed.h;
+      currentHsv.s = parsed.s;
+      currentHsv.v = parsed.v;
+      updateUIFromHsv(false);
+      applyColor(val, false);
+    }
   };
 
+  updateUIFromHsv(true);
   document.body.appendChild(popover);
   activeColorPopover = popover;
 }
@@ -464,11 +619,11 @@ function initDropZone() {
       state.isAborted = true;
       try {
         fetch("/api/images/cancel_upload", { method: "POST" });
-      } catch (err) {}
+      } catch (err) { }
       if (state.currentXhr) {
         try {
           state.currentXhr.abort();
-        } catch (err) {}
+        } catch (err) { }
         state.currentXhr = null;
       }
       await loadThumbs();
@@ -592,7 +747,7 @@ $("uploadBtn").onclick = async (e) => {
                 expandGallery();
               }
             }
-          } catch (err) {}
+          } catch (err) { }
         }
       };
 
@@ -614,7 +769,7 @@ $("uploadBtn").onclick = async (e) => {
                   if (data.event === "done" && Array.isArray(data.created)) {
                     createdImages = data.created;
                   }
-                } catch (e) {}
+                } catch (e) { }
               }
             } else {
               createdImages = JSON.parse(text);
@@ -635,7 +790,7 @@ $("uploadBtn").onclick = async (e) => {
           try {
             const json = JSON.parse(xhr.responseText);
             errorMsg = json.error || json.message || xhr.responseText;
-          } catch (e) {}
+          } catch (e) { }
           reject(new Error(errorMsg || `HTTP ${xhr.status}`));
         }
       };
@@ -769,6 +924,7 @@ function createThumbElement(im) {
       tags.forEach((tag) => {
         const dot = document.createElement("span");
         dot.className = "thumb-tag-dot";
+        dot.dataset.tag = tag;
         dot.style.backgroundColor = getTagColor(tag);
         dotsContainer.appendChild(dot);
       });
@@ -1007,7 +1163,7 @@ function switchPrevImage() {
   const targetImg = images[targetIdx];
   if (targetImg) {
     const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${targetImg.id}/file"]`) ||
-                     document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
+      document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
     selectImage(targetImg, thumbImg);
   }
 }
@@ -1028,7 +1184,7 @@ function switchNextImage() {
   const targetImg = images[targetIdx];
   if (targetImg) {
     const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${targetImg.id}/file"]`) ||
-                     document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
+      document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
     selectImage(targetImg, thumbImg);
   }
 }
@@ -1069,7 +1225,7 @@ async function performUndo() {
         for (const id of action.segIds) {
           try {
             await fetch(`/api/segments/${id}`, { method: "DELETE" });
-          } catch (e) {}
+          } catch (e) { }
         }
       }
       state.autoSegCompleted = false;
@@ -1174,7 +1330,7 @@ async function selectImageById(imageId, targetSegId = null) {
     const im = await res.json();
 
     const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${im.id}/file"]`) ||
-                     document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
+      document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
 
     selectImage(im, thumbImg, targetSegId);
   } catch (err) {
@@ -2290,7 +2446,7 @@ let reviewProgressChartInstance = null;
 function getCssVar(varName, fallback = '') {
   if (typeof window === "undefined" || !document.documentElement) return fallback;
   const val = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return val || fallback; 
+  return val || fallback;
 }
 
 function applyMode(mode) {
@@ -2698,4 +2854,109 @@ if (toggleBtn) {
   };
 }
 
+// ---------- 資料集匯出預覽 Modal (Dataset Export Preview Modal) ----------
+function initExportPreviewModal() {
+  const exportBtn = $("exportBtn");
+  const modal = $("exportPreviewModal");
+  const closeBtn = $("closeExportPreviewModalBtn");
+  const cancelBtn = $("cancelExportPreviewBtn");
+  const confirmBtn = $("confirmExportBtn");
+  const formatSelect = $("exportFormat");
+
+  if (!exportBtn || !modal) return;
+
+  const toggleExportModal = (show) => {
+    const isVisible = show !== undefined ? Boolean(show) : modal.style.display !== "flex";
+    modal.style.display = isVisible ? "flex" : "none";
+    if (isVisible) modal.classList.add("active");
+    else modal.classList.remove("active");
+  };
+
+  if (closeBtn) closeBtn.onclick = () => toggleExportModal(false);
+  if (cancelBtn) cancelBtn.onclick = () => toggleExportModal(false);
+  modal.onclick = (e) => {
+    if (e.target === modal) toggleExportModal(false);
+  };
+
+  exportBtn.onclick = async () => {
+    const fmt = formatSelect ? formatSelect.value : "coco";
+    try {
+      const res = await fetch(`/api/export/preview?format=${fmt}`);
+      if (!res.ok) throw new Error("讀取匯出資料預覽失敗");
+      const data = await res.json();
+
+      // 更新格式標籤與說明
+      const fmtTitles = {
+        coco: "COCO Instance Segmentation",
+        yolo: "YOLOv8-seg / YOLO11 Format",
+        mask: "Semantic Mask PNG Format"
+      };
+      const fmtDescs = {
+        coco: "相容於 Detectron2, MMDetection, YOLOv8 格式",
+        yolo: "包含 txt 多邊形點座標與 data.yaml 訓練設定檔",
+        mask: "包含二值化語意分割 PNG 圖片檔與 classes.txt 對照表"
+      };
+
+      $("exportFmtTag").textContent = fmtTitles[fmt] || fmt.toUpperCase();
+      $("exportFmtDesc").textContent = fmtDescs[fmt] || "";
+
+      // 更新統計卡片數據
+      $("exportStatImages").textContent = data.annotated_images || 0;
+      $("exportStatSegments").textContent = data.total_segments || 0;
+      $("exportStatLabels").textContent = data.num_labels || 0;
+
+      // 更新類別分佈表格
+      const tbody = $("exportClassTbody");
+      if (tbody) {
+        tbody.innerHTML = "";
+        const labelCounts = data.label_counts || {};
+        const totalSegs = data.total_segments || 1;
+        const labels = Object.keys(labelCounts);
+
+        if (labels.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--muted); padding:10px;">尚未有已完成標記的類別數據</td></tr>`;
+        } else {
+          labels.forEach((lbl) => {
+            const cnt = labelCounts[lbl];
+            const pct = ((cnt / totalSegs) * 100).toFixed(1);
+            const color = getTagColor(lbl);
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>
+                <span class="tag-color-dot" style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:${color}; margin-right:6px;"></span>
+                <b>${lbl}</b>
+              </td>
+              <td>${cnt} 個遮罩</td>
+              <td>${pct}%</td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+      }
+
+      // 更新 ZIP 目錄結構預覽
+      const treeBox = $("exportFileTree");
+      if (treeBox) {
+        const treeLines = (data.format_trees && data.format_trees[fmt]) || [];
+        treeBox.textContent = treeLines.join("\n");
+      }
+
+      toggleExportModal(true);
+    } catch (err) {
+      console.error(err);
+      showToast("載入匯出預覽失敗", "error");
+    }
+  };
+
+  if (confirmBtn) {
+    confirmBtn.onclick = () => {
+      const fmt = formatSelect ? formatSelect.value : "coco";
+      toggleExportModal(false);
+      window.location.href = `/api/export?format=${fmt}`;
+      showToast(`已開始下載 ${fmt.toUpperCase()} 格式資料集 ZIP 壓縮檔`, "success");
+    };
+  }
+}
+
+initExportPreviewModal();
 applyMode(state.mode);
