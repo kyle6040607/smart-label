@@ -655,7 +655,7 @@ class MySQLRepository:
             else:
                 deleted = cur.execute("DELETE FROM examples WHERE label=%s AND owner_id=%s", (label, owner_id))
 
-            where_clause = "WHERE segment.human_label=%s OR (segment.human_label IS NULL AND segment.predicted_label=%s)"
+            where_clause = "WHERE (segment.human_label=%s OR (segment.human_label IS NULL AND segment.predicted_label=%s))"
             params = [label, label]
             if project_id:
                 where_clause += " AND image.project_id=%s"
