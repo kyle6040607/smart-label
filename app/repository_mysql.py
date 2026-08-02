@@ -13,6 +13,7 @@ pipeline 不用改任何一行就能切換（見 app/__init__.py 的後端選擇
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
@@ -23,7 +24,14 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from app.config import Config
-from app.models import AnnotationTask,ImageRecord, Segment, LabelExample, User
+from app.models import (
+    AnnotationTask,
+    ImageRecord,
+    LabelExample,
+    RecoveredTaskAttempt,
+    Segment,
+    User,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS images (
@@ -265,6 +273,39 @@ class MySQLRepository:
             raise
 
     def _ensure_schema(self) -> None:
+        """同一套 Cloud SQL 只允許一個 Web/Job 執行 schema migration。"""
+        with self._schema_lock():
+            self._apply_schema_migrations()
+
+    @contextmanager
+    def _schema_lock(self):
+        conn = self._conn()
+        database_key = hashlib.sha256(
+            self._cfg.mysql_database.encode("utf-8")
+        ).hexdigest()[:32]
+        lock_name = f"smart-label-schema:{database_key}"
+        acquired = False
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT GET_LOCK(%s, %s) AS acquired",
+                (lock_name, 120),
+            )
+            row = cur.fetchone() or {}
+            acquired = int(row.get("acquired") or 0) == 1
+        if not acquired:
+            raise RuntimeError("等待 Cloud SQL schema migration lock 逾時")
+        try:
+            yield
+        finally:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
+            except Exception:
+                # Session 關閉時 MySQL 也會自動釋放 advisory lock；不要用
+                # release 失敗覆蓋真正的 migration 例外。
+                pass
+
+    def _apply_schema_migrations(self) -> None:
         with self._tx() as cur:
             for stmt in _SCHEMA.split(";"):
                 if stmt.strip():
@@ -879,6 +920,7 @@ class MySQLRepository:
                 SELECT *
                 FROM annotation_tasks
                 WHERE attempt_count < %s
+                  AND claim_token = ''
                   AND (
                     status = 'pending'
                     OR (
@@ -972,65 +1014,100 @@ class MySQLRepository:
         now: float | None = None,
         max_attempts: int = 3,
         limit: int = 10,
-    ) -> list[AnnotationTask]:
-        """以 SKIP LOCKED 排他回收 lease 到期任務，交易內只改狀態。"""
+    ) -> list[RecoveredTaskAttempt]:
+        """排他標記逾時任務；舊 token 保留到交易外清理成功。"""
         now = time.time() if now is None else now
-        recovered: list[AnnotationTask] = []
+        recovered: list[RecoveredTaskAttempt] = []
         with self._tx() as cursor:
             cursor.execute(
                 """
                 SELECT *
                 FROM annotation_tasks
-                WHERE status='processing'
-                  AND lease_expires_at > 0
-                  AND lease_expires_at <= %s
-                ORDER BY lease_expires_at ASC
+                WHERE (
+                    status='processing'
+                    AND lease_expires_at > 0
+                    AND lease_expires_at <= %s
+                ) OR (
+                    status IN ('retry_wait', 'failed')
+                    AND claim_token <> ''
+                )
+                ORDER BY CASE
+                    WHEN lease_expires_at > 0 THEN lease_expires_at
+                    ELSE updated_at
+                END ASC
                 LIMIT %s
                 FOR UPDATE SKIP LOCKED
                 """,
                 (now, limit),
             )
             for row in cursor.fetchall():
-                terminal = int(row.get("attempt_count", 0)) >= max_attempts
-                status = "failed" if terminal else "retry_wait"
-                message = row.get("last_error") or "Worker lease 已逾時"
-                next_attempt_at = 0.0 if terminal else now
-                cursor.execute(
-                    """
-                    UPDATE annotation_tasks
-                    SET status=%s,
-                        claimed_by='',
-                        claim_token='',
-                        heartbeat_at=0,
-                        lease_expires_at=0,
-                        next_attempt_at=%s,
-                        last_error=%s,
-                        error_message=%s,
-                        updated_at=%s
-                    WHERE id=%s
-                    """,
-                    (
-                        status,
-                        next_attempt_at,
-                        message,
-                        message,
-                        now,
-                        row["id"],
-                    ),
+                stale_attempt_token = row.get("claim_token", "")
+                if row["status"] == "processing":
+                    terminal = int(row.get("attempt_count", 0)) >= max_attempts
+                    status = "failed" if terminal else "retry_wait"
+                    message = row.get("last_error") or "Worker lease 已逾時"
+                    next_attempt_at = 0.0 if terminal else now
+                    cursor.execute(
+                        """
+                        UPDATE annotation_tasks
+                        SET status=%s,
+                            claimed_by='',
+                            heartbeat_at=0,
+                            lease_expires_at=0,
+                            next_attempt_at=%s,
+                            last_error=%s,
+                            error_message=%s,
+                            updated_at=%s
+                        WHERE id=%s
+                        """,
+                        (
+                            status,
+                            next_attempt_at,
+                            message,
+                            message,
+                            now,
+                            row["id"],
+                        ),
+                    )
+                    row.update(
+                        status=status,
+                        claimed_by="",
+                        heartbeat_at=0.0,
+                        lease_expires_at=0.0,
+                        next_attempt_at=next_attempt_at,
+                        last_error=message,
+                        error_message=message,
+                        updated_at=now,
+                    )
+                recovered.append(
+                    RecoveredTaskAttempt(
+                        task=_row_to_task(row),
+                        attempt_token=stale_attempt_token,
+                    )
                 )
-                row.update(
-                    status=status,
-                    claimed_by="",
-                    claim_token="",
-                    heartbeat_at=0.0,
-                    lease_expires_at=0.0,
-                    next_attempt_at=next_attempt_at,
-                    last_error=message,
-                    error_message=message,
-                    updated_at=now,
-                )
-                recovered.append(_row_to_task(row))
         return recovered
+
+    def finish_recovered_task_cleanup(
+        self,
+        task_id: str,
+        attempt_token: str,
+    ) -> bool:
+        """清理成功後清空舊 token；失敗時下次 scanner 會再次清理。"""
+        now = time.time()
+        with self._tx() as cursor:
+            updated = cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET claim_token='',
+                    claimed_by='',
+                    updated_at=%s
+                WHERE id=%s
+                  AND status IN ('retry_wait', 'failed')
+                  AND claim_token=%s
+                """,
+                (now, task_id, attempt_token),
+            )
+        return bool(updated)
 
     def fail_or_retry_task(
         self,

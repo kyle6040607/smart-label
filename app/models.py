@@ -49,7 +49,7 @@ class AnnotationTask:
     # 最新完成的資料集版本；0 表示尚未產生 ZIP
     dataset_version: int = 0
 
-    # 最後一次成功發送 LINE 通知的版本
+    # 最後一次成功發送 LINE 通知的版本；負值表示已通知「無 ZIP」。
     notified_dataset_version: int = 0
 
     # pending / retry_wait / processing / completed / failed
@@ -94,6 +94,15 @@ class AnnotationTask:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class RecoveredTaskAttempt:
+    """已回收的逾時 attempt；token 僅供交易外清理，不會寫回任務。"""
+
+    task: AnnotationTask
+    attempt_token: str
+
 
 @dataclass
 class Segment:

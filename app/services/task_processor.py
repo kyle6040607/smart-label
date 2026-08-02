@@ -37,7 +37,17 @@ def cleanup_task_attempt(
     task_id: str,
     attempt_token: str,
 ) -> None:
-    """只清掉指定失敗 attempt 的 Segment，不碰 Web 或其他 attempt。"""
+    """只清掉指定失敗 attempt，不碰 Web 或其他成功 attempt。"""
+    if not attempt_token:
+        return
+    delete_prefix = getattr(storage, "delete_prefix", None)
+    if delete_prefix is not None:
+        delete_prefix(
+            f"previews/tasks/{task_id}/attempts/{attempt_token}"
+        )
+        delete_prefix(
+            f"datasets/{task_id}/attempts/{attempt_token}"
+        )
     segments = [
         segment
         for segment in repo.list_segments()

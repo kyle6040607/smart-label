@@ -200,8 +200,26 @@ def test_stale_processing_task_is_recovered_and_claimed_again(tmp_path):
         max_attempts=3,
         limit=10,
     )
-    assert [item.id for item in recovered] == [task.id]
-    assert recovered[0].status == "retry_wait"
+    assert [item.task.id for item in recovered] == [task.id]
+    assert recovered[0].task.status == "retry_wait"
+    assert recovered[0].attempt_token == first_claim_token
+
+    # 舊 attempt 尚未清理完成時，不得覆蓋 token 或重新領取。
+    assert repo.claim_next_pending_task(
+        worker_id="worker-b",
+        lease_seconds=30,
+        max_attempts=3,
+    ) is None
+    recovered_again = repo.recover_stale_tasks(
+        now=21.0,
+        max_attempts=3,
+        limit=10,
+    )
+    assert recovered_again[0].attempt_token == first_claim_token
+    assert repo.finish_recovered_task_cleanup(
+        task.id,
+        first_claim_token,
+    )
 
     claimed_again = repo.claim_next_pending_task(
         worker_id="worker-b",
@@ -221,6 +239,7 @@ def test_stale_task_at_attempt_limit_becomes_failed(tmp_path):
             prompt="cat",
             status="processing",
             attempt_count=3,
+            claim_token="stale-token",
             lease_expires_at=10.0,
         )
     )
@@ -229,9 +248,11 @@ def test_stale_task_at_attempt_limit_becomes_failed(tmp_path):
         max_attempts=3,
         limit=10,
     )
-    assert recovered[0].id == task.id
-    assert recovered[0].status == "failed"
-    assert "lease" in recovered[0].last_error
+    assert recovered[0].task.id == task.id
+    assert recovered[0].task.status == "failed"
+    assert recovered[0].attempt_token == "stale-token"
+    assert "lease" in recovered[0].task.last_error
+    assert repo.finish_recovered_task_cleanup(task.id, "stale-token")
 
 
 def test_heartbeat_only_renews_matching_claim_token(tmp_path):

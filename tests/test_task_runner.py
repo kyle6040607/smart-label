@@ -1,6 +1,7 @@
+import threading
 from types import SimpleNamespace
 
-from app.models import AnnotationTask
+from app.models import AnnotationTask, RecoveredTaskAttempt
 from app.services import task_runner
 from app.services.task_runner import TaskRunResult
 
@@ -195,6 +196,8 @@ def test_run_next_task_marks_third_failure_and_notifies(tmp_path, monkeypatch):
 
 
 def test_task_heartbeat_closes_thread_connection():
+    heartbeat_sent = threading.Event()
+
     class Repo:
         def __init__(self):
             self.calls = 0
@@ -202,6 +205,7 @@ def test_task_heartbeat_closes_thread_connection():
 
         def heartbeat_task(self, *args):
             self.calls += 1
+            heartbeat_sent.set()
             return True
 
         def close_thread_connection(self):
@@ -210,8 +214,71 @@ def test_task_heartbeat_closes_thread_connection():
     repo = Repo()
     task = AnnotationTask(status="processing", claim_token="token")
     with task_runner.TaskHeartbeat(repo, task, 0.001, 60):
-        import time
-
-        time.sleep(0.01)
+        assert heartbeat_sent.wait(1)
     assert repo.calls >= 1
     assert repo.closed
+
+
+def test_recovery_cleans_stale_attempt_before_requeue(tmp_path, monkeypatch):
+    task = AnnotationTask(id="task-1", status="retry_wait")
+    finished = []
+    repo = SimpleNamespace(
+        recover_stale_tasks=lambda **kwargs: [
+            RecoveredTaskAttempt(task, "stale-token")
+        ],
+        finish_recovered_task_cleanup=lambda task_id, token: (
+            finished.append((task_id, token)) or True
+        ),
+    )
+    app = SimpleNamespace(
+        repo=repo,
+        storage=object(),
+        smart_config=SimpleNamespace(
+            task_max_attempts=3,
+            task_recovery_batch_size=10,
+        ),
+        logger=RecordingLogger(),
+    )
+    cleaned = []
+    monkeypatch.setattr(
+        task_runner,
+        "cleanup_task_attempt",
+        lambda repo, storage, task_id, token: cleaned.append(
+            (repo, storage, task_id, token)
+        ),
+    )
+
+    assert task_runner.recover_stale_tasks(app) == (1, 0)
+    assert cleaned == [(repo, app.storage, "task-1", "stale-token")]
+    assert finished == [("task-1", "stale-token")]
+
+
+def test_recovery_keeps_cleanup_pending_when_storage_delete_fails(
+    tmp_path,
+    monkeypatch,
+):
+    task = AnnotationTask(id="task-1", status="retry_wait")
+    finished = []
+    repo = SimpleNamespace(
+        recover_stale_tasks=lambda **kwargs: [
+            RecoveredTaskAttempt(task, "stale-token")
+        ],
+        finish_recovered_task_cleanup=lambda *args: finished.append(args),
+    )
+    app = SimpleNamespace(
+        repo=repo,
+        storage=object(),
+        smart_config=SimpleNamespace(
+            task_max_attempts=3,
+            task_recovery_batch_size=10,
+        ),
+        logger=RecordingLogger(),
+    )
+    monkeypatch.setattr(
+        task_runner,
+        "cleanup_task_attempt",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("GCS unavailable")),
+    )
+
+    assert task_runner.recover_stale_tasks(app) == (0, 0)
+    assert finished == []

@@ -10,7 +10,63 @@ from app.models import AnnotationTask, ImageRecord
 from app.models import Segment
 from app.repository import Repository
 from app.services.pipeline import Pipeline
-from app.services.task_processor import process_task
+from app.services.task_processor import cleanup_task_attempt, process_task
+from app.storage import LocalStorage, StorageService
+
+
+def test_cleanup_task_attempt_removes_only_stale_attempt_artifacts(tmp_path):
+    repo = Repository(tmp_path / "store.json")
+    storage = StorageService(
+        local=LocalStorage(
+            data_dir=tmp_path / "data",
+            upload_dir=tmp_path / "uploads",
+            mask_dir=tmp_path / "masks",
+        )
+    )
+    stale_mask = storage.save_bytes("masks/stale.png", b"mask")
+    current_mask = storage.save_bytes("masks/current.png", b"mask")
+    stale_preview = storage.save_bytes(
+        "previews/tasks/task-1/attempts/stale/segment.jpg",
+        b"preview",
+    )
+    current_preview = storage.save_bytes(
+        "previews/tasks/task-1/attempts/current/segment.jpg",
+        b"preview",
+    )
+    stale_zip = storage.save_bytes(
+        "datasets/task-1/attempts/stale/dataset_v1.zip",
+        b"zip",
+    )
+    current_zip = storage.save_bytes(
+        "datasets/task-1/attempts/current/dataset_v1.zip",
+        b"zip",
+    )
+    stale_segment = repo.add_segment(
+        Segment(
+            mask_path=stale_mask,
+            annotation_task_id="task-1",
+            task_attempt_token="stale",
+        )
+    )
+    current_segment = repo.add_segment(
+        Segment(
+            mask_path=current_mask,
+            annotation_task_id="task-1",
+            task_attempt_token="current",
+        )
+    )
+
+    cleanup_task_attempt(repo, storage, "task-1", "stale")
+
+    remaining_ids = {segment.id for segment in repo.list_segments()}
+    assert stale_segment.id not in remaining_ids
+    assert current_segment.id in remaining_ids
+    assert not storage.exists(stale_mask)
+    assert storage.exists(current_mask)
+    assert not storage.exists(stale_preview)
+    assert storage.exists(current_preview)
+    assert not storage.exists(stale_zip)
+    assert storage.exists(current_zip)
 
 
 def test_process_task_creates_yolo_zip(tmp_path):

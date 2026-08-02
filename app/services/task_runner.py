@@ -102,7 +102,25 @@ def recover_stale_tasks(app) -> tuple[int, int]:
     )
     retry_count = 0
     failed_count = 0
-    for task in recovered:
+    for recovered_attempt in recovered:
+        task = recovered_attempt.task
+        if not _safe_cleanup(
+            app,
+            task.id,
+            recovered_attempt.attempt_token,
+        ):
+            continue
+        finish_cleanup = getattr(
+            repo,
+            "finish_recovered_task_cleanup",
+            None,
+        )
+        if finish_cleanup is not None and not finish_cleanup(
+            task.id,
+            recovered_attempt.attempt_token,
+        ):
+            continue
+        task.claim_token = ""
         if task.status == "failed":
             failed_count += 1
             _notify_final_failure(app, task)
@@ -194,7 +212,7 @@ def run_next_task(app, worker_id: str | None = None) -> TaskRunResult:
             completed_task.id,
         )
     else:
-        if not notified and completed_task.dataset_zip_path:
+        if not notified:
             app.logger.warning(
                 "LIFF 任務已完成，但 LINE 通知未送出：%s",
                 completed_task.id,
@@ -204,8 +222,10 @@ def run_next_task(app, worker_id: str | None = None) -> TaskRunResult:
     return TaskRunResult.COMPLETED
 
 
-def _safe_cleanup(app, task_id: str, claim_token: str) -> None:
+def _safe_cleanup(app, task_id: str, claim_token: str) -> bool:
     try:
         cleanup_task_attempt(app.repo, app.storage, task_id, claim_token)
     except Exception:
         app.logger.exception("清理 LIFF attempt 暫存結果失敗：%s", task_id)
+        return False
+    return True

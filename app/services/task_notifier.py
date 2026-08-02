@@ -6,7 +6,11 @@ from urllib.parse import quote
 from app.config import Config
 from app.models import AnnotationTask
 from app.repository import Repository
-from app.routes.line_bot import push_task_download, push_task_failed
+from app.routes.line_bot import (
+    push_task_download,
+    push_task_failed,
+    push_task_no_export,
+)
 
 
 def build_task_download_url(config: Config, task: AnnotationTask) -> str:
@@ -24,11 +28,25 @@ def notify_task_completed(
     task: AnnotationTask,
 ) -> bool:
     """推播尚未通知過的最新資料集版本。"""
+    if task.status != "completed" or not task.line_user_id:
+        return False
+
+    if not task.dataset_zip_path:
+        if task.notified_dataset_version < 0:
+            return False
+        sent = push_task_no_export(
+            line_user_id=task.line_user_id,
+            task_id=task.id,
+            excluded_count=task.excluded_count,
+        )
+        if not sent:
+            return False
+        task.notified_dataset_version = -max(1, task.dataset_version + 1)
+        repo.update_task(task)
+        return True
+
     if (
-        task.status != "completed"
-        or not task.line_user_id
-        or not task.dataset_zip_path
-        or task.dataset_version <= 0
+        task.dataset_version <= 0
         or task.dataset_version <= task.notified_dataset_version
     ):
         return False

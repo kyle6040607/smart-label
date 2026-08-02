@@ -1,6 +1,7 @@
 """不連外部 MySQL 的 SQL 契約測試。"""
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 from app.models import AnnotationTask
 from app.repository_mysql import MySQLRepository
@@ -22,6 +23,20 @@ class RecordingCursor:
         rows = self.rows
         self.rows = []
         return rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+
+class RecordingConnection:
+    def __init__(self, cursor):
+        self.cursor_instance = cursor
+
+    def cursor(self):
+        return self.cursor_instance
 
 
 def _repo_with_cursor(cursor):
@@ -66,6 +81,7 @@ def test_claim_uses_skip_locked_and_only_updates_state_fields():
     select_sql, _ = cursor.calls[0]
     update_sql, _ = cursor.calls[1]
     assert "FOR UPDATE SKIP LOCKED" in select_sql
+    assert "claim_token = ''" in select_sql
     assert "status = 'processing'" in update_sql
     assert "dataset_zip_path" not in update_sql
 
@@ -75,3 +91,59 @@ def test_stale_recovery_uses_skip_locked():
     repo = _repo_with_cursor(cursor)
     assert repo.recover_stale_tasks(now=100, max_attempts=3, limit=10) == []
     assert "FOR UPDATE SKIP LOCKED" in cursor.calls[0][0]
+
+
+def test_stale_recovery_returns_token_for_storage_cleanup():
+    import json
+
+    task = AnnotationTask(
+        status="processing",
+        claim_token="stale-token",
+        attempt_count=1,
+        lease_expires_at=10,
+    ).to_dict()
+    for field in (
+        "image_ids",
+        "processed_image_ids",
+        "settings_snapshot",
+        "no_detection_image_ids",
+        "excluded_results",
+    ):
+        task[field] = json.dumps(task[field])
+    cursor = RecordingCursor([task])
+
+    recovered = _repo_with_cursor(cursor).recover_stale_tasks(
+        now=20,
+        max_attempts=3,
+        limit=10,
+    )
+
+    assert recovered[0].attempt_token == "stale-token"
+    assert recovered[0].task.claim_token == "stale-token"
+    assert recovered[0].task.status == "retry_wait"
+
+
+def test_schema_lock_uses_mysql_advisory_lock_and_releases_it():
+    cursor = RecordingCursor([{"acquired": 1}])
+    repo = object.__new__(MySQLRepository)
+    repo._cfg = SimpleNamespace(mysql_database="smart_label_db")
+    repo._conn = lambda: RecordingConnection(cursor)
+
+    with repo._schema_lock():
+        pass
+
+    assert "GET_LOCK" in cursor.calls[0][0]
+    assert "RELEASE_LOCK" in cursor.calls[-1][0]
+    assert cursor.calls[0][1][0] == cursor.calls[-1][1][0]
+
+
+def test_finish_recovered_cleanup_clears_matching_token():
+    cursor = RecordingCursor()
+    repo = _repo_with_cursor(cursor)
+
+    assert repo.finish_recovered_task_cleanup("task-1", "stale-token")
+
+    sql, params = cursor.calls[0]
+    assert "claim_token=''" in sql
+    assert "claim_token=%s" in sql
+    assert params[-1] == "stale-token"

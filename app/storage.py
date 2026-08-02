@@ -45,6 +45,8 @@ class StorageBackend(Protocol):
 
     def delete(self, reference: str) -> bool: ...
 
+    def delete_prefix(self, object_prefix: str) -> int: ...
+
     def exists(self, reference: str) -> bool: ...
 
 
@@ -150,6 +152,33 @@ class LocalStorage:
         existed = path.is_file()
         path.unlink(missing_ok=True)
         return existed
+
+    def delete_prefix(self, object_prefix: str) -> int:
+        """刪除受控儲存根目錄下的 attempt 前綴。"""
+        normalized = str(_safe_object_name(object_prefix))
+        target = self._target(normalized)
+        resolved_target = target.resolve()
+        allowed_roots = {
+            self.data_dir.resolve(),
+            *(root.resolve() for root in self.category_roots.values()),
+        }
+        if not any(
+            resolved_target != root
+            and resolved_target.is_relative_to(root)
+            for root in allowed_roots
+        ):
+            raise ValueError(f"拒絕刪除儲存根目錄：{object_prefix!r}")
+        if target.is_file() or target.is_symlink():
+            target.unlink(missing_ok=True)
+            return 1
+        if not target.is_dir():
+            return 0
+        deleted = sum(1 for path in target.rglob("*") if path.is_file())
+        try:
+            shutil.rmtree(target)
+        except FileNotFoundError:
+            return 0
+        return deleted
 
     def exists(self, reference: str) -> bool:
         return Path(reference).is_file()
@@ -300,6 +329,21 @@ class GCSStorage:
             return False
         return True
 
+    def delete_prefix(self, object_prefix: str) -> int:
+        """刪除目前 Bucket 中指定物件前綴，不接受 gs:// reference。"""
+        from google.api_core.exceptions import NotFound
+
+        prefix = f"{str(_safe_object_name(object_prefix)).rstrip('/')}/"
+        blobs = list(self.bucket.list_blobs(prefix=prefix))
+        deleted = 0
+        for blob in blobs:
+            try:
+                blob.delete()
+            except NotFound:
+                continue
+            deleted += 1
+        return deleted
+
     def exists(self, reference: str) -> bool:
         return self.bucket.blob(
             self._object_name(reference)
@@ -394,6 +438,11 @@ class StorageService:
 
     def delete(self, reference: str) -> bool:
         return self._backend_for(reference).delete(reference)
+
+    def delete_prefix(self, object_prefix: str) -> int:
+        backend = self.gcs if self.use_gcs else self.local
+        assert backend is not None
+        return backend.delete_prefix(object_prefix)
 
     def exists(self, reference: str) -> bool:
         return self._backend_for(reference).exists(reference)

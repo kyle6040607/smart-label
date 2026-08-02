@@ -145,11 +145,16 @@ account 需具備 `iam.serviceAccounts.signBlob` 權限。若只有簽署權限�
 `FOR UPDATE SKIP LOCKED` 排他回收逾時任務。模型失敗會在 1 分鐘、5 分鐘後
 重試，最多 3 次；只有最後一次失敗才標成 `failed` 並發送 LINE 通知。
 Cloud Run Job 本身應關閉 platform retry，重試狀態以 Cloud SQL 為唯一來源。
+逾時 attempt 的 Segment、mask、縮圖與未發布 ZIP 會依 fencing token 清除；
+若 GCS 清理暫時失敗，任務會保留清理 token，下一次 scanner 會繼續清理，
+成功前不允許重新領取。Web 與 Job 同時啟動時，schema migration 會先取得
+MySQL advisory lock，避免兩個執行個體同時執行相同的 `ALTER TABLE`。
 
 LIFF 任務建立時會保存推論設定快照。候選偵測預設使用 0.15，匯出條件為
 `detection_confidence >= 0.5`；低於門檻的 Segment 與 mask 會保留，但不放入
 ZIP，並建立最大 512×512、JPEG quality 80 的 private 縮圖供 LIFF 任務頁查看。
-全部結果都低信心時任務仍會完成，但不建立空 ZIP。
+全部結果都低信心時任務仍會完成，但不建立空 ZIP，並發送一次 LINE 通知
+引導使用者從 Rich Menu 查看未通過縮圖。
 
 ```bash
 # 常駐輪詢（適合 Cloud Run Worker Pool）
