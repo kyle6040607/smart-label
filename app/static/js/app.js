@@ -2245,7 +2245,7 @@ async function fetchProjects() {
     (data.projects || []).forEach((p) => {
       const opt = document.createElement("option");
       opt.value = p.id;
-      opt.textContent = p.name + (p.mode === "engineer" ? " [工程師]" : "");
+      opt.textContent = p.name;
       if (p.id === data.active_project_id) opt.selected = true;
       select.appendChild(opt);
     });
@@ -2376,7 +2376,7 @@ function initProjectControls() {
       if (!state.currentProjectId) return;
       const selectEl = $("projectSelect");
       const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
-      const oldName = currentOpt ? currentOpt.textContent.replace(/ \[工程師\]$/, "") : "";
+      const oldName = currentOpt ? currentOpt.textContent : "";
       const newName = await showModal({
         title: "✏️ 重新命名專案",
         showInput: true,
@@ -2405,7 +2405,7 @@ function initProjectControls() {
       if (!state.currentProjectId) return;
       const selectEl = $("projectSelect");
       const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
-      const projName = currentOpt ? currentOpt.textContent.replace(/ \[工程師\]$/, "") : "此專案";
+      const projName = currentOpt ? currentOpt.textContent : "此專案";
       const confirmed = await showModal({
         title: "⚠️ 確定要刪除專案嗎？",
         desc: `專案「${projName}」內的所有照片、遮罩檔及分類成果將會被永久刪除且無法復原！`,
