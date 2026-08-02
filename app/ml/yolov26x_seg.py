@@ -219,14 +219,28 @@ def train_yolov26x_seg(
             work_dir=work_dir,
         )
 
-        from ultralytics import YOLO
+        from ultralytics import YOLO, settings
 
-        # 確定基礎預訓練權重存在，若不在就用現有預載檔
+        models_dir = (Path(__file__).resolve().parent.parent.parent / "models").resolve()
+        models_dir.mkdir(exist_ok=True)
+        settings.update({"weights_dir": str(models_dir)})
+
+        # 確定基礎預訓練權重存在，優先使用 models/ 資料夾內的權重檔，避免下載至主資料夾
         weights_file = Path(base_model_path)
         if not weights_file.is_file():
-            fallback_weights = Path("models/yolov8x-worldv2.pt")
-            if fallback_weights.is_file():
-                weights_file = fallback_weights
+            models_dir_file = models_dir / weights_file.name
+            if models_dir_file.is_file():
+                weights_file = models_dir_file
+            else:
+                # 依序尋找 models/ 內的預設備用權重
+                for fallback_name in ["yolo26n.pt", "yolo26x-seg.pt", "yolov8x-worldv2.pt"]:
+                    fb_path = models_dir / fallback_name
+                    if fb_path.is_file():
+                        weights_file = fb_path
+                        break
+                else:
+                    # 若都不存在，指定將檔名放置於 models/ 目錄下，觸發 Ultralytics 自動下載至 models/
+                    weights_file = models_dir / weights_file.name
 
         model = YOLO(str(weights_file))
 
@@ -241,6 +255,7 @@ def train_yolov26x_seg(
             name="exp",
             exist_ok=True,
             verbose=False,
+            workers=0,
         )
 
         # 找出訓練出來的 best.pt
