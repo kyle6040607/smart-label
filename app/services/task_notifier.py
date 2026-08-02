@@ -1,11 +1,12 @@
 """LIFF 任務完成後的 LINE 通知。"""
 
+import time
 from urllib.parse import quote
 
 from app.config import Config
 from app.models import AnnotationTask
 from app.repository import Repository
-from app.routes.line_bot import push_task_download
+from app.routes.line_bot import push_task_download, push_task_failed
 
 
 def build_task_download_url(config: Config, task: AnnotationTask) -> str:
@@ -43,5 +44,30 @@ def notify_task_completed(
         return False
 
     task.notified_dataset_version = task.dataset_version
+    repo.update_task(task)
+    return True
+
+
+def notify_task_failed(
+    repo: Repository,
+    config: Config,
+    task: AnnotationTask,
+) -> bool:
+    """最終 failed 僅推播一次；一般 retry_wait 不通知。"""
+    del config
+    if (
+        task.status != "failed"
+        or not task.line_user_id
+        or task.failure_notified_at > 0
+    ):
+        return False
+    sent = push_task_failed(
+        line_user_id=task.line_user_id,
+        task_id=task.id,
+        error_message=task.last_error or task.error_message,
+    )
+    if not sent:
+        return False
+    task.failure_notified_at = time.time()
     repo.update_task(task)
     return True

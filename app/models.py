@@ -52,8 +52,31 @@ class AnnotationTask:
     # 最後一次成功發送 LINE 通知的版本
     notified_dataset_version: int = 0
 
-    # pending / processing / completed / failed
+    # pending / retry_wait / processing / completed / failed
     status: str = "pending"
+
+    # Worker lease / retry。claim_token 是 fencing token，避免逾時 Worker
+    # 在任務已被重新領取後覆蓋新 Worker 的結果。
+    claimed_by: str = ""
+    claim_token: str = ""
+    processing_started_at: float = 0.0
+    heartbeat_at: float = 0.0
+    lease_expires_at: float = 0.0
+    attempt_count: int = 0
+    next_attempt_at: float = 0.0
+    last_error: str = ""
+
+    # 任務建立當下的 LIFF 推論設定快照，避免執行期間全域參數改變。
+    settings_snapshot: dict[str, Any] = field(default_factory=dict)
+
+    # 任務結果統計與低信心清單。excluded_results 只存後端產生的
+    # preview reference；對外 API 會轉成受 token 保護的縮圖網址。
+    segment_count: int = 0
+    exported_count: int = 0
+    excluded_count: int = 0
+    no_detection_image_ids: list[str] = field(default_factory=list)
+    excluded_results: list[dict[str, Any]] = field(default_factory=list)
+    completion_reason: str = ""
 
     # 任務完成後產生的檔案
     dataset_zip_path: str = ""
@@ -65,6 +88,7 @@ class AnnotationTask:
     )
 
     error_message: str = ""
+    failure_notified_at: float = 0.0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -88,7 +112,14 @@ class Segment:
     predicted_label: str | None = None
     probs: dict[str, float] = field(default_factory=dict)  # 各類別機率
     confidence: float = 0.0       # 依 strategy 算出的信心
+    # YOLO/NMS 後的偵測信心；LIFF 自動匯出門檻使用這個欄位，
+    # 不與 few-shot classifier confidence 混用。
+    detection_confidence: float = 0.0
     needs_review: bool = False    # 低信心 → 標紅送審（提案第 8 頁）
+
+    # LIFF 背景任務與 attempt 歸屬；Web 手動建立的 Segment 保持空值。
+    annotation_task_id: str = ""
+    task_attempt_token: str = ""
 
     # 人工審核 / 標記結果
     human_label: str | None = None

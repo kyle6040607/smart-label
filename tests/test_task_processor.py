@@ -1,4 +1,5 @@
 import zipfile
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -6,6 +7,7 @@ import pytest
 
 from app.config import Config
 from app.models import AnnotationTask, ImageRecord
+from app.models import Segment
 from app.repository import Repository
 from app.services.pipeline import Pipeline
 from app.services.task_processor import process_task
@@ -103,7 +105,9 @@ def test_process_task_rejects_empty_detection(tmp_path):
             self,
             image,
             prompt,
+            **kwargs,
         ):
+            del image, prompt, kwargs
             return []
 
     repo = Repository(
@@ -139,6 +143,60 @@ def test_process_task_rejects_empty_detection(tmp_path):
         / task.id
         / "dataset_v1.zip"
     ).exists()
+
+
+def test_process_task_excludes_low_confidence_and_creates_thumbnail(tmp_path):
+    class LowConfidencePipeline:
+        def segment_text(self, image, prompt, **kwargs):
+            del prompt
+            segment = Segment(
+                image_id=image.id,
+                bbox=(0, 0, 20, 20),
+                area=400,
+                predicted_label="cat",
+                detection_confidence=0.49,
+                annotation_task_id=kwargs["annotation_task_id"],
+                task_attempt_token=kwargs["task_attempt_token"],
+            )
+            repo.add_segment(segment)
+            return [segment]
+
+    image_path = tmp_path / "cat.png"
+    pixels = np.zeros((30, 30, 3), dtype=np.uint8)
+    assert cv2.imwrite(str(image_path), pixels)
+    repo = Repository(tmp_path / "store.json")
+    image = repo.add_image(
+        ImageRecord(
+            filename="cat.png",
+            path=str(image_path),
+            width=30,
+            height=30,
+        )
+    )
+    task = repo.add_task(
+        AnnotationTask(
+            prompt="cat",
+            image_ids=[image.id],
+            status="processing",
+            settings_snapshot={
+                "detection_confidence_threshold": 0.15,
+                "export_confidence_threshold": 0.5,
+                "yolo_imgsz": 640,
+            },
+        )
+    )
+    result = process_task(
+        repo,
+        LowConfidencePipeline(),
+        task,
+        tmp_path / "tasks",
+    )
+    assert result.status == "completed"
+    assert result.exported_count == 0
+    assert result.excluded_count == 1
+    assert result.dataset_zip_path == ""
+    assert result.completion_reason == "all_segments_below_confidence"
+    assert Path(result.excluded_results[0]["preview_path"]).exists()
 
 
 def test_process_task_rejects_local_fallback_when_gcs_is_enabled(
@@ -210,9 +268,18 @@ def test_process_task_only_processes_new_images(
         def __init__(self):
             self.image_ids = []
 
-        def segment_text(self, image, prompt):
+        def segment_text(self, image, prompt, **kwargs):
+            del prompt
             self.image_ids.append(image.id)
-            return [object()]
+            segment = Segment(
+                image_id=image.id,
+                predicted_label="cat",
+                detection_confidence=0.9,
+                annotation_task_id=kwargs.get("annotation_task_id", ""),
+                task_attempt_token=kwargs.get("task_attempt_token", ""),
+            )
+            repo.add_segment(segment)
+            return [segment]
 
     dataset_image_ids = []
 
@@ -222,8 +289,9 @@ def test_process_task_only_processes_new_images(
         output,
         image_ids=None,
         storage=None,
+        **kwargs,
     ):
-        del repo, fmt, storage
+        del repo, fmt, storage, kwargs
         dataset_image_ids.append(set(image_ids or set()))
         output.write(
             f"version-{len(dataset_image_ids)}".encode()

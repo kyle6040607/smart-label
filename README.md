@@ -140,6 +140,17 @@ account 需具備 `iam.serviceAccounts.signBlob` 權限。若只有簽署權限�
 狀態，模型推論與 ZIP 打包不會持有資料庫 row lock。無任務時的輪詢間隔由
 `TASK_WORKER_POLL_SECONDS` 控制。
 
+正式環境的每次領取都會產生 fencing token，並每 60 秒更新 heartbeat、延長
+15 分鐘 lease。Worker 中斷後，下一次 drain 啟動會用
+`FOR UPDATE SKIP LOCKED` 排他回收逾時任務。模型失敗會在 1 分鐘、5 分鐘後
+重試，最多 3 次；只有最後一次失敗才標成 `failed` 並發送 LINE 通知。
+Cloud Run Job 本身應關閉 platform retry，重試狀態以 Cloud SQL 為唯一來源。
+
+LIFF 任務建立時會保存推論設定快照。候選偵測預設使用 0.15，匯出條件為
+`detection_confidence >= 0.5`；低於門檻的 Segment 與 mask 會保留，但不放入
+ZIP，並建立最大 512×512、JPEG quality 80 的 private 縮圖供 LIFF 任務頁查看。
+全部結果都低信心時任務仍會完成，但不建立空 ZIP。
+
 ```bash
 # 常駐輪詢（適合 Cloud Run Worker Pool）
 python scripts/task_worker.py --mode loop
@@ -151,6 +162,11 @@ python scripts/task_worker.py --mode drain
 `loop` 模式必須使用 MySQL。JSON Repository 無法由 Web 與獨立 Worker
 跨程序安全共用，因此 Worker 會拒絕以 JSON 後端啟動。Web 與 Worker 必須
 連到同一個 MySQL 服務。
+
+Cloud Run Job 請使用與 Web 相同的 image、service account、Cloud SQL 與 GCS
+設定，command 設為 `python scripts/task_worker.py --mode drain`，並固定
+`tasks=1`、`parallelism=1`、`max-retries=0`。建議由 Cloud Scheduler 每 5 分鐘
+執行一次；空佇列時 Pipeline 採延遲初始化，不會載入 SAM/embedding 模型。
 
 ## API 一覽
 

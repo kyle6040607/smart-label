@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 
 import pymysql
@@ -50,10 +51,14 @@ CREATE TABLE IF NOT EXISTS segments (
     predicted_label VARCHAR(64) NULL,
     probs JSON NOT NULL,
     confidence FLOAT NOT NULL DEFAULT 0,
+    detection_confidence FLOAT NOT NULL DEFAULT 0,
     needs_review TINYINT(1) NOT NULL DEFAULT 0,
+    annotation_task_id VARCHAR(32) NOT NULL DEFAULT '',
+    task_attempt_token VARCHAR(64) NOT NULL DEFAULT '',
     human_label VARCHAR(64) NULL,
     reviewed TINYINT(1) NOT NULL DEFAULT 0,
-    INDEX idx_segments_image_id (image_id)
+    INDEX idx_segments_image_id (image_id),
+    INDEX idx_segments_task_attempt (annotation_task_id, task_attempt_token)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS examples (
@@ -94,14 +99,32 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
     dataset_version INT NOT NULL DEFAULT 0,
     notified_dataset_version INT NOT NULL DEFAULT 0,
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    claimed_by VARCHAR(128) NOT NULL DEFAULT '',
+    claim_token VARCHAR(64) NOT NULL DEFAULT '',
+    processing_started_at DOUBLE NOT NULL DEFAULT 0,
+    heartbeat_at DOUBLE NOT NULL DEFAULT 0,
+    lease_expires_at DOUBLE NOT NULL DEFAULT 0,
+    attempt_count INT NOT NULL DEFAULT 0,
+    next_attempt_at DOUBLE NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL,
+    settings_snapshot JSON NOT NULL,
+    segment_count INT NOT NULL DEFAULT 0,
+    exported_count INT NOT NULL DEFAULT 0,
+    excluded_count INT NOT NULL DEFAULT 0,
+    no_detection_image_ids JSON NOT NULL,
+    excluded_results JSON NOT NULL,
+    completion_reason VARCHAR(64) NOT NULL DEFAULT '',
     dataset_zip_path VARCHAR(512) NOT NULL DEFAULT '',
     best_model_path VARCHAR(512) NOT NULL DEFAULT '',
     download_token VARCHAR(64) NOT NULL,
     error_message TEXT NOT NULL,
+    failure_notified_at DOUBLE NOT NULL DEFAULT 0,
     created_at DOUBLE NOT NULL,
     updated_at DOUBLE NOT NULL,
     INDEX idx_annotation_tasks_user_id (user_id),
     INDEX idx_annotation_tasks_line_user_id (line_user_id),
+    INDEX idx_annotation_tasks_claimable (status, next_attempt_at, created_at),
+    INDEX idx_annotation_tasks_lease (status, lease_expires_at),
     UNIQUE INDEX uq_annotation_tasks_download_token (
         download_token
     )
@@ -129,7 +152,10 @@ def _row_to_segment(r: dict) -> Segment:
         bbox=tuple(json.loads(r["bbox"])), area=r["area"],
         predicted_label=r["predicted_label"],
         probs=json.loads(r["probs"]), confidence=r["confidence"],
+        detection_confidence=float(r.get("detection_confidence", 0.0)),
         needs_review=bool(r["needs_review"]),
+        annotation_task_id=r.get("annotation_task_id", ""),
+        task_attempt_token=r.get("task_attempt_token", ""),
         human_label=r["human_label"], reviewed=bool(r["reviewed"]),
     )
 
@@ -168,10 +194,28 @@ def _row_to_task(
         dataset_version=int(row["dataset_version"]),
         notified_dataset_version=int(row["notified_dataset_version"]),
         status=row["status"],
+        claimed_by=row.get("claimed_by", ""),
+        claim_token=row.get("claim_token", ""),
+        processing_started_at=float(row.get("processing_started_at", 0.0)),
+        heartbeat_at=float(row.get("heartbeat_at", 0.0)),
+        lease_expires_at=float(row.get("lease_expires_at", 0.0)),
+        attempt_count=int(row.get("attempt_count", 0)),
+        next_attempt_at=float(row.get("next_attempt_at", 0.0)),
+        last_error=row.get("last_error", ""),
+        settings_snapshot=json.loads(row.get("settings_snapshot") or "{}"),
+        segment_count=int(row.get("segment_count", 0)),
+        exported_count=int(row.get("exported_count", 0)),
+        excluded_count=int(row.get("excluded_count", 0)),
+        no_detection_image_ids=json.loads(
+            row.get("no_detection_image_ids") or "[]"
+        ),
+        excluded_results=json.loads(row.get("excluded_results") or "[]"),
+        completion_reason=row.get("completion_reason", ""),
         dataset_zip_path=row["dataset_zip_path"],
         best_model_path=row["best_model_path"],
         download_token=row["download_token"],
         error_message=row["error_message"],
+        failure_notified_at=float(row.get("failure_notified_at", 0.0)),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -272,6 +316,39 @@ class MySQLRepository:
                     WHERE example.owner_id = ''
                     """
                 )
+
+            # LIFF Segment 的偵測信心與 attempt 歸屬。
+            segment_migrations = [
+                (
+                    "detection_confidence",
+                    "FLOAT NOT NULL DEFAULT 0 AFTER confidence",
+                ),
+                (
+                    "annotation_task_id",
+                    "VARCHAR(32) NOT NULL DEFAULT '' AFTER needs_review",
+                ),
+                (
+                    "task_attempt_token",
+                    "VARCHAR(64) NOT NULL DEFAULT '' AFTER annotation_task_id",
+                ),
+            ]
+            for column, ddl in segment_migrations:
+                cur.execute(f"SHOW COLUMNS FROM segments LIKE '{column}'")
+                if cur.fetchone() is None:
+                    cur.execute(
+                        f"ALTER TABLE segments ADD COLUMN {column} {ddl}"
+                    )
+
+            cur.execute(
+                "SHOW INDEX FROM segments "
+                "WHERE Key_name = 'idx_segments_task_attempt'"
+            )
+            if cur.fetchone() is None:
+                cur.execute(
+                    "CREATE INDEX idx_segments_task_attempt "
+                    "ON segments (annotation_task_id, task_attempt_token)"
+                )
+
             # 舊任務補上已處理圖片欄位
             cur.execute(
                 "SHOW COLUMNS FROM annotation_tasks "
@@ -330,6 +407,112 @@ class MySQLRepository:
                     cur.execute(
                         "ALTER TABLE annotation_tasks "
                         f"ADD COLUMN {column} {ddl}"
+                    )
+
+            # Worker lease/retry、結果統計與低信心縮圖欄位。JSON 欄位先允許
+            # NULL、補值後再收緊，避免既有 annotation_tasks 遷移失敗。
+            task_scalar_migrations = [
+                ("claimed_by", "VARCHAR(128) NOT NULL DEFAULT '' AFTER status"),
+                ("claim_token", "VARCHAR(64) NOT NULL DEFAULT '' AFTER claimed_by"),
+                ("processing_started_at", "DOUBLE NOT NULL DEFAULT 0 AFTER claim_token"),
+                ("heartbeat_at", "DOUBLE NOT NULL DEFAULT 0 AFTER processing_started_at"),
+                ("lease_expires_at", "DOUBLE NOT NULL DEFAULT 0 AFTER heartbeat_at"),
+                ("attempt_count", "INT NOT NULL DEFAULT 0 AFTER lease_expires_at"),
+                ("next_attempt_at", "DOUBLE NOT NULL DEFAULT 0 AFTER attempt_count"),
+                ("last_error", "TEXT NULL AFTER next_attempt_at"),
+                ("segment_count", "INT NOT NULL DEFAULT 0"),
+                ("exported_count", "INT NOT NULL DEFAULT 0 AFTER segment_count"),
+                ("excluded_count", "INT NOT NULL DEFAULT 0 AFTER exported_count"),
+                ("completion_reason", "VARCHAR(64) NOT NULL DEFAULT ''"),
+                ("failure_notified_at", "DOUBLE NOT NULL DEFAULT 0 AFTER error_message"),
+            ]
+            for column, ddl in task_scalar_migrations:
+                cur.execute(
+                    "SHOW COLUMNS FROM annotation_tasks "
+                    f"LIKE '{column}'"
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        "ALTER TABLE annotation_tasks "
+                        f"ADD COLUMN {column} {ddl}"
+                    )
+
+            task_json_migrations = [
+                ("settings_snapshot", "{}", "AFTER last_error"),
+                ("no_detection_image_ids", "[]", "AFTER excluded_count"),
+                ("excluded_results", "[]", "AFTER no_detection_image_ids"),
+            ]
+            for column, json_default, position in task_json_migrations:
+                cur.execute(
+                    "SHOW COLUMNS FROM annotation_tasks "
+                    f"LIKE '{column}'"
+                )
+                column_info = cur.fetchone()
+                if column_info is None:
+                    cur.execute(
+                        "ALTER TABLE annotation_tasks "
+                        f"ADD COLUMN {column} JSON NULL {position}"
+                    )
+                cur.execute(
+                    f"UPDATE annotation_tasks SET {column}=%s "
+                    f"WHERE {column} IS NULL",
+                    (json_default,),
+                )
+                if column_info is None or column_info.get("Null") == "YES":
+                    cur.execute(
+                        "ALTER TABLE annotation_tasks "
+                        f"MODIFY COLUMN {column} JSON NOT NULL"
+                    )
+
+            cur.execute(
+                "UPDATE annotation_tasks SET last_error='' "
+                "WHERE last_error IS NULL"
+            )
+            cur.execute(
+                "SHOW COLUMNS FROM annotation_tasks LIKE 'last_error'"
+            )
+            last_error_info = cur.fetchone()
+            if last_error_info and last_error_info.get("Null") == "YES":
+                cur.execute(
+                    "ALTER TABLE annotation_tasks "
+                    "MODIFY COLUMN last_error TEXT NOT NULL"
+                )
+
+            # 讓升級前已在 processing 的任務也能在 lease 到期後被回收。
+            cur.execute(
+                """
+                UPDATE annotation_tasks
+                SET heartbeat_at = CASE
+                        WHEN heartbeat_at = 0 THEN updated_at
+                        ELSE heartbeat_at
+                    END,
+                    lease_expires_at = CASE
+                        WHEN lease_expires_at = 0 THEN updated_at + %s
+                        ELSE lease_expires_at
+                    END
+                WHERE status = 'processing'
+                """,
+                (self._cfg.task_lease_seconds,),
+            )
+
+            for index_name, columns in (
+                (
+                    "idx_annotation_tasks_claimable",
+                    "status, next_attempt_at, created_at",
+                ),
+                (
+                    "idx_annotation_tasks_lease",
+                    "status, lease_expires_at",
+                ),
+            ):
+                cur.execute(
+                    "SHOW INDEX FROM annotation_tasks WHERE Key_name=%s",
+                    (index_name,),
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        f"CREATE INDEX {index_name} "
+                        f"ON annotation_tasks ({columns})"
                     )
 
             # 舊的已完成 ZIP 視為第 1 版
@@ -419,11 +602,15 @@ class MySQLRepository:
     def _write_segment(self, cur, seg: Segment) -> None:
         cur.execute(
             "REPLACE INTO segments (id, image_id, mask_path, bbox, area,"
-            " predicted_label, probs, confidence, needs_review, human_label, reviewed)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " predicted_label, probs, confidence, detection_confidence,"
+            " needs_review, annotation_task_id, task_attempt_token,"
+            " human_label, reviewed)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (seg.id, seg.image_id, seg.mask_path, json.dumps(list(seg.bbox)),
              seg.area, seg.predicted_label, json.dumps(seg.probs),
-             seg.confidence, seg.needs_review, seg.human_label, seg.reviewed),
+             seg.confidence, seg.detection_confidence, seg.needs_review,
+             seg.annotation_task_id, seg.task_attempt_token,
+             seg.human_label, seg.reviewed),
         )
 
     def add_segment(self, seg: Segment) -> Segment:
@@ -565,18 +752,37 @@ class MySQLRepository:
                     dataset_version,
                     notified_dataset_version,
                     status,
+                    claimed_by,
+                    claim_token,
+                    processing_started_at,
+                    heartbeat_at,
+                    lease_expires_at,
+                    attempt_count,
+                    next_attempt_at,
+                    last_error,
+                    settings_snapshot,
+                    segment_count,
+                    exported_count,
+                    excluded_count,
+                    no_detection_image_ids,
+                    excluded_results,
+                    completion_reason,
                     dataset_zip_path,
                     best_model_path,
                     download_token,
                     error_message,
+                    failure_notified_at,
                     created_at,
                     updated_at
                 )
                 VALUES (
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s
                 )
                 """,
                 (
@@ -589,10 +795,26 @@ class MySQLRepository:
                     task.dataset_version,
                     task.notified_dataset_version,
                     task.status,
+                    task.claimed_by,
+                    task.claim_token,
+                    task.processing_started_at,
+                    task.heartbeat_at,
+                    task.lease_expires_at,
+                    task.attempt_count,
+                    task.next_attempt_at,
+                    task.last_error,
+                    json.dumps(task.settings_snapshot),
+                    task.segment_count,
+                    task.exported_count,
+                    task.excluded_count,
+                    json.dumps(task.no_detection_image_ids),
+                    json.dumps(task.excluded_results),
+                    task.completion_reason,
                     task.dataset_zip_path,
                     task.best_model_path,
                     task.download_token,
                     task.error_message,
+                    task.failure_notified_at,
                     task.created_at,
                     task.updated_at,
                 ),
@@ -644,19 +866,31 @@ class MySQLRepository:
 
     def claim_next_pending_task(
         self,
+        worker_id: str = "worker",
+        lease_seconds: float = 900.0,
+        max_attempts: int = 3,
     ) -> AnnotationTask | None:
-        updated_at = time.time()
+        now = time.time()
+        claim_token = uuid.uuid4().hex
 
         with self._tx() as cursor:
             cursor.execute(
                 """
                 SELECT *
                 FROM annotation_tasks
-                WHERE status = 'pending'
+                WHERE attempt_count < %s
+                  AND (
+                    status = 'pending'
+                    OR (
+                        status = 'retry_wait'
+                        AND next_attempt_at <= %s
+                    )
+                  )
                 ORDER BY created_at ASC
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
-                """
+                """,
+                (max_attempts, now),
             )
 
             row = cursor.fetchone()
@@ -668,23 +902,268 @@ class MySQLRepository:
                 """
                 UPDATE annotation_tasks
                 SET
-                    status = %s,
+                    status = 'processing',
+                    claimed_by = %s,
+                    claim_token = %s,
+                    processing_started_at = %s,
+                    heartbeat_at = %s,
+                    lease_expires_at = %s,
+                    attempt_count = attempt_count + 1,
+                    next_attempt_at = 0,
                     error_message = '',
                     updated_at = %s
                 WHERE id = %s
                 """,
                 (
-                    "processing",
-                    updated_at,
+                    worker_id,
+                    claim_token,
+                    now,
+                    now,
+                    now + lease_seconds,
+                    now,
                     row["id"],
                 ),
             )
 
             row["status"] = "processing"
+            row["claimed_by"] = worker_id
+            row["claim_token"] = claim_token
+            row["processing_started_at"] = now
+            row["heartbeat_at"] = now
+            row["lease_expires_at"] = now + lease_seconds
+            row["attempt_count"] = int(row.get("attempt_count", 0)) + 1
+            row["next_attempt_at"] = 0.0
             row["error_message"] = ""
-            row["updated_at"] = updated_at
+            row["updated_at"] = now
 
         return _row_to_task(row)
+
+    def heartbeat_task(
+        self,
+        task_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> bool:
+        now = time.time()
+        with self._tx() as cursor:
+            updated = cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET heartbeat_at=%s,
+                    lease_expires_at=%s,
+                    updated_at=%s
+                WHERE id=%s
+                  AND status='processing'
+                  AND claim_token=%s
+                """,
+                (
+                    now,
+                    now + lease_seconds,
+                    now,
+                    task_id,
+                    claim_token,
+                ),
+            )
+        return bool(updated)
+
+    def recover_stale_tasks(
+        self,
+        *,
+        now: float | None = None,
+        max_attempts: int = 3,
+        limit: int = 10,
+    ) -> list[AnnotationTask]:
+        """以 SKIP LOCKED 排他回收 lease 到期任務，交易內只改狀態。"""
+        now = time.time() if now is None else now
+        recovered: list[AnnotationTask] = []
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE status='processing'
+                  AND lease_expires_at > 0
+                  AND lease_expires_at <= %s
+                ORDER BY lease_expires_at ASC
+                LIMIT %s
+                FOR UPDATE SKIP LOCKED
+                """,
+                (now, limit),
+            )
+            for row in cursor.fetchall():
+                terminal = int(row.get("attempt_count", 0)) >= max_attempts
+                status = "failed" if terminal else "retry_wait"
+                message = row.get("last_error") or "Worker lease 已逾時"
+                next_attempt_at = 0.0 if terminal else now
+                cursor.execute(
+                    """
+                    UPDATE annotation_tasks
+                    SET status=%s,
+                        claimed_by='',
+                        claim_token='',
+                        heartbeat_at=0,
+                        lease_expires_at=0,
+                        next_attempt_at=%s,
+                        last_error=%s,
+                        error_message=%s,
+                        updated_at=%s
+                    WHERE id=%s
+                    """,
+                    (
+                        status,
+                        next_attempt_at,
+                        message,
+                        message,
+                        now,
+                        row["id"],
+                    ),
+                )
+                row.update(
+                    status=status,
+                    claimed_by="",
+                    claim_token="",
+                    heartbeat_at=0.0,
+                    lease_expires_at=0.0,
+                    next_attempt_at=next_attempt_at,
+                    last_error=message,
+                    error_message=message,
+                    updated_at=now,
+                )
+                recovered.append(_row_to_task(row))
+        return recovered
+
+    def fail_or_retry_task(
+        self,
+        task_id: str,
+        claim_token: str,
+        error_message: str,
+        *,
+        max_attempts: int,
+        retry_at: float,
+    ) -> AnnotationTask | None:
+        now = time.time()
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT * FROM annotation_tasks
+                WHERE id=%s AND status='processing' AND claim_token=%s
+                LIMIT 1 FOR UPDATE
+                """,
+                (task_id, claim_token),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            terminal = int(row.get("attempt_count", 0)) >= max_attempts
+            status = "failed" if terminal else "retry_wait"
+            next_attempt_at = 0.0 if terminal else retry_at
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET status=%s,
+                    claimed_by='',
+                    claim_token='',
+                    heartbeat_at=0,
+                    lease_expires_at=0,
+                    next_attempt_at=%s,
+                    last_error=%s,
+                    error_message=%s,
+                    updated_at=%s
+                WHERE id=%s
+                """,
+                (
+                    status,
+                    next_attempt_at,
+                    error_message,
+                    error_message,
+                    now,
+                    task_id,
+                ),
+            )
+            row.update(
+                status=status,
+                claimed_by="",
+                claim_token="",
+                heartbeat_at=0.0,
+                lease_expires_at=0.0,
+                next_attempt_at=next_attempt_at,
+                last_error=error_message,
+                error_message=error_message,
+                updated_at=now,
+            )
+        return _row_to_task(row)
+
+    def complete_claimed_task(
+        self,
+        task: AnnotationTask,
+        claim_token: str,
+    ) -> AnnotationTask | None:
+        """以 claim_token 作 fencing；過期 Worker 不得發布結果。"""
+        now = time.time()
+        with self._tx() as cursor:
+            updated = cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET processed_image_ids=%s,
+                    dataset_version=%s,
+                    status='completed',
+                    claimed_by='',
+                    claim_token='',
+                    heartbeat_at=0,
+                    lease_expires_at=0,
+                    next_attempt_at=0,
+                    last_error='',
+                    settings_snapshot=%s,
+                    segment_count=%s,
+                    exported_count=%s,
+                    excluded_count=%s,
+                    no_detection_image_ids=%s,
+                    excluded_results=%s,
+                    completion_reason=%s,
+                    dataset_zip_path=%s,
+                    error_message='',
+                    updated_at=%s
+                WHERE id=%s
+                  AND status='processing'
+                  AND claim_token=%s
+                """,
+                (
+                    json.dumps(task.processed_image_ids),
+                    task.dataset_version,
+                    json.dumps(task.settings_snapshot),
+                    task.segment_count,
+                    task.exported_count,
+                    task.excluded_count,
+                    json.dumps(task.no_detection_image_ids),
+                    json.dumps(task.excluded_results),
+                    task.completion_reason,
+                    task.dataset_zip_path,
+                    now,
+                    task.id,
+                    claim_token,
+                ),
+            )
+        if not updated:
+            return None
+        task.status = "completed"
+        task.claimed_by = ""
+        task.claim_token = ""
+        task.heartbeat_at = 0.0
+        task.lease_expires_at = 0.0
+        task.next_attempt_at = 0.0
+        task.last_error = ""
+        task.error_message = ""
+        task.updated_at = now
+        return task
+
+    def close_thread_connection(self) -> None:
+        """關閉目前 thread 的實體連線；heartbeat thread 結束時呼叫。"""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            finally:
+                self._local.conn = None
 
     def update_task(
         self,
@@ -705,10 +1184,26 @@ class MySQLRepository:
                     dataset_version = %s,
                     notified_dataset_version = %s,
                     status = %s,
+                    claimed_by = %s,
+                    claim_token = %s,
+                    processing_started_at = %s,
+                    heartbeat_at = %s,
+                    lease_expires_at = %s,
+                    attempt_count = %s,
+                    next_attempt_at = %s,
+                    last_error = %s,
+                    settings_snapshot = %s,
+                    segment_count = %s,
+                    exported_count = %s,
+                    excluded_count = %s,
+                    no_detection_image_ids = %s,
+                    excluded_results = %s,
+                    completion_reason = %s,
                     dataset_zip_path = %s,
                     best_model_path = %s,
                     download_token = %s,
                     error_message = %s,
+                    failure_notified_at = %s,
                     updated_at = %s
                 WHERE id = %s
                 """,
@@ -721,10 +1216,26 @@ class MySQLRepository:
                     task.dataset_version,
                     task.notified_dataset_version,
                     task.status,
+                    task.claimed_by,
+                    task.claim_token,
+                    task.processing_started_at,
+                    task.heartbeat_at,
+                    task.lease_expires_at,
+                    task.attempt_count,
+                    task.next_attempt_at,
+                    task.last_error,
+                    json.dumps(task.settings_snapshot),
+                    task.segment_count,
+                    task.exported_count,
+                    task.excluded_count,
+                    json.dumps(task.no_detection_image_ids),
+                    json.dumps(task.excluded_results),
+                    task.completion_reason,
                     task.dataset_zip_path,
                     task.best_model_path,
                     task.download_token,
                     task.error_message,
+                    task.failure_notified_at,
                     task.updated_at,
                     task.id,
                 ),

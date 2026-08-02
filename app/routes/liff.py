@@ -67,6 +67,7 @@ bp = Blueprint(
 )
 
 _DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+_EXCLUDED_PAGE_SIZE = 20
 
 
 def _stream_file(storage, reference: str):
@@ -133,6 +134,13 @@ def _task_summary(task: AnnotationTask) -> dict:
         "image_count": len(task.image_ids),
         "processed_image_count": len(task.processed_image_ids),
         "dataset_version": task.dataset_version,
+        "attempt_count": task.attempt_count,
+        "segment_count": task.segment_count,
+        "exported_count": task.exported_count,
+        "excluded_count": task.excluded_count,
+        "no_detection_count": len(task.no_detection_image_ids),
+        "zip_available": bool(task.dataset_zip_path and task.dataset_version > 0),
+        "completion_reason": task.completion_reason,
         "can_add_images": task.status == "completed",
         "created_at": task.created_at,
         "updated_at": task.updated_at,
@@ -343,6 +351,16 @@ def upload_task():
         line_user_id=line_user_id,
         prompt=prompt,
         image_ids=[image_info["image_id"] for image_info in saved_images],
+        settings_snapshot={
+            "detection_confidence_threshold": cfg.liff_yolo_world_confidence,
+            "export_confidence_threshold": cfg.liff_export_confidence_threshold,
+            "yolo_imgsz": cfg.liff_yolo_imgsz,
+            "model_name": "yolov8x-worldv2",
+            "model_version": "v8.4.0",
+            "exclusion_rule": (
+                "detection_confidence < export_confidence_threshold"
+            ),
+        },
     )
 
     repo.add_task(task)
@@ -391,21 +409,99 @@ def task_status(task_id: str):
     }
 
     if task.status == "completed":
-        result["message"] = "標註完成，可以下載 ZIP"
-        result["download_url"] = url_for(
-            "liff.download_task_dataset",
-            task_id=task.id,
-            token=task.download_token,
-        )
+        if task.dataset_zip_path:
+            result["message"] = "標註完成，可以下載 ZIP"
+            result["download_url"] = url_for(
+                "liff.download_task_dataset",
+                task_id=task.id,
+                token=task.download_token,
+            )
+        else:
+            result["message"] = "標註完成，但沒有通過信心門檻的結果"
     elif task.status == "failed":
         result["message"] = "標註任務失敗"
         result["error_message"] = task.error_message or "處理任務時發生錯誤"
     elif task.status == "processing":
         result["message"] = "正在執行圖片標註"
+    elif task.status == "retry_wait":
+        result["message"] = "處理失敗，系統將自動重試"
     else:
         result["message"] = "任務正在排隊等待處理"
 
     return jsonify(result)
+
+
+@bp.post("/tasks/<task_id>/excluded")
+def list_excluded_results(task_id: str):
+    """驗證 LINE 身分後，以每頁 20 筆回傳低信心縮圖。"""
+    payload = request.get_json(silent=True) or {}
+    id_token = str(payload.get("id_token", "")).strip()
+    profile, verification_error = _verify_liff_profile(id_token)
+    if verification_error is not None:
+        return verification_error
+
+    task = get_repo().get_task(task_id)
+    if task is None or task.line_user_id != profile["sub"]:
+        return jsonify({"ok": False, "message": "找不到標註任務"}), 404
+
+    try:
+        page = max(1, int(payload.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    start = (page - 1) * _EXCLUDED_PAGE_SIZE
+    selected = task.excluded_results[start:start + _EXCLUDED_PAGE_SIZE]
+    items = [
+        {
+            "segment_id": str(item.get("segment_id", "")),
+            "image_id": str(item.get("image_id", "")),
+            "detection_confidence": float(
+                item.get("detection_confidence", 0.0)
+            ),
+            "thumbnail_url": url_for(
+                "liff.excluded_thumbnail",
+                task_id=task.id,
+                segment_id=str(item.get("segment_id", "")),
+                token=task.download_token,
+            ),
+        }
+        for item in selected
+    ]
+    return jsonify(
+        {
+            "ok": True,
+            "page": page,
+            "page_size": _EXCLUDED_PAGE_SIZE,
+            "total": len(task.excluded_results),
+            "has_more": start + len(selected) < len(task.excluded_results),
+            "items": items,
+        }
+    )
+
+
+@bp.get("/tasks/<task_id>/excluded/<segment_id>/thumbnail")
+def excluded_thumbnail(task_id: str, segment_id: str):
+    """使用任務隨機 token 串流後端產生的低信心 JPEG 縮圖。"""
+    task = get_repo().get_task(task_id)
+    if task is None:
+        return jsonify({"ok": False, "message": "找不到標註任務"}), 404
+    token = request.args.get("token", "")
+    if not token or not secrets.compare_digest(token, task.download_token):
+        return jsonify({"ok": False, "message": "縮圖憑證無效"}), 403
+    item = next(
+        (
+            result for result in task.excluded_results
+            if str(result.get("segment_id", "")) == segment_id
+        ),
+        None,
+    )
+    preview_path = str(item.get("preview_path", "")) if item else ""
+    if not preview_path or not get_storage().exists(preview_path):
+        return jsonify({"ok": False, "message": "縮圖不存在"}), 404
+    return Response(
+        stream_with_context(_stream_file(get_storage(), preview_path)),
+        mimetype="image/jpeg",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @bp.get("/tasks/<task_id>/download")

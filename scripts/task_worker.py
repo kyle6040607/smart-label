@@ -9,8 +9,11 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import socket
 import sys
 import threading
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
@@ -18,13 +21,20 @@ from typing import Callable, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import create_app
-from app.services.task_runner import TaskRunResult, run_next_task
+from app.services.task_runner import (
+    TaskRunResult,
+    recover_stale_tasks,
+    run_next_task,
+)
 
 
 @dataclass(frozen=True)
 class WorkerStats:
     completed: int = 0
     failed: int = 0
+    retried: int = 0
+    lease_lost: int = 0
+    recovered: int = 0
 
 
 def _positive_float(value: str) -> float:
@@ -60,6 +70,7 @@ def run_worker(
     poll_seconds: float,
     stop_event: threading.Event | None = None,
     run_task: Callable[[object], TaskRunResult] = run_next_task,
+    recover_tasks: Callable[[object], tuple[int, int]] = recover_stale_tasks,
 ) -> WorkerStats:
     """持續處理任務；每次任務結束後才響應停止事件。"""
     if mode not in {"loop", "drain"}:
@@ -68,8 +79,23 @@ def run_worker(
     stop_event = stop_event or threading.Event()
     completed = 0
     failed = 0
+    retried = 0
+    lease_lost = 0
+    recovered = 0
+    worker_config = getattr(app, "smart_config", None)
+    recovery_interval = float(
+        getattr(worker_config, "task_recovery_scan_seconds", 60.0)
+    )
+    next_recovery_at = 0.0
 
     while not stop_event.is_set():
+        now = time.monotonic()
+        if now >= next_recovery_at:
+            recovered_now, failed_during_recovery = recover_tasks(app)
+            recovered += recovered_now
+            failed += failed_during_recovery
+            next_recovery_at = now + recovery_interval
+
         result = run_task(app)
 
         if result == TaskRunResult.COMPLETED:
@@ -80,6 +106,14 @@ def run_worker(
             failed += 1
             continue
 
+        if result == TaskRunResult.RETRY_SCHEDULED:
+            retried += 1
+            continue
+
+        if result == TaskRunResult.LEASE_LOST:
+            lease_lost += 1
+            continue
+
         if result != TaskRunResult.IDLE:
             raise ValueError(f"未知的任務執行結果：{result}")
 
@@ -88,7 +122,13 @@ def run_worker(
 
         stop_event.wait(poll_seconds)
 
-    return WorkerStats(completed=completed, failed=failed)
+    return WorkerStats(
+        completed=completed,
+        failed=failed,
+        retried=retried,
+        lease_lost=lease_lost,
+        recovered=recovered,
+    )
 
 
 def _install_signal_handlers(
@@ -108,7 +148,10 @@ def _install_signal_handlers(
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    app = create_app()
+    app = create_app(lazy_pipeline=True)
+    app.task_worker_id = (
+        f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
 
     if args.mode == "loop" and not app.smart_config.use_mysql:
         app.logger.error(
@@ -136,9 +179,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     app.logger.info(
-        "LIFF Worker 已停止：completed=%s failed=%s",
+        "LIFF Worker 已停止：completed=%s failed=%s retried=%s "
+        "lease_lost=%s recovered=%s",
         stats.completed,
         stats.failed,
+        stats.retried,
+        stats.lease_lost,
+        stats.recovered,
     )
     return 0
 

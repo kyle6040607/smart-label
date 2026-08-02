@@ -77,6 +77,38 @@ def push_task_download(
         return False
 
 
+def push_task_failed(
+    line_user_id: str,
+    task_id: str,
+    error_message: str,
+) -> bool:
+    """推播達最大嘗試次數後的最終失敗通知。"""
+    if not line_user_id or not task_id:
+        return False
+    message = error_message.strip() or "處理圖片時發生錯誤"
+    if len(message) > 300:
+        message = f"{message[:297]}..."
+    try:
+        with ApiClient(configuration) as api_client:
+            MessagingApi(api_client).push_message(
+                PushMessageRequest(
+                    to=line_user_id,
+                    messages=[
+                        TextMessage(
+                            text=(
+                                f"標註任務 {task_id} 處理失敗。\n"
+                                f"系統已完成自動重試，請稍後重新建立任務。\n"
+                                f"原因：{message}"
+                            )
+                        )
+                    ],
+                )
+            )
+        return True
+    except Exception as exc:
+        print(f"LINE 任務失敗通知發送失敗：{exc}")
+        return False
+
 @bp.post("/callback")
 def callback():
     """驗證 LINE 簽章並轉交 Webhook 事件。"""

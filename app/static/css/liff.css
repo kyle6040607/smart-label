@@ -210,6 +210,11 @@ p {
     color: #856404;
 }
 
+.task-status-retry_wait {
+    background-color: #ffedd5;
+    color: #9a3412;
+}
+
 .task-status-processing {
     background-color: #dbeafe;
     color: #1d4ed8;
@@ -239,6 +244,37 @@ p {
     display: flex;
     gap: 8px;
     margin-top: 12px;
+}
+
+.task-excluded-panel {
+    margin-top: 1rem;
+}
+
+.task-excluded-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.task-excluded-item {
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    background: #fff;
+}
+
+.task-excluded-item img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+}
+
+.task-excluded-item figcaption {
+    padding: 0.4rem;
+    font-size: 0.8rem;
+    text-align: center;
 }
 
 .task-actions .download-button,

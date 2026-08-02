@@ -56,3 +56,18 @@ def test_drain_mode_exits_after_queue_is_empty():
     assert calls == [app, app, app]
     assert stats.completed == 2
     assert stats.failed == 0
+
+
+def test_drain_mode_records_retry_and_still_exits_on_idle():
+    results = iter([
+        TaskRunResult.RETRY_SCHEDULED,
+        TaskRunResult.IDLE,
+    ])
+    stats = run_worker(
+        object(),
+        mode="drain",
+        poll_seconds=0.01,
+        run_task=lambda app: next(results),
+    )
+    assert stats.retried == 1
+    assert stats.completed == 0

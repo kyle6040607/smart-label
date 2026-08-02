@@ -180,3 +180,68 @@ def test_claim_next_pending_task_claims_oldest_task(
     assert loaded_oldest.status == "processing"
     assert loaded_newer.status == "pending"
     assert loaded_completed.status == "completed"
+
+
+def test_stale_processing_task_is_recovered_and_claimed_again(tmp_path):
+    repo = Repository(tmp_path / "store.json")
+    task = repo.add_task(AnnotationTask(prompt="cat"))
+    first = repo.claim_next_pending_task(
+        worker_id="worker-a",
+        lease_seconds=30,
+        max_attempts=3,
+    )
+    assert first is not None
+    first_claim_token = first.claim_token
+    first.lease_expires_at = 10.0
+    repo.update_task(first)
+
+    recovered = repo.recover_stale_tasks(
+        now=20.0,
+        max_attempts=3,
+        limit=10,
+    )
+    assert [item.id for item in recovered] == [task.id]
+    assert recovered[0].status == "retry_wait"
+
+    claimed_again = repo.claim_next_pending_task(
+        worker_id="worker-b",
+        lease_seconds=30,
+        max_attempts=3,
+    )
+    assert claimed_again is not None
+    assert claimed_again.attempt_count == 2
+    assert claimed_again.claimed_by == "worker-b"
+    assert claimed_again.claim_token != first_claim_token
+
+
+def test_stale_task_at_attempt_limit_becomes_failed(tmp_path):
+    repo = Repository(tmp_path / "store.json")
+    task = repo.add_task(
+        AnnotationTask(
+            prompt="cat",
+            status="processing",
+            attempt_count=3,
+            lease_expires_at=10.0,
+        )
+    )
+    recovered = repo.recover_stale_tasks(
+        now=20.0,
+        max_attempts=3,
+        limit=10,
+    )
+    assert recovered[0].id == task.id
+    assert recovered[0].status == "failed"
+    assert "lease" in recovered[0].last_error
+
+
+def test_heartbeat_only_renews_matching_claim_token(tmp_path):
+    repo = Repository(tmp_path / "store.json")
+    repo.add_task(AnnotationTask(prompt="cat"))
+    task = repo.claim_next_pending_task(
+        worker_id="worker-a",
+        lease_seconds=30,
+        max_attempts=3,
+    )
+    assert task is not None
+    assert not repo.heartbeat_task(task.id, "wrong-token", 60)
+    assert repo.heartbeat_task(task.id, task.claim_token, 60)

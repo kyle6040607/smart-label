@@ -24,8 +24,15 @@ class SingleTaskRepo:
         self.task = task
         self.updated_tasks = []
         self.claim_transaction_active = False
+        self.claimed_task = None
 
-    def claim_next_pending_task(self):
+    def claim_next_pending_task(
+        self,
+        worker_id="worker",
+        lease_seconds=900,
+        max_attempts=3,
+    ):
+        del worker_id, lease_seconds, max_attempts
         if self.task is None:
             return None
 
@@ -34,7 +41,38 @@ class SingleTaskRepo:
         task = self.task
         self.task = None
         task.status = "processing"
+        task.attempt_count += 1
+        task.claim_token = "claim-token"
+        self.claimed_task = task
         self.claim_transaction_active = False
+        return task
+
+    def heartbeat_task(self, task_id, claim_token, lease_seconds):
+        del task_id, claim_token, lease_seconds
+        return True
+
+    def list_segments(self):
+        return []
+
+    def fail_or_retry_task(
+        self,
+        task_id,
+        claim_token,
+        error_message,
+        *,
+        max_attempts,
+        retry_at,
+    ):
+        del task_id, claim_token
+        task = self.claimed_task
+        if task is None:
+            return None
+        task.error_message = error_message
+        task.last_error = error_message
+        task.status = (
+            "failed" if task.attempt_count >= max_attempts else "retry_wait"
+        )
+        task.next_attempt_at = retry_at if task.status == "retry_wait" else 0
         return task
 
     def update_task(self, task):
@@ -46,7 +84,13 @@ def make_app(tmp_path, task=None):
     return SimpleNamespace(
         repo=SingleTaskRepo(task),
         pipeline=object(),
-        smart_config=SimpleNamespace(data_dir=tmp_path),
+        smart_config=SimpleNamespace(
+            data_dir=tmp_path,
+            task_lease_seconds=900,
+            task_heartbeat_seconds=60,
+            task_max_attempts=3,
+            task_retry_base_seconds=60,
+        ),
         storage=object(),
         logger=RecordingLogger(),
     )
@@ -65,8 +109,10 @@ def test_run_next_task_completes_claimed_task_outside_claim_transaction(
     task = AnnotationTask(prompt="cat")
     app = make_app(tmp_path, task)
 
-    def fake_process_task(repo, pipeline, claimed_task, output_dir, storage=None):
-        del pipeline, output_dir, storage
+    def fake_process_task(
+        repo, pipeline, claimed_task, output_dir, storage=None, ensure_lease=None
+    ):
+        del pipeline, output_dir, storage, ensure_lease
         assert repo.claim_transaction_active is False
         assert claimed_task.status == "processing"
         claimed_task.status = "completed"
@@ -83,7 +129,7 @@ def test_run_next_task_completes_claimed_task_outside_claim_transaction(
     assert task.status == "completed"
 
 
-def test_run_next_task_marks_processing_failure(tmp_path, monkeypatch):
+def test_run_next_task_schedules_retry_after_processing_failure(tmp_path, monkeypatch):
     task = AnnotationTask(prompt="dog")
     app = make_app(tmp_path, task)
 
@@ -92,10 +138,11 @@ def test_run_next_task_marks_processing_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(task_runner, "process_task", fail_processing)
 
-    assert task_runner.run_next_task(app) == TaskRunResult.FAILED
-    assert task.status == "failed"
+    # SingleTaskRepo 的 claim 測試替身需模擬 attempt 計數。
+    assert task_runner.run_next_task(app) == TaskRunResult.RETRY_SCHEDULED
+    assert task.status == "retry_wait"
     assert task.error_message == "model failed"
-    assert app.repo.updated_tasks == [task]
+    assert app.repo.claimed_task is task
 
 
 def test_run_next_task_sends_completion_notification(tmp_path, monkeypatch):
@@ -103,8 +150,10 @@ def test_run_next_task_sends_completion_notification(tmp_path, monkeypatch):
     app = make_app(tmp_path, task)
     notifications = []
 
-    def complete_task(repo, pipeline, claimed_task, output_dir, storage=None):
-        del repo, pipeline, output_dir, storage
+    def complete_task(
+        repo, pipeline, claimed_task, output_dir, storage=None, ensure_lease=None
+    ):
+        del repo, pipeline, output_dir, storage, ensure_lease
         claimed_task.status = "completed"
         return claimed_task
 
@@ -121,3 +170,48 @@ def test_run_next_task_sends_completion_notification(tmp_path, monkeypatch):
 
     assert task_runner.run_next_task(app) == TaskRunResult.COMPLETED
     assert notifications == [(app.repo, app.smart_config, task)]
+
+
+def test_run_next_task_marks_third_failure_and_notifies(tmp_path, monkeypatch):
+    task = AnnotationTask(prompt="cat", attempt_count=2)
+    app = make_app(tmp_path, task)
+    notifications = []
+    monkeypatch.setattr(
+        task_runner,
+        "process_task",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("permanent failure")
+        ),
+    )
+    monkeypatch.setattr(
+        task_runner,
+        "notify_task_failed",
+        lambda repo, config, failed: notifications.append(failed) or True,
+    )
+    assert task_runner.run_next_task(app) == TaskRunResult.FAILED
+    assert task.status == "failed"
+    assert task.attempt_count == 3
+    assert notifications == [task]
+
+
+def test_task_heartbeat_closes_thread_connection():
+    class Repo:
+        def __init__(self):
+            self.calls = 0
+            self.closed = False
+
+        def heartbeat_task(self, *args):
+            self.calls += 1
+            return True
+
+        def close_thread_connection(self):
+            self.closed = True
+
+    repo = Repo()
+    task = AnnotationTask(status="processing", claim_token="token")
+    with task_runner.TaskHeartbeat(repo, task, 0.001, 60):
+        import time
+
+        time.sleep(0.01)
+    assert repo.calls >= 1
+    assert repo.closed

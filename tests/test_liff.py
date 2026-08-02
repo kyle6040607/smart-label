@@ -212,6 +212,7 @@ def test_liff_task_status_returns_download_url(
     assert "download_url" not in pending_result
 
     task.status = "completed"
+    task.dataset_zip_path = "dataset.zip"
     app.repo.update_task(task)
 
     completed_response = client.get(
@@ -341,3 +342,51 @@ def test_liff_task_list_only_returns_verified_user_tasks(
     assert "download_url" in task_result
     assert "line_user_id" not in task_result
     assert "download_token" not in task_result
+
+
+def test_liff_excluded_results_require_owner_and_return_thumbnail(
+    app,
+    tmp_path,
+    monkeypatch,
+):
+    preview = tmp_path / "preview.jpg"
+    preview.write_bytes(b"jpeg-preview")
+    task = app.repo.add_task(
+        AnnotationTask(
+            line_user_id="U-owner",
+            status="completed",
+            excluded_count=1,
+            excluded_results=[
+                {
+                    "segment_id": "seg-1",
+                    "image_id": "img-1",
+                    "detection_confidence": 0.3,
+                    "preview_path": str(preview),
+                }
+            ],
+        )
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda token, *args: {
+            "sub": "U-owner" if token == "owner-token" else "U-other"
+        },
+    )
+    client = app.test_client()
+    denied = client.post(
+        f"/liff/tasks/{task.id}/excluded",
+        json={"id_token": "other-token"},
+    )
+    assert denied.status_code == 404
+
+    response = client.post(
+        f"/liff/tasks/{task.id}/excluded",
+        json={"id_token": "owner-token"},
+    )
+    assert response.status_code == 200
+    item = response.get_json()["items"][0]
+    assert "preview_path" not in item
+    thumbnail = client.get(item["thumbnail_url"])
+    assert thumbnail.status_code == 200
+    assert thumbnail.data == b"jpeg-preview"

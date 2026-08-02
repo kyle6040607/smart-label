@@ -83,9 +83,30 @@ def test_notify_task_completed_updates_notified_version(
             "&openExternalBrowser=1"
         ),
     }]
-
     assert not task_notifier.notify_task_completed(repo, config, task)
     assert len(sent_messages) == 1
+
+
+def test_notify_final_failure_only_once(tmp_path, monkeypatch):
+    repo = Repository(tmp_path / "store.json")
+    task = repo.add_task(
+        AnnotationTask(
+            line_user_id="U-final-failure",
+            status="failed",
+            attempt_count=3,
+            last_error="model crashed",
+        )
+    )
+    calls = []
+    monkeypatch.setattr(
+        task_notifier,
+        "push_task_failed",
+        lambda **kwargs: calls.append(kwargs) or True,
+    )
+    assert task_notifier.notify_task_failed(repo, Config(), task)
+    assert not task_notifier.notify_task_failed(repo, Config(), task)
+    assert len(calls) == 1
+    assert calls[0]["line_user_id"] == "U-final-failure"
 
 
 def test_failed_notification_does_not_mark_version(

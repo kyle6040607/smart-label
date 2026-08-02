@@ -121,6 +121,9 @@ def write_dataset(
     output: BinaryIO,
     image_ids: set[str] | None = None,
     storage: StorageService | None = None,
+    annotation_task_id: str | None = None,
+    minimum_detection_confidence: float | None = None,
+    segment_ids: set[str] | None = None,
 ) -> None:
     """收齊已標好的片段，逐步寫入指定的 ZIP binary stream。"""
     if fmt not in FORMATS:
@@ -133,6 +136,16 @@ def write_dataset(
         for segment in repo.list_segments()
         if (
             segment.final_label
+            and (segment_ids is None or segment.id in segment_ids)
+            and (
+                annotation_task_id is None
+                or segment.annotation_task_id == annotation_task_id
+            )
+            and (
+                minimum_detection_confidence is None
+                or segment.detection_confidence
+                >= minimum_detection_confidence
+            )
             and (
                 image_ids is None
                 or segment.image_id in image_ids
@@ -158,6 +171,9 @@ def build_dataset(
     fmt: str,
     image_ids: set[str] | None = None,
     storage: StorageService | None = None,
+    annotation_task_id: str | None = None,
+    minimum_detection_confidence: float | None = None,
+    segment_ids: set[str] | None = None,
 ) -> bytes:
     """相容舊呼叫：在記憶體建立 ZIP 並回傳 bytes。"""
     buf = io.BytesIO()
@@ -167,6 +183,9 @@ def build_dataset(
         output=buf,
         image_ids=image_ids,
         storage=storage,
+        annotation_task_id=annotation_task_id,
+        minimum_detection_confidence=minimum_detection_confidence,
+        segment_ids=segment_ids,
     )
     return buf.getvalue()
 
