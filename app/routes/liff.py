@@ -298,6 +298,11 @@ def upload_task():
     user = repo.get_user_by_line_id(line_user_id)
 
     web_user_id = user.id if user is not None else ""
+    web_project_id = (
+        repo.get_or_create_default_project(web_user_id).id
+        if web_user_id
+        else ""
+    )
 
     response_display_name = (
         user.display_name or user.username if user is not None else display_name
@@ -320,6 +325,7 @@ def upload_task():
         # 一併存下雜湊值，否則網頁端去重時得回頭把整張圖抓下來重算
         image_record = ImageRecord(
             owner_id=web_user_id,
+            project_id=web_project_id,
             filename=safe_original_filename,
             file_hash=hashlib.sha256(image_bytes).hexdigest(),
         )
@@ -357,6 +363,7 @@ def upload_task():
             "yolo_imgsz": cfg.liff_yolo_imgsz,
             "model_name": "yolov8x-worldv2",
             "model_version": "v8.4.0",
+            "project_id": web_project_id,
             "exclusion_rule": (
                 "detection_confidence < export_confidence_threshold"
             ),

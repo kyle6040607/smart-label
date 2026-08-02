@@ -95,6 +95,7 @@ def create_app(
     _seed_default_user(app.repo, cfg)
 
     from app.routes.auth import bp as auth_bp, get_authenticated_user, login_required
+    from app.routes.projects import bp as projects_bp
     from app.routes.images import bp as images_bp
     from app.routes.segment import bp as segment_bp
     from app.routes.labels import bp as labels_bp
@@ -104,6 +105,7 @@ def create_app(
     from app.routes.liff import bp as liff_bp
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(projects_bp)
     app.register_blueprint(images_bp)
     app.register_blueprint(segment_bp)
     app.register_blueprint(labels_bp)

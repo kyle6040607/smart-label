@@ -201,6 +201,43 @@ def test_process_task_rejects_empty_detection(tmp_path):
     ).exists()
 
 
+def test_process_task_refits_linked_user_classifier_for_image_project(tmp_path):
+    class RecordingPipeline:
+        def __init__(self):
+            self.refit_calls = []
+
+        def refit(self, owner_id, project_id):
+            self.refit_calls.append((owner_id, project_id))
+
+        def segment_text(self, image, prompt, **kwargs):
+            del image, prompt, kwargs
+            return []
+
+    repo = Repository(tmp_path / "store.json")
+    image = repo.add_image(
+        ImageRecord(
+            owner_id="owner-1",
+            project_id="project-1",
+            filename="empty.jpg",
+        )
+    )
+    task = repo.add_task(
+        AnnotationTask(
+            user_id="owner-1",
+            prompt="cat",
+            image_ids=[image.id],
+            status="processing",
+        )
+    )
+    pipeline = RecordingPipeline()
+
+    with pytest.raises(ValueError, match="找不到符合標註內容的物件"):
+        process_task(repo, pipeline, task, tmp_path / "tasks")
+
+    assert pipeline.refit_calls == [("owner-1", "project-1")]
+    assert task.settings_snapshot["project_id"] == "project-1"
+
+
 def test_process_task_excludes_low_confidence_and_creates_thumbnail(tmp_path):
     class LowConfidencePipeline:
         def segment_text(self, image, prompt, **kwargs):

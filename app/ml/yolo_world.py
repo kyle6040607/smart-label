@@ -52,7 +52,7 @@ def letterbox(
 class YoloWorldDetector:
     def __init__(self, model_path: str = "models/yolov8x-worldv2.pt"):
         """初始化 YOLO-World 偵測器，載入指定的本機大模型權重"""
-        print(f"--- 載入 YOLO-World 權重檔: {model_path} ---")
+        print(f"--- 套入 YOLO-World 權重檔: {model_path} ---")
         self.model = YOLOWorld(model_path)
 
     def predict_boxes(

@@ -151,9 +151,19 @@ def process_task(
         )
         pipeline_config.yolo_imgsz = int(settings["yolo_imgsz"])
 
-    # 每個任務開始前重新讀取該 owner 最新 few-shot classifier。
+    # 每個任務開始前重新讀取該 owner、該專案最新的 few-shot classifier。
+    # 舊任務的快照沒有 project_id 時，從任務圖片回推以維持相容性。
     if task.user_id and hasattr(pipeline, "refit"):
-        pipeline.refit(task.user_id)
+        project_id = str(settings.get("project_id", ""))
+        if not project_id:
+            for image_id in task.image_ids:
+                image = repo.get_image(image_id)
+                if image is not None and image.owner_id == task.user_id:
+                    project_id = image.project_id
+                    if project_id:
+                        settings["project_id"] = project_id
+                    break
+        pipeline.refit(task.user_id, project_id)
 
     processed_image_ids = set(task.processed_image_ids)
     pending_image_ids = [

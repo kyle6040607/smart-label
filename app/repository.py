@@ -16,6 +16,7 @@ from app.models import (
     AnnotationTask,
     ImageRecord,
     LabelExample,
+    Project,
     RecoveredTaskAttempt,
     Segment,
     User,
@@ -26,6 +27,7 @@ class Repository:
     def __init__(self, db_file: Path):
         self.db_file = db_file
         self._lock = threading.Lock()
+        self.projects: dict[str, Project] = {}
         self.images: dict[str, ImageRecord] = {}
         self.segments: dict[str, Segment] = {}
         self.examples: dict[str, LabelExample] = {}
@@ -33,6 +35,86 @@ class Repository:
         self.tasks: dict[str, AnnotationTask] = {}
         self.parameters: dict[str, float] = {}
         self._load() 
+
+    # ---------- 專案 ----------
+    def add_project(self, project: Project) -> Project:
+        with self._lock:
+            self.projects[project.id] = project
+            self._save()
+        return project
+
+    def get_project(self, project_id: str) -> Project | None:
+        return self.projects.get(project_id)
+
+    def list_projects_by_owner(self, owner_id: str) -> list[Project]:
+        projects = [p for p in self.projects.values() if p.owner_id == owner_id]
+        return sorted(projects, key=lambda p: p.created_at)
+
+    def update_project(self, project: Project) -> Project:
+        with self._lock:
+            project.updated_at = time.time()
+            self.projects[project.id] = project
+            self._save()
+        return project
+
+    def delete_project(self, project_id: str) -> list[str]:
+        """刪除整個專案及其所有圖片、遮罩檔案與種子範例。
+
+        回傳需從磁碟清理的檔案路徑清單。
+        """
+        paths = []
+        with self._lock:
+            proj = self.projects.pop(project_id, None)
+            if proj is None:
+                return []
+
+            # 刪除屬於該專案的照片與遮罩
+            image_ids = [img.id for img in self.images.values() if img.project_id == project_id]
+            for img_id in image_ids:
+                img = self.images.pop(img_id, None)
+                if img and img.path:
+                    paths.append(img.path)
+                seg_ids = [s.id for s in self.segments.values() if s.image_id == img_id]
+                for seg_id in seg_ids:
+                    seg = self.segments.pop(seg_id, None)
+                    if seg and seg.mask_path:
+                        paths.append(seg.mask_path)
+
+            # 刪除屬於該專案的種子範例
+            example_ids = [ex.id for ex in self.examples.values() if ex.project_id == project_id]
+            for ex_id in example_ids:
+                self.examples.pop(ex_id, None)
+
+            self._save()
+        return [p for p in paths if p]
+
+    def get_or_create_default_project(self, owner_id: str) -> Project:
+        """為使用者取得第一個專案，若無專案則建立『預設專案』，並將無所屬的圖片與範例綁定至此專案。"""
+        with self._lock:
+            user_projects = sorted(
+                [p for p in self.projects.values() if p.owner_id == owner_id],
+                key=lambda p: p.created_at
+            )
+            if user_projects:
+                default_proj = user_projects[0]
+            else:
+                default_proj = Project(owner_id=owner_id, name="預設專案")
+                self.projects[default_proj.id] = default_proj
+
+            # 補綁定未設 project_id 的舊圖片與舊範例
+            dirty = False
+            for img in self.images.values():
+                if img.owner_id == owner_id and not img.project_id:
+                    img.project_id = default_proj.id
+                    dirty = True
+            for ex in self.examples.values():
+                if ex.owner_id == owner_id and not ex.project_id:
+                    ex.project_id = default_proj.id
+                    dirty = True
+            if dirty or not user_projects:
+                self._save()
+
+            return default_proj
 
     # ---------- 影像 ----------
     def add_image(self, img: ImageRecord) -> ImageRecord:
@@ -53,8 +135,11 @@ class Repository:
     def get_image(self, image_id: str) -> ImageRecord | None:
         return self.images.get(image_id)
 
-    def list_images(self) -> list[ImageRecord]:
-        return sorted(self.images.values(), key=lambda i: i.created_at)
+    def list_images(self, project_id: str | None = None) -> list[ImageRecord]:
+        imgs = self.images.values()
+        if project_id is not None:
+            imgs = [i for i in imgs if i.project_id == project_id or (not i.project_id and not i.owner_id)]
+        return sorted(imgs, key=lambda i: i.created_at)
 
     def delete_image(self, image_id: str) -> list[str]:
         """刪除一張圖，連帶清掉它所有的遮罩片段紀錄。
@@ -434,18 +519,23 @@ class Repository:
             self._save()
         return ex
 
-    def list_examples(self, owner_id: str | None = None) -> list[LabelExample]:
+    def list_examples(self, owner_id: str | None = None, project_id: str | None = None) -> list[LabelExample]:
         examples = self.examples.values()
         if owner_id is not None:
             examples = [
                 example for example in examples
                 if example.owner_id == owner_id
             ]
+        if project_id is not None:
+            examples = [
+                example for example in examples
+                if example.project_id == project_id
+            ]
         return list(examples)
 
-    def labels(self, owner_id: str | None = None) -> list[str]:
+    def labels(self, owner_id: str | None = None, project_id: str | None = None) -> list[str]:
         return sorted({
-            example.label for example in self.list_examples(owner_id)
+            example.label for example in self.list_examples(owner_id=owner_id, project_id=project_id)
         })
 
     def delete_label(self, label: str, owner_id: str | None = None) -> int:
@@ -577,6 +667,7 @@ class Repository:
     # ---------- 持久化 ----------
     def _save(self) -> None:
         payload = {
+            "projects": [p.to_dict() for p in self.projects.values()],
             "images": [i.to_dict() for i in self.images.values()],
             "segments": [s.to_dict() for s in self.segments.values()],
             "examples": [e.to_dict() for e in self.examples.values()],
@@ -593,6 +684,8 @@ class Repository:
         if not self.db_file.exists():
             return
         data = json.loads(self.db_file.read_text(encoding="utf-8"))
+        for d in data.get("projects", []):
+            self.projects[d["id"]] = Project(**{k: v for k, v in d.items() if k in Project.__dataclass_fields__})
         for d in data.get("images", []):
             self.images[d["id"]] = ImageRecord(**{k: v for k, v in d.items() if k in ImageRecord.__dataclass_fields__})
         for d in data.get("segments", []):

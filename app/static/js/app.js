@@ -3,6 +3,7 @@
 "use strict";
 
 const state = {
+  currentProjectId: null,
   currentImage: null,
   drawMode: false,
   drawing: false,
@@ -149,8 +150,8 @@ function setSegmentationLoading(active, message = "分割中…", showProgress =
   }
 
   $("drawBtn").disabled = active || !state.currentImage;
-  $("textPromptInput").disabled = active || !state.currentImage;
-  $("textSegBtn").disabled = active || !state.currentImage;
+  $("textPromptInput").disabled = active;
+  $("textSegBtn").disabled = active;
 }
 
 function updateProgressBar(percent) {
@@ -235,54 +236,245 @@ function getTouchPos(e) {
   };
 }
 
-$("uploadBtn").onclick = async () => {
+state.currentXhr = null;
+state.isUploading = false;
+state.isAborted = false;
+state.allImages = [];
+state.renderedImageCount = 0;
+const GALLERY_PAGE_SIZE = 100;
+
+function updateFileCountHint() {
   const fileInputEl = $("fileInput");
-  const files = Array.from(fileInputEl.files);
-  if (!files.length) return alert("先選檔案");
+  const files = state.stagedFiles.length ? state.stagedFiles : Array.from(fileInputEl.files);
+  const fileCountHint = $("fileCountHint");
+  const uploadBtn = $("uploadBtn");
+
+  if (state.isUploading) return;
+
+  if (!files.length) {
+    if (fileCountHint) fileCountHint.textContent = "尚未選擇檔案";
+    if (uploadBtn) uploadBtn.style.display = "none";
+    return;
+  }
+
+  if (uploadBtn) uploadBtn.style.display = "inline-block";
+
+  if (!fileCountHint) return;
+
+  const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
+  const mbStr = (totalBytes / (1024 * 1024)).toFixed(1);
+  const archiveCount = files.filter((f) => /\.(zip|7z|tar|gz|tgz|bz2|tbz2|xz|txz)$/i.test(f.name)).length;
+
+  if (files.length === 1) {
+    fileCountHint.textContent = `已選擇：${files[0].name} (${mbStr} MB)`;
+  } else {
+    const archiveInfo = archiveCount > 0 ? ` · 含 ${archiveCount} 個壓縮包` : "";
+    fileCountHint.textContent = `已選擇 ${files.length} 個檔案 (${mbStr} MB${archiveInfo})`;
+  }
+}
+
+function initDropZone() {
+  const dropZone = $("dropZone");
+  const fileInputEl = $("fileInput");
+  const cancelUploadBtn = $("cancelUploadBtn");
+  if (!dropZone || !fileInputEl) return;
+
+  if (cancelUploadBtn) {
+    cancelUploadBtn.onclick = async (e) => {
+      e.stopPropagation();
+      state.isAborted = true;
+      try {
+        fetch("/api/images/cancel_upload", { method: "POST" });
+      } catch (err) {}
+      if (state.currentXhr) {
+        try {
+          state.currentXhr.abort();
+        } catch (err) {}
+        state.currentXhr = null;
+      }
+      await loadThumbs();
+      expandGallery();
+    };
+  }
+
+  dropZone.onclick = (e) => {
+    if (e.target.closest("#uploadBtn") || e.target.closest("#cancelUploadBtn")) {
+      return;
+    }
+    fileInputEl.click();
+  };
+
+  fileInputEl.onchange = () => {
+    state.stagedFiles = Array.from(fileInputEl.files);
+    updateFileCountHint();
+  };
+
+  ["dragenter", "dragover"].forEach((eventName) => {
+    dropZone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.add("dragover");
+    });
+  });
+
+  ["dragleave", "dragend"].forEach((eventName) => {
+    dropZone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.remove("dragover");
+    });
+  });
+
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove("dragover");
+
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+      state.stagedFiles = Array.from(e.dataTransfer.files);
+      updateFileCountHint();
+    }
+  });
+}
+initDropZone();
+
+$("uploadBtn").onclick = async (e) => {
+  if (e) e.stopPropagation();
+  const fileInputEl = $("fileInput");
+  const files = state.stagedFiles.length ? state.stagedFiles : Array.from(fileInputEl.files);
+  if (!files.length) return alert("請先選擇照片或資料集壓縮檔");
 
   const uploadBtn = $("uploadBtn");
-  const selectFileBtn = $("selectFileBtn");
+  const cancelUploadBtn = $("cancelUploadBtn");
   const fileCountHint = $("fileCountHint");
 
   uploadBtn.disabled = true;
-  if (selectFileBtn) selectFileBtn.disabled = true;
+  if (cancelUploadBtn) {
+    cancelUploadBtn.style.display = "inline-block";
+    cancelUploadBtn.disabled = false;
+  }
+  state.isUploading = true;
+  state.isAborted = false;
 
-  const BATCH_SIZE_LIMIT = 15 * 1024 * 1024; // 15 MB 每批動態容量上限
-  const BATCH_COUNT_LIMIT = 50;               // 單批最多 50 張
+  const BATCH_SIZE_LIMIT = 50 * 1024 * 1024; // 50 MB
+  const BATCH_COUNT_LIMIT = 50;
 
   let uploadedCount = 0;
   let uploadedBytes = 0;
   const totalFiles = files.length;
   const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
-  const sendBatch = async (batch) => {
-    const fd = new FormData();
-    for (const f of batch) fd.append("files", f);
-    const res = await fetch("/api/images", { method: "POST", body: fd });
-    if (!res.ok) {
-      const text = await res.text();
-      let errorMsg = text;
-      try {
-        const json = JSON.parse(text);
-        errorMsg = json.error || json.message || text;
-      } catch (e) { }
-      throw new Error(errorMsg);
-    }
-    const createdImages = await res.json();
-    uploadedCount += batch.length;
-    uploadedBytes += batch.reduce((acc, f) => acc + f.size, 0);
+  const sendBatch = (batch) => {
+    return new Promise((resolve, reject) => {
+      if (state.isAborted) {
+        return reject(new Error("使用者已取消上傳"));
+      }
 
-    // 增量渲染：直接將這批剛創好的照片 append 到縮圖區
-    if (Array.isArray(createdImages) && createdImages.length > 0) {
-      appendThumbs(createdImages);
-      expandGallery();
-    }
+      const xhr = new XMLHttpRequest();
+      state.currentXhr = xhr;
+      const fd = new FormData();
+      for (const f of batch) fd.append("files", f);
+      if (state.currentProjectId) fd.append("project_id", state.currentProjectId);
 
-    if (fileCountHint) {
-      const mbUploaded = (uploadedBytes / (1024 * 1024)).toFixed(1);
-      const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
-      fileCountHint.textContent = `上傳中… (${uploadedCount}/${totalFiles} 張 · ${mbUploaded}/${mbTotal} MB)`;
-    }
+      xhr.upload.onprogress = (e) => {
+        if (state.isAborted) return;
+        if (e.lengthComputable && fileCountHint) {
+          const currentBatchUploaded = e.loaded;
+          const totalProgressBytes = uploadedBytes + currentBatchUploaded;
+          const pct = Math.min(100, Math.round((totalProgressBytes / totalBytes) * 100));
+          const mbUploaded = (totalProgressBytes / (1024 * 1024)).toFixed(1);
+          const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
+
+          if (e.loaded >= e.total) {
+            fileCountHint.textContent = `檔案傳送完成 (100%) · 伺服器準備解壓照片…`;
+          } else {
+            fileCountHint.textContent = `正在傳送檔案… ${pct}% (${mbUploaded} / ${mbTotal} MB)`;
+          }
+        }
+      };
+
+      xhr.onprogress = () => {
+        if (state.isAborted) return;
+        const text = xhr.responseText;
+        const lines = text.split("\n");
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line.trim());
+            if (data.event === "progress") {
+              state.lastProcessedCount = data.created_count || data.current;
+              state.lastTotalCount = data.total;
+              const pct = Math.round((data.current / data.total) * 100);
+              if (fileCountHint) {
+                fileCountHint.textContent = `正在解壓與處理照片… ${data.current.toLocaleString()} / ${data.total.toLocaleString()} 張 (${pct}%)`;
+              }
+              if (data.latest_image) {
+                appendThumbs([data.latest_image]);
+                expandGallery();
+              }
+            }
+          } catch (err) {}
+        }
+      };
+
+      xhr.onload = () => {
+        state.currentXhr = null;
+        if (state.isAborted) {
+          return reject(new Error("使用者已取消上傳"));
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            let createdImages = [];
+            const text = xhr.responseText.trim();
+            if (text.startsWith("{")) {
+              const lines = text.split("\n");
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                  const data = JSON.parse(line.trim());
+                  if (data.event === "done" && Array.isArray(data.created)) {
+                    createdImages = data.created;
+                  }
+                } catch (e) {}
+              }
+            } else {
+              createdImages = JSON.parse(text);
+            }
+            uploadedCount += batch.length;
+            uploadedBytes += batch.reduce((acc, f) => acc + f.size, 0);
+
+            if (Array.isArray(createdImages) && createdImages.length > 0) {
+              appendThumbs(createdImages);
+              expandGallery();
+            }
+            resolve(createdImages);
+          } catch (err) {
+            reject(new Error("伺服器回傳格式錯誤"));
+          }
+        } else {
+          let errorMsg = xhr.responseText;
+          try {
+            const json = JSON.parse(xhr.responseText);
+            errorMsg = json.error || json.message || xhr.responseText;
+          } catch (e) {}
+          reject(new Error(errorMsg || `HTTP ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => {
+        state.currentXhr = null;
+        reject(new Error(state.isAborted ? "使用者已取消上傳" : "網路傳送失敗"));
+      };
+
+      xhr.onabort = () => {
+        state.currentXhr = null;
+        reject(new Error("使用者已取消上傳"));
+      };
+
+      xhr.open("POST", "/api/images?stream=1");
+      xhr.setRequestHeader("Accept", "application/x-ndjson");
+      xhr.send(fd);
+    });
   };
 
   try {
@@ -290,6 +482,7 @@ $("uploadBtn").onclick = async () => {
     let currentBatchSize = 0;
 
     for (const f of files) {
+      if (state.isAborted) break;
       if (currentBatch.length > 0 && (currentBatchSize + f.size > BATCH_SIZE_LIMIT || currentBatch.length >= BATCH_COUNT_LIMIT)) {
         await sendBatch(currentBatch);
         currentBatch = [];
@@ -299,20 +492,39 @@ $("uploadBtn").onclick = async () => {
       currentBatchSize += f.size;
     }
 
-    if (currentBatch.length > 0) {
+    if (currentBatch.length > 0 && !state.isAborted) {
       await sendBatch(currentBatch);
     }
-
-    // 清除選擇的檔案與提示
-    fileInputEl.value = "";
-    if (fileCountHint) {
-      fileCountHint.textContent = "尚未選擇檔案";
-    }
   } catch (err) {
-    alert(`上傳中斷（已成功上傳 ${uploadedCount}/${totalFiles} 張）：${err.message}`);
+    if (state.isAborted) {
+      if (fileCountHint) {
+        const countInfo = state.lastProcessedCount
+          ? `（已保留已解壓處理的 ${state.lastProcessedCount.toLocaleString()} / ${(state.lastTotalCount || '?').toLocaleString()} 張照片）`
+          : "";
+        fileCountHint.textContent = `已中途取消上傳${countInfo}`;
+      }
+    } else {
+      alert(`上傳中斷：${err.message}`);
+    }
   } finally {
+    fileInputEl.value = "";
+    state.stagedFiles = [];
+    state.isUploading = false;
+    state.currentXhr = null;
     uploadBtn.disabled = false;
-    if (selectFileBtn) selectFileBtn.disabled = false;
+    if (cancelUploadBtn) {
+      cancelUploadBtn.style.display = "none";
+      cancelUploadBtn.disabled = false;
+    }
+    if (state.isAborted) {
+      await loadThumbs();
+      expandGallery();
+      setTimeout(() => {
+        if (!state.isUploading) updateFileCountHint();
+      }, 3000);
+    } else {
+      updateFileCountHint();
+    }
   }
 };
 
@@ -321,11 +533,15 @@ function createThumbElement(im) {
   wrap.className = "thumb";
 
   const el = document.createElement("img");
+  el.loading = "lazy";
   el.src = `/api/images/${im.id}/file`;
   el.title = im.filename;
   el.onclick = () => {
     if (state.imgBatchMode) {
       chk.checked = !chk.checked;
+      if (!state.selectedImageIds) state.selectedImageIds = new Set();
+      if (chk.checked) state.selectedImageIds.add(im.id);
+      else state.selectedImageIds.delete(im.id);
       updateImgBatchBtnState();
       return;
     }
@@ -337,8 +553,12 @@ function createThumbElement(im) {
   chk.type = "checkbox";
   chk.className = "thumb-chk";
   chk.dataset.id = im.id;
+  chk.checked = state.selectedImageIds ? state.selectedImageIds.has(im.id) : false;
   chk.onclick = (e) => {
     e.stopPropagation();
+    if (!state.selectedImageIds) state.selectedImageIds = new Set();
+    if (chk.checked) state.selectedImageIds.add(im.id);
+    else state.selectedImageIds.delete(im.id);
     updateImgBatchBtnState();
   };
 
@@ -362,18 +582,24 @@ function initGalleryCollapse() {
     const isCollapsed = wrapper.classList.toggle("collapsed");
     updateGalleryToggleUI(!isCollapsed);
   };
+
+  // 滾動觸發無限載入
+  wrapper.addEventListener("scroll", () => {
+    if (wrapper.scrollTop + wrapper.clientHeight >= wrapper.scrollHeight - 120) {
+      renderMoreThumbs();
+    }
+  });
 }
 
 function updateGalleryToggleUI(isExpanded) {
   const icon = $("galleryToggleIcon");
   const text = $("galleryToggleText");
-  const box = $("thumbs");
-  const count = box ? box.querySelectorAll(".thumb").length : 0;
+  const totalCount = state.allImages ? state.allImages.length : 0;
   const wrapper = $("thumbsWrapper");
   const isCurrentlyCollapsed = wrapper ? wrapper.classList.contains("collapsed") : true;
 
   if (icon) icon.textContent = isCurrentlyCollapsed ? "▼" : "▲";
-  if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${count})` : `折疊照片庫 (${count})`;
+  if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${totalCount})` : `折疊照片庫 (${totalCount})`;
 }
 
 function expandGallery() {
@@ -385,13 +611,16 @@ function expandGallery() {
 }
 initGalleryCollapse();
 
-function appendThumbs(newImages) {
+function renderMoreThumbs() {
+  if (!state.allImages || state.renderedImageCount >= state.allImages.length) return;
+  const nextSlice = state.allImages.slice(state.renderedImageCount, state.renderedImageCount + GALLERY_PAGE_SIZE);
+  state.renderedImageCount += nextSlice.length;
+
   const box = $("thumbs");
-  if (!box || !newImages || !newImages.length) return;
+  if (!box) return;
 
   const fragment = document.createDocumentFragment();
-  newImages.forEach((im) => {
-    // 防呆：避開重複加入
+  nextSlice.forEach((im) => {
     if (box.querySelector(`.thumb-chk[data-id="${im.id}"]`)) return;
     const wrap = createThumbElement(im);
     fragment.appendChild(wrap);
@@ -399,7 +628,38 @@ function appendThumbs(newImages) {
   box.appendChild(fragment);
 
   if (!state.imgBatchMode) {
-    $("selectAllImgs").checked = false;
+    const selectAll = $("selectAllImgs");
+    if (selectAll) selectAll.checked = false;
+    updateImgBatchBtnState();
+  }
+  updateGalleryToggleUI();
+}
+
+function appendThumbs(newImages) {
+  if (!Array.isArray(newImages) || !newImages.length) return;
+
+  newImages.forEach((im) => {
+    if (!state.allImages.some((item) => item.id === im.id)) {
+      state.allImages.unshift(im);
+      state.renderedImageCount += 1;
+    }
+  });
+
+  const box = $("thumbs");
+  if (!box) return;
+
+  const fragment = document.createDocumentFragment();
+  newImages.forEach((im) => {
+    if (box.querySelector(`.thumb-chk[data-id="${im.id}"]`)) return;
+    const wrap = createThumbElement(im);
+    fragment.appendChild(wrap);
+  });
+
+  box.insertBefore(fragment, box.firstChild);
+
+  if (!state.imgBatchMode) {
+    const selectAll = $("selectAllImgs");
+    if (selectAll) selectAll.checked = false;
     updateImgBatchBtnState();
   }
   updateGalleryToggleUI();
@@ -407,13 +667,16 @@ function appendThumbs(newImages) {
 
 async function loadThumbs() {
   const imgs = await (await fetch("/api/images")).json();
+  state.allImages = Array.isArray(imgs) ? imgs : [];
+  state.renderedImageCount = 0;
+
   const box = $("thumbs");
-  box.innerHTML = "";
+  if (box) {
+    box.innerHTML = "";
+    box.classList.toggle("batch-active", state.imgBatchMode);
+  }
 
-  // 根據批次管理狀態切換 CSS class
-  box.classList.toggle("batch-active", state.imgBatchMode);
-
-  appendThumbs(imgs);
+  renderMoreThumbs();
   updateGalleryToggleUI();
 }
 
@@ -478,7 +741,7 @@ async function selectImageById(imageId, targetSegId = null) {
     const im = await res.json();
 
     const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${im.id}/file"]`) ||
-                     document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
+      document.querySelector(`.thumb-chk[data-id="${im.id}"]`)?.nextElementSibling;
 
     selectImage(im, thumbImg, targetSegId);
   } catch (err) {
@@ -1017,14 +1280,18 @@ if (dropZone && fileInput && selectFileBtn && fileCountHint) {
 // ---------- 批次管理輔助函式與事件監聽器 ----------
 
 function updateImgBatchBtnState() {
-  const chks = document.querySelectorAll(".thumb-chk");
-  const checked = document.querySelectorAll(".thumb-chk:checked");
+  if (!state.selectedImageIds) state.selectedImageIds = new Set();
+  const count = state.selectedImageIds.size;
+  const total = state.allImages ? state.allImages.length : 0;
   const btn = $("batchDelImgsBtn");
-  if (btn) btn.disabled = checked.length === 0;
+  if (btn) {
+    btn.disabled = count === 0;
+    btn.textContent = count > 0 ? `確認刪除 (${count})` : "確認刪除";
+  }
 
   const selectAll = $("selectAllImgs");
   if (selectAll) {
-    selectAll.checked = chks.length > 0 && checked.length === chks.length;
+    selectAll.checked = total > 0 && count === total;
   }
 }
 
@@ -1043,10 +1310,13 @@ function updateSegBatchBtnState() {
 // 照片批次管理切換
 function toggleImgBatchUI(isBatch) {
   state.imgBatchMode = isBatch;
+  if (!state.selectedImageIds) state.selectedImageIds = new Set();
+  state.selectedImageIds.clear();
   $("toggleImgBatchModeBtn").style.display = isBatch ? "none" : "block";
   $("batchDelImgsBtn").style.display = isBatch ? "block" : "none";
   $("cancelImgBatchBtn").style.display = isBatch ? "block" : "none";
   $("selectAllImgsLabel").style.display = isBatch ? "flex" : "none";
+  updateImgBatchBtnState();
   loadThumbs();
 }
 
@@ -1066,9 +1336,17 @@ function toggleSegBatchUI(isBatch) {
 $("toggleSegBatchModeBtn").onclick = () => toggleSegBatchUI(true);
 $("cancelSegBatchBtn").onclick = () => toggleSegBatchUI(false);
 
-// 照片全選
+// 照片全選 (包含未渲染至 DOM 的巨量照片)
 $("selectAllImgs").onchange = (e) => {
   const isChecked = e.target.checked;
+  if (!state.selectedImageIds) state.selectedImageIds = new Set();
+
+  if (isChecked) {
+    (state.allImages || []).forEach((im) => state.selectedImageIds.add(im.id));
+  } else {
+    state.selectedImageIds.clear();
+  }
+
   document.querySelectorAll(".thumb-chk").forEach((chk) => {
     chk.checked = isChecked;
   });
@@ -1084,36 +1362,34 @@ $("selectAllSegs").onchange = (e) => {
   updateSegBatchBtnState();
 };
 
-// 執行照片批次刪除
+// 執行照片批次刪除 (支援大批次分段刪除)
 $("batchDelImgsBtn").onclick = async () => {
-  const checked = document.querySelectorAll(".thumb-chk:checked");
-  const ids = Array.from(checked).map((chk) => chk.dataset.id);
-  if (ids.length === 0) return;
+  if (!state.selectedImageIds || state.selectedImageIds.size === 0) return;
+  const ids = Array.from(state.selectedImageIds);
 
   if (!confirm(`確定要批次刪除選取的 ${ids.length} 張照片嗎？這會同時清除與其相關的遮罩。`)) return;
 
   const btn = $("batchDelImgsBtn");
   const originalText = btn.textContent;
-  btn.textContent = "刪除中…";
   btn.disabled = true;
 
+  const DELETE_BATCH_SIZE = 500;
+  let deletedTotal = 0;
+
   try {
-    const res = await fetch("/api/images/delete_batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_ids: ids }),
-    });
+    for (let i = 0; i < ids.length; i += DELETE_BATCH_SIZE) {
+      const batchIds = ids.slice(i, i + DELETE_BATCH_SIZE);
+      btn.textContent = `刪除中 (${Math.min(i + batchIds.length, ids.length)} / ${ids.length})…`;
 
-    if (!res.ok) throw new Error(await res.text());
+      const res = await fetch("/api/images/delete_batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_ids: batchIds }),
+      });
 
-    // 增量 DOM 移除：直接將已被刪除的照片縮圖元素從畫面清掉（0ms 延遲）
-    ids.forEach((id) => {
-      const chk = document.querySelector(`.thumb-chk[data-id="${id}"]`);
-      if (chk) {
-        const thumb = chk.closest(".thumb");
-        if (thumb) thumb.remove();
-      }
-    });
+      if (!res.ok) throw new Error(await res.text());
+      deletedTotal += batchIds.length;
+    }
 
     // 如果刪除的照片包含當前選擇的圖片，清空畫布
     if (state.currentImage && ids.includes(state.currentImage.id)) {
@@ -1125,16 +1401,18 @@ $("batchDelImgsBtn").onclick = async () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
 
-    // 退出批次模式並重整
+    state.selectedImageIds.clear();
     state.imgBatchMode = false;
     $("toggleImgBatchModeBtn").style.display = "block";
     $("batchDelImgsBtn").style.display = "none";
     $("cancelImgBatchBtn").style.display = "none";
     $("selectAllImgsLabel").style.display = "none";
     $("thumbs").classList.remove("batch-active");
+    await loadThumbs();
     await refreshSidebar();
   } catch (err) {
     alert("批次刪除失敗: " + err.message);
+    await loadThumbs();
   } finally {
     btn.textContent = originalText;
     btn.disabled = false;
@@ -1190,8 +1468,221 @@ $("batchDelSegsBtn").onclick = async () => {
   }
 };
 
+// ---------- 專案管理邏輯 ----------
+function clearCanvasAndCurrentState() {
+  state.currentImage = null;
+  state.autoSegCompleted = false;
+  state.lastSegments = [];
+  state.points = [];
+  $("autoSegBtn").disabled = true;
+  $("drawBtn").disabled = true;
+  $("textPromptInput").disabled = true;
+  $("textSegBtn").disabled = true;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+async function fetchProjects() {
+  try {
+    const res = await fetch("/api/projects");
+    if (!res.ok) return;
+    const data = await res.json();
+    state.currentProjectId = data.active_project_id;
+    const select = $("projectSelect");
+    if (!select) return;
+    select.innerHTML = "";
+    (data.projects || []).forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name + (p.mode === "engineer" ? " [工程師]" : "");
+      if (p.id === data.active_project_id) opt.selected = true;
+      select.appendChild(opt);
+    });
+  } catch (err) {
+    console.error("載入專案清單失敗:", err);
+  }
+}
+
+async function selectProject(projectId) {
+  try {
+    const res = await fetch(`/api/projects/${projectId}/select`, { method: "POST" });
+    if (!res.ok) throw new Error(await res.text());
+    state.currentProjectId = projectId;
+    clearCanvasAndCurrentState();
+    await loadThumbs();
+    await refreshSidebar();
+    if (state.mode === "engineer") await loadParameters();
+  } catch (err) {
+    alert("切換專案失敗: " + err.message);
+  }
+}
+
+function showModal({ title, desc = "", showInput = false, inputLabel = "", inputValue = "", confirmText = "確認", isDanger = false }) {
+  return new Promise((resolve) => {
+    const overlay = $("modalOverlay");
+    const titleEl = $("modalTitle");
+    const descEl = $("modalDesc");
+    const inputGroup = $("modalInputGroup");
+    const inputLabelEl = $("modalInputLabel");
+    const inputEl = $("modalInput");
+    const cancelBtn = $("modalCancelBtn");
+    const confirmBtn = $("modalConfirmBtn");
+
+    titleEl.textContent = title;
+    if (desc) {
+      descEl.textContent = desc;
+      descEl.style.display = "block";
+    } else {
+      descEl.style.display = "none";
+    }
+
+    if (showInput) {
+      inputLabelEl.textContent = inputLabel || "名稱";
+      inputEl.value = inputValue || "";
+      inputGroup.style.display = "flex";
+    } else {
+      inputGroup.style.display = "none";
+    }
+
+    confirmBtn.textContent = confirmText;
+    confirmBtn.className = isDanger ? "btn-danger" : "btn-primary";
+
+    overlay.classList.add("active");
+
+    if (showInput) {
+      setTimeout(() => {
+        inputEl.focus();
+        inputEl.select();
+      }, 50);
+    }
+
+    const close = (val) => {
+      overlay.classList.remove("active");
+      cancelBtn.onclick = null;
+      confirmBtn.onclick = null;
+      inputEl.onkeydown = null;
+      resolve(val);
+    };
+
+    cancelBtn.onclick = () => close(null);
+    confirmBtn.onclick = () => close(showInput ? inputEl.value : true);
+
+    if (showInput) {
+      inputEl.onkeydown = (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          close(inputEl.value);
+        } else if (e.key === "Escape") {
+          close(null);
+        }
+      };
+    }
+  });
+}
+
+function initProjectControls() {
+  const select = $("projectSelect");
+  if (select) {
+    select.onchange = async () => {
+      const selectedId = select.value;
+      if (selectedId && selectedId !== state.currentProjectId) {
+        await selectProject(selectedId);
+      }
+    };
+  }
+
+  const createBtn = $("createProjectBtn");
+  if (createBtn) {
+    createBtn.onclick = async () => {
+      const name = await showModal({
+        title: "✨ 建立新專案",
+        showInput: true,
+        inputLabel: "專案名稱",
+        inputValue: "新專案",
+        confirmText: "建立專案"
+      });
+      if (name === null || !name.trim()) return;
+      try {
+        const res = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim(), mode: state.mode })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        clearCanvasAndCurrentState();
+        await fetchProjects();
+        await loadThumbs();
+        await refreshSidebar();
+      } catch (err) {
+        alert("建立專案失敗: " + err.message);
+      }
+    };
+  }
+
+  const renameBtn = $("renameProjectBtn");
+  if (renameBtn) {
+    renameBtn.onclick = async () => {
+      if (!state.currentProjectId) return;
+      const selectEl = $("projectSelect");
+      const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
+      const oldName = currentOpt ? currentOpt.textContent.replace(/ \[工程師\]$/, "") : "";
+      const newName = await showModal({
+        title: "✏️ 重新命名專案",
+        showInput: true,
+        inputLabel: "新的專案名稱",
+        inputValue: oldName,
+        confirmText: "儲存修改"
+      });
+      if (newName === null || !newName.trim() || newName.trim() === oldName) return;
+      try {
+        const res = await fetch(`/api/projects/${state.currentProjectId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName.trim() })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await fetchProjects();
+      } catch (err) {
+        alert("修改專案名稱失敗: " + err.message);
+      }
+    };
+  }
+
+  const deleteBtn = $("deleteProjectBtn");
+  if (deleteBtn) {
+    deleteBtn.onclick = async () => {
+      if (!state.currentProjectId) return;
+      const selectEl = $("projectSelect");
+      const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
+      const projName = currentOpt ? currentOpt.textContent.replace(/ \[工程師\]$/, "") : "此專案";
+      const confirmed = await showModal({
+        title: "⚠️ 確定要刪除專案嗎？",
+        desc: `專案「${projName}」內的所有照片、遮罩檔及分類成果將會被永久刪除且無法復原！`,
+        confirmText: "確認刪除",
+        isDanger: true
+      });
+      if (!confirmed) return;
+
+      try {
+        const res = await fetch(`/api/projects/${state.currentProjectId}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(await res.text());
+        clearCanvasAndCurrentState();
+        await fetchProjects();
+        await loadThumbs();
+        await refreshSidebar();
+      } catch (err) {
+        alert("刪除專案失敗: " + err.message);
+      }
+    };
+  }
+}
+
 // 初始載入
-loadThumbs();
+async function initApp() {
+  initProjectControls();
+  await fetchProjects();
+  await loadThumbs();
+}
+initApp();
 
 // ---------- 雙模式與參數調整初始化 ----------
 state.mode = localStorage.getItem("mode") || "layman";
@@ -1203,7 +1694,7 @@ let reviewProgressChartInstance = null;
 function getCssVar(varName, fallback = '') {
   if (typeof window === "undefined" || !document.documentElement) return fallback;
   const val = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
-  return val || fallback; 
+  return val || fallback;
 }
 
 function applyMode(mode) {
@@ -1621,3 +2112,111 @@ if (toggleBtn) {
 }
 
 applyMode(state.mode);
+
+// ==========================================
+// ⚡ 多圖批次文字標註 (Batch Auto-Labeling with Prompt)
+// ==========================================
+const batchTextBtn = $("batchTextSegBtn");
+if (batchTextBtn) {
+  batchTextBtn.onclick = async () => {
+    const promptInput = $("textPromptInput");
+    const prompt = promptInput ? promptInput.value.trim() : "";
+    if (!prompt) {
+      alert("請先在搜尋框輸入要批次標註的物件名稱（例如：strawberry）！");
+      if (promptInput) promptInput.focus();
+      return;
+    }
+
+    // 🔍 精確抓取網頁圖庫中所有打藍色勾勾 (.thumb-chk:checked) 的圖片 ID
+    const checkedChks = document.querySelectorAll(".thumb-chk:checked");
+    const selectedIds = Array.from(checkedChks).map(chk => chk.dataset.id).filter(Boolean);
+    const hasSelected = selectedIds.length > 0;
+    const targetText = hasSelected ? `已勾選的 ${selectedIds.length} 張圖片` : "圖庫內的所有圖片";
+
+    if (!confirm(`確定要對 ${targetText}，統一套用 Prompt: '${prompt}' 進行 YOLO-World 批次自動標註嗎？`)) {
+      return;
+    }
+
+    batchTextBtn.disabled = true;
+    batchTextBtn.textContent = "⚡ 標註處理中...";
+    setSegmentationLoading(true, `正在對 ${targetText} 進行批次標註 (${prompt})...`, true);
+
+    try {
+      const res = await fetch("/api/images/batch_segment_text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: prompt,
+          image_ids: hasSelected ? selectedIds : []
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        alert("批次標註失敗：" + (err.error || "未知錯誤"));
+        setSegmentationLoading(false);
+        batchTextBtn.disabled = false;
+        batchTextBtn.textContent = "⚡ 批次多圖標註";
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let successCnt = 0;
+      let failCnt = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.event === "progress") {
+              const pct = Math.round((msg.current / msg.total) * 100);
+              updateProgressBar(pct);
+              setSegmentationLoading(true, `[${msg.current}/${msg.total}] 正在分析 ${msg.filename} (Prompt: '${prompt}')...`, true);
+            } else if (msg.event === "image_done") {
+              successCnt++;
+            } else if (msg.event === "image_error") {
+              failCnt++;
+              console.warn(`圖片 ${msg.filename} 標註失敗: ${msg.message}`);
+            } else if (msg.event === "done") {
+              const successNum = msg.success_images !== undefined ? msg.success_images : successCnt;
+              const totalNum = msg.total_images !== undefined ? msg.total_images : (successNum + failCnt);
+              const failedNum = totalNum - successNum;
+
+              if (successNum === totalNum && totalNum > 0) {
+                alert(`🎉 批次標註全數成功！共成功標註 ${successNum} 張圖片！`);
+              } else if (successNum === 0) {
+                alert(`❌ 批次標註全數失敗！共 ${totalNum} 張圖片皆無法處理（請檢查模型或圖片）。`);
+              } else {
+                alert(`⚠️ 批次標註部分完成！成功：${successNum} 張，失敗：${failedNum} 張。`);
+              }
+            } else if (msg.event === "error") {
+              alert("批次標註發生錯誤：" + msg.message);
+            }
+          } catch (e) {
+            console.error("解析進度失敗", e);
+          }
+        }
+      }
+      await refreshSidebar();
+      if (state.currentImage && state.currentImage.id) {
+        await selectImageById(state.currentImage.id);
+      }
+    } catch (err) {
+      console.error("批次標註異常:", err);
+      alert("批次標註通訊失敗：" + err.message);
+    } finally {
+      setSegmentationLoading(false);
+      batchTextBtn.disabled = false;
+      batchTextBtn.textContent = "⚡ 批次多圖標註";
+    }
+  };
+}

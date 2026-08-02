@@ -6,7 +6,7 @@ from PIL import Image
 
 from app import create_app
 from app.config import Config
-from app.models import AnnotationTask
+from app.models import AnnotationTask, User
 from app.services import line_login
 
 
@@ -109,6 +109,51 @@ def test_liff_upload_creates_annotation_task(
     assert image_record.width == 20
     assert image_record.height == 10
     assert Path(image_record.path).exists()
+
+
+def test_liff_upload_assigns_linked_user_default_project(
+    app,
+    monkeypatch,
+):
+    linked_user = User(
+        username="linked-user",
+        line_user_id="U-linked-user",
+        display_name="已綁定使用者",
+    )
+    app.repo.add_user(linked_user)
+
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-linked-user",
+            "name": "LINE 顯示名稱",
+            "picture": "",
+        },
+    )
+
+    response = app.test_client().post(
+        "/liff/upload",
+        data={
+            "prompt": "請標註圖片中的貓咪",
+            "id_token": "fake-id-token",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    task = app.repo.get_task(result["task_id"])
+    image_record = app.repo.get_image(task.image_ids[0])
+    project = app.repo.get_project(image_record.project_id)
+
+    assert task.user_id == linked_user.id
+    assert image_record.owner_id == linked_user.id
+    assert project is not None
+    assert project.owner_id == linked_user.id
+    assert task.settings_snapshot["project_id"] == project.id
+    assert image_record in app.repo.list_images(project.id)
 
 def test_liff_task_download_checks_token_and_status(
     app,

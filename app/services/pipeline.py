@@ -61,17 +61,25 @@ class Pipeline:
             temperature=self.config.softmax_temperature,
         )
 
-    def _classifier_for(self, owner_id: str) -> FewShotClassifier:
-        classifier = self.classifiers.get(owner_id)
+    def _classifier_key(self, owner_id: str, project_id: str = "") -> str:
+        if project_id:
+            return f"{owner_id}:{project_id}"
+        return owner_id
+
+    def _classifier_for(self, owner_id: str, project_id: str = "") -> FewShotClassifier:
+        key = self._classifier_key(owner_id, project_id)
+        classifier = self.classifiers.get(key)
         if classifier is None:
             classifier = self._new_classifier()
-            classifier.fit(self.repo.list_examples(owner_id))
-            self.classifiers[owner_id] = classifier
+            classifier.fit(self.repo.list_examples(owner_id=owner_id, project_id=project_id if project_id else None))
+            self.classifiers[key] = classifier
         return classifier
 
-    def _owner_for_segment(self, segment: Segment) -> str:
+    def _owner_and_project_for_segment(self, segment: Segment) -> tuple[str, str]:
         image = self.repo.get_image(segment.image_id)
-        return image.owner_id if image is not None else ""
+        if image is not None:
+            return image.owner_id, image.project_id
+        return "", ""
 
     # ---------- 影像 IO ----------
     def _read_rgb(self, reference: str) -> np.ndarray:
@@ -172,18 +180,13 @@ class Pipeline:
         self,
         image: ImageRecord,
         prompt: str,
+        parsed_classes: list[str] | None = None,
         progress_callback: Callable[[dict], None] | None = None,
         *,
         annotation_task_id: str = "",
         task_attempt_token: str = "",
     ) -> list[Segment]:
-        """依文字提示分割圖片中的物件。
-
-        - prompt 會先移除前後空白，不可為空，最多 200 個字元。
-        - 回傳零到多個已完成遮罩存檔、分類與 Repository 寫入的 Segment。
-        - 找不到符合物件時回傳空列表，不視為錯誤。
-        - prompt 只是搜尋條件，不直接作為 human_label。
-        """
+        """依文字提示分割圖片中的物件。"""
         prompt = prompt.strip()
         if not prompt:
             raise ValueError("prompt 不可為空")
@@ -200,19 +203,21 @@ class Pipeline:
 
         img = self._read_rgb(image.path)
 
-        # 中文或超過 3 個英文單字時，交給 Gemini 解析物件類別
-        words = prompt.split()
-        has_chinese = any("\u4e00" <= c <= "\u9fff" for c in prompt)
-        use_gemini = has_chinese or len(words) > 3
+        if parsed_classes is None:
+            # 中文或超過 3 個英文單字時，交給 Gemini 解析物件類別
+            words = prompt.split()
+            has_chinese = any("\u4e00" <= c <= "\u9fff" for c in prompt)
+            use_gemini = has_chinese or len(words) > 3
 
-        parsed_classes = (
-            self.gemini_service.parse_prompt(prompt)
-            if use_gemini
-            else [prompt]
-        )
+            parsed_classes = (
+                self.gemini_service.parse_prompt(prompt)
+                if use_gemini
+                else [prompt]
+            )
 
         # Mock 測試模式：不載入真實模型
         if not self.config.use_real_sam:
+            print(f"⚠️ [Pipeline Status] 目前為 Mock 模擬模式 (use_real_sam=False)，跳過 YOLO-World 載入。若要接通真實 AI 模型，請確認 .env 中設為 USE_REAL_SAM=1。")
             mock_segments: list[Segment] = []
             h, w = img.shape[:2]
 
@@ -262,6 +267,7 @@ class Pipeline:
 
             return mock_segments
 
+        print(f"🚀 [Real AI Engine] 正在對圖片使用真實 YOLO-World + MobileSAM 進行 Prompt '{parsed_classes}' 標註分析...")
         # 動態載入 YOLO-World
         if self.yolo_detector is None:
             model_path = str(
@@ -379,7 +385,8 @@ class Pipeline:
     # ---------- 對單一片段做分類 + 信心判斷 ----------
     def _classify_segment(self, img: np.ndarray, seg: Segment, mask: np.ndarray) -> None:
         feat = self.embedder.encode(img, mask)
-        classifier = self._classifier_for(self._owner_for_segment(seg))
+        owner_id, project_id = self._owner_and_project_for_segment(seg)
+        classifier = self._classifier_for(owner_id, project_id)
         if classifier.ready:
             probs = classifier.predict(feat)
             seg.probs = probs
@@ -396,11 +403,13 @@ class Pipeline:
         if image is None:
             raise ValueError("找不到片段所屬圖片")
         owner_id = image.owner_id
+        project_id = image.project_id
         img = self._read_rgb(image.path)
         mask = self._read_mask(seg.mask_path)
         feat = self.embedder.encode(img, mask)
         ex = LabelExample(
             owner_id=owner_id,
+            project_id=project_id,
             label=label,
             feature=feat.tolist(),
             source_segment_id=seg.id,
@@ -414,39 +423,44 @@ class Pipeline:
         self.repo.update_segment(seg)
 
         # 主動學習迴圈：回訓 + 重新預測未審片段
-        self.refit(owner_id)
-        self.reclassify_pending(owner_id)
+        self.refit(owner_id, project_id)
+        self.reclassify_pending(owner_id, project_id)
         return ex
 
     # ---------- 刪掉標錯的類別（連帶回訓）----------
-    def delete_label(self, label: str, owner_id: str = "") -> int:
+    def delete_label(self, label: str, owner_id: str = "", project_id: str = "") -> int:
         n = self.repo.delete_label(label, owner_id)
-        self.refit(owner_id)
-        self.reclassify_pending(owner_id)
+        self.refit(owner_id, project_id)
+        self.reclassify_pending(owner_id, project_id)
         return n
 
     # ---------- 重建分類器 ----------
-    def refit(self, owner_id: str | None = None) -> None:
+    def refit(self, owner_id: str | None = None, project_id: str | None = None) -> None:
         if owner_id is None:
-            owner_ids = {
-                example.owner_id for example in self.repo.list_examples()
-            }
-            owner_ids.update(self.classifiers)
-            owner_ids.add("")
+            all_examples = self.repo.list_examples()
+            keys = {self._classifier_key(e.owner_id, e.project_id) for e in all_examples}
+            keys.update(self.classifiers.keys())
+            keys.add("")
         else:
-            owner_ids = {owner_id}
+            keys = {self._classifier_key(owner_id, project_id or "")}
 
-        for current_owner_id in owner_ids:
-            classifier = self.classifiers.get(current_owner_id)
+        for key in keys:
+            classifier = self.classifiers.get(key)
             if classifier is None:
                 classifier = self._new_classifier()
-                self.classifiers[current_owner_id] = classifier
-            classifier.fit(self.repo.list_examples(current_owner_id))
+                self.classifiers[key] = classifier
 
-        self.classifier = self.classifiers[""]
+            if ":" in key:
+                o_id, p_id = key.split(":", 1)
+                examples = self.repo.list_examples(owner_id=o_id, project_id=p_id)
+            else:
+                examples = self.repo.list_examples(owner_id=key if key else None)
+            classifier.fit(examples)
+
+        self.classifier = self.classifiers.get("", self._new_classifier())
 
     # ---------- 回訓後重新預測尚未人工審核的片段 ----------
-    def reclassify_pending(self, owner_id: str | None = None) -> None:
+    def reclassify_pending(self, owner_id: str | None = None, project_id: str | None = None) -> None:
         cache: dict[str, np.ndarray] = {}
         for seg in self.repo.list_segments():
             if seg.reviewed:
@@ -456,7 +470,9 @@ class Pipeline:
                 continue
             if owner_id is not None and image.owner_id != owner_id:
                 continue
-            classifier = self._classifier_for(image.owner_id)
+            if project_id is not None and image.project_id != project_id:
+                continue
+            classifier = self._classifier_for(image.owner_id, image.project_id)
             if not classifier.ready:
                 # 範例被刪光、分類器失效 → 清掉舊預測，退回送審（別殘留 stale label）
                 seg.probs, seg.predicted_label, seg.confidence, seg.needs_review = {}, None, 0.0, True
