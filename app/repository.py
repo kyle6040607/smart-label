@@ -295,6 +295,24 @@ class Repository:
             segs = [s for s in segs if s.image_id == image_id]
         return list(segs)
 
+    def list_labeled_segments_by_project(
+        self,
+        owner_id: str,
+        project_id: str | None = None,
+    ) -> list[Segment]:
+        """撈出特定使用者與專案下已標註 (final_label IS NOT NULL) 的片段。"""
+        user_image_ids = {
+            img.id
+            for img in self.images.values()
+            if (not owner_id or img.owner_id == owner_id)
+            and (not project_id or img.project_id == project_id)
+        }
+        return [
+            s
+            for s in self.segments.values()
+            if s.image_id in user_image_ids and bool(s.final_label)
+        ]
+
     def list_review_queue(self) -> list[Segment]:
         """待人工審核的低信心片段（提案第 8 頁標紅送審）。"""
         return [s for s in self.segments.values() if s.needs_review and not s.reviewed]
@@ -305,6 +323,9 @@ class Repository:
             seg = self.segments.pop(seg_id, None)
             if seg is None:
                 return None
+            eids = [eid for eid, ex in self.examples.items() if getattr(ex, "source_segment_id", None) == seg_id]
+            for eid in eids:
+                self.examples.pop(eid, None)
             self._save()
         return seg.mask_path or None
 
@@ -316,6 +337,9 @@ class Repository:
                 seg = self.segments.pop(seg_id, None)
                 if seg and seg.mask_path:
                     paths.append(seg.mask_path)
+                eids = [eid for eid, ex in self.examples.items() if getattr(ex, "source_segment_id", None) == seg_id]
+                for eid in eids:
+                    self.examples.pop(eid, None)
             self._save()
         return [p for p in paths if p]
 
@@ -331,6 +355,11 @@ class Repository:
             self.examples[ex.id] = ex
             self._save()
         return ex
+
+    def delete_example(self, example_id: str) -> None:
+        with self._lock:
+            self.examples.pop(example_id, None)
+            self._save()
 
     def list_examples(self, owner_id: str | None = None, project_id: str | None = None) -> list[LabelExample]:
         examples = self.examples.values()
@@ -351,12 +380,8 @@ class Repository:
             example.label for example in self.list_examples(owner_id=owner_id, project_id=project_id)
         })
 
-    def delete_label(self, label: str, owner_id: str | None = None) -> int:
-        """刪掉某類別的所有種子範例（標錯類別時用），回傳刪除的範例數。
-
-        連帶把用這個錯誤類別人工標過的片段退回送審——類別都錯了，
-        那些標記也不該留在匯出資料裡。回訓由上層 pipeline 負責。
-        """
+    def delete_label(self, label: str, owner_id: str | None = None, project_id: str | None = None) -> tuple[int, list[str]]:
+        """刪除某類別的所有種子範例與關聯的遮罩片段，回傳 (刪除範例數, 要刪除的遮罩檔案路徑列表)。"""
         with self._lock:
             ids = [
                 example_id
@@ -364,24 +389,61 @@ class Repository:
                 if (
                     example.label == label
                     and (owner_id is None or example.owner_id == owner_id)
+                    and (project_id is None or example.project_id == project_id)
                 )
             ]
             for eid in ids:
                 del self.examples[eid]
+
+            mask_paths = []
+            segs_to_del = []
+            for seg in list(self.segments.values()):
+                image = self.images.get(seg.image_id)
+                matches_owner = (owner_id is None or (image is not None and image.owner_id == owner_id))
+                matches_proj = (project_id is None or (image is not None and image.project_id == project_id))
+                matches_label = (seg.human_label == label or seg.final_label == label or seg.predicted_label == label)
+
+                if matches_owner and matches_proj and matches_label:
+                    segs_to_del.append(seg.id)
+                    if seg.mask_path:
+                        mask_paths.append(seg.mask_path)
+
+            for seg_id in segs_to_del:
+                del self.segments[seg_id]
+
+            self._save()
+        return len(ids), mask_paths
+
+    def rename_label(
+        self,
+        old_label: str,
+        new_label: str,
+        owner_id: str | None = None,
+        project_id: str | None = None,
+    ) -> int:
+        """將舊類別名稱修改為新類別名稱（若新類別已存在則直接合併）。"""
+        with self._lock:
+            count = 0
+            for example in self.examples.values():
+                matches_owner = owner_id is None or example.owner_id == owner_id
+                matches_proj = project_id is None or example.project_id == project_id
+                if example.label == old_label and matches_owner and matches_proj:
+                    example.label = new_label
+                    count += 1
+
             for seg in self.segments.values():
                 image = self.images.get(seg.image_id)
-                if (
-                    seg.human_label == label
-                    and (
-                        owner_id is None
-                        or (image is not None and image.owner_id == owner_id)
-                    )
-                ):
-                    seg.human_label = None
-                    seg.reviewed = False
-                    seg.needs_review = True
+                matches_owner = owner_id is None or (image is not None and image.owner_id == owner_id)
+                matches_proj = project_id is None or (image is not None and image.project_id == project_id)
+                if matches_owner and matches_proj:
+                    if seg.human_label == old_label:
+                        seg.human_label = new_label
+                        count += 1
+                    if seg.predicted_label == old_label:
+                        seg.predicted_label = new_label
+
             self._save()
-        return len(ids)
+            return count
 
     # ---------- 使用者 / 登入 ----------
     def add_user(self, user: User) -> User:

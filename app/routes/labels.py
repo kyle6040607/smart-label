@@ -41,6 +41,41 @@ def delete_label(label: str):
     return jsonify({"deleted": label, "examples_removed": n})
 
 
+@bp.post("/labels/rename")
+def rename_label():
+    """重新命名或合併類別標籤。
+    body: {"old_label": str, "new_label": str, "combine": bool}
+    """
+    data = request.get_json(force=True)
+    old_label = (data.get("old_label") or "").strip()
+    new_label = (data.get("new_label") or "").strip()
+    combine = bool(data.get("combine", False))
+
+    if not old_label or not new_label:
+        abort(400, "old_label 與 new_label 不可為空")
+
+    if old_label == new_label:
+        return jsonify({"renamed": False, "message": "名稱相同"})
+
+    user_id = get_current_user_id()
+    project_id = get_current_project_id()
+    existing_labels = get_repo().labels(user_id, project_id)
+
+    if new_label in existing_labels and not combine:
+        return jsonify({
+            "exists": True,
+            "message": f"類別「{new_label}」已存在，是否要進行合併？"
+        }), 409
+
+    n = get_pipeline().rename_label(old_label, new_label, user_id, project_id)
+    return jsonify({
+        "renamed": True,
+        "old_label": old_label,
+        "new_label": new_label,
+        "combined": new_label in existing_labels,
+    })
+
+
 @bp.get("/examples")
 def list_examples():
     return jsonify([

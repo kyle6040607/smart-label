@@ -3,9 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>登入 · 智慧分割標記助手</title>
+  <title>登入 · Seer</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- 品牌字只用在卡片標題的 "Seer"，用 text= 子集化只載 S/e/r 三個字符 -->
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&text=Seer&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem("app_theme") || "dark";
+      document.documentElement.setAttribute("data-theme", savedTheme);
+    })();
+  </script>
   <style>
     .login-wrap {
       position: relative;
@@ -67,10 +77,11 @@
 
     .login-card h1 {
       margin: 0;
-      font-size: 22px;
-      font-weight: 700;
+      font-family: 'Cinzel', Georgia, serif;
+      font-size: 26px;
+      font-weight: 600;
       text-align: center;
-      letter-spacing: 0.3px;
+      letter-spacing: 0.06em;
     }
     .login-card .subtitle {
       margin: 6px 0 26px;
@@ -165,6 +176,22 @@
 </head>
 <body>
   <div class="login-wrap">
+    <button id="themeToggleBtn" class="theme-toggle-btn auth-theme-toggle" type="button" title="切換深色/淺色模式" aria-label="切換深色/淺色模式">
+      <svg class="theme-icon sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="5"></circle>
+        <line x1="12" y1="1" x2="12" y2="3"></line>
+        <line x1="12" y1="21" x2="12" y2="23"></line>
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+        <line x1="1" y1="12" x2="3" y2="12"></line>
+        <line x1="21" y1="12" x2="23" y2="12"></line>
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+      </svg>
+      <svg class="theme-icon moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+      </svg>
+    </button>
     <form class="login-card" method="post" action="{{ url_for('auth.do_login') }}">
       <div class="login-logo">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -174,7 +201,7 @@
           <circle cx="8.5" cy="8.5" r="1.5" />
         </svg>
       </div>
-      <h1>智慧分割標記助手</h1>
+      <h1>Seer</h1>
       <p class="subtitle">請登入以繼續</p>
 
       {% if request.args.get('next') %}
@@ -206,5 +233,18 @@
       </a>
     </form>
   </div>
+  <script>
+    (function () {
+      const themeBtn = document.getElementById("themeToggleBtn");
+      if (themeBtn) {
+        themeBtn.addEventListener("click", () => {
+          const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
+          const nextTheme = currentTheme === "dark" ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", nextTheme);
+          localStorage.setItem("app_theme", nextTheme);
+        });
+      }
+    })();
+  </script>
 </body>
 </html>
