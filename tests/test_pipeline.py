@@ -1,11 +1,15 @@
 """端到端冒煙測試：不需真模型，驗證整條人機協作流程跑得通。"""
 from __future__ import annotations
 
+import threading
+import time
+
 import numpy as np
 import cv2
 import pytest
 
 from app.config import Config
+import app.services.pipeline as pipeline_module
 from app.services.pipeline import Pipeline
 from app.models import ImageRecord, Segment, LabelExample
 from app.repository import Repository
@@ -62,6 +66,106 @@ def test_segment_produces_masks(tmp_path):
     assert len(segs) >= 1
     # 還沒範例 → 全部送審
     assert all(s.needs_review for s in segs)
+
+
+def test_pipeline_init_does_not_load_models(tmp_path, monkeypatch):
+    """建立 Web app/Pipeline 時不得載入權重；第一次推論才載入。"""
+    calls = {"segmenter": 0, "embedder": 0}
+
+    def fail_segmenter(*args, **kwargs):
+        calls["segmenter"] += 1
+        raise AssertionError("Pipeline 初始化時不應建立 segmenter")
+
+    def fail_embedder(*args, **kwargs):
+        calls["embedder"] += 1
+        raise AssertionError("Pipeline 初始化時不應建立 embedder")
+
+    monkeypatch.setattr(pipeline_module, "build_segmenter", fail_segmenter)
+    monkeypatch.setattr(pipeline_module, "build_embedder", fail_embedder)
+
+    pipe, _, _ = _pipeline(tmp_path)
+
+    assert calls == {"segmenter": 0, "embedder": 0}
+    assert pipe._segmenter is None
+    assert pipe._embedder is None
+
+
+def test_concurrent_lazy_load_builds_segmenter_once(tmp_path, monkeypatch):
+    pipe, _, _ = _pipeline(tmp_path)
+    started = threading.Event()
+    allow_finish = threading.Event()
+    calls = []
+    fake_segmenter = object()
+
+    def build_once(*args, **kwargs):
+        calls.append(1)
+        started.set()
+        assert allow_finish.wait(timeout=2)
+        return fake_segmenter
+
+    monkeypatch.setattr(pipeline_module, "build_segmenter", build_once)
+    results = []
+    threads = [
+        threading.Thread(
+            target=lambda: results.append(pipe._get_or_load_segmenter())
+        )
+        for _ in range(2)
+    ]
+
+    threads[0].start()
+    assert started.wait(timeout=2)
+    threads[1].start()
+    allow_finish.set()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert len(calls) == 1
+    assert results == [fake_segmenter, fake_segmenter]
+
+
+def test_inference_slot_serializes_work(tmp_path):
+    pipe, _, _ = _pipeline(tmp_path)
+    counter_lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def run_inference():
+        nonlocal active, max_active
+        with pipe._inference_slot():
+            with counter_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.02)
+            with counter_lock:
+                active -= 1
+
+    threads = [threading.Thread(target=run_inference) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert max_active == 1
+
+
+def test_lazy_load_reports_model_progress_once(tmp_path, monkeypatch):
+    pipe, _, _ = _pipeline(tmp_path)
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_segmenter",
+        lambda *args, **kwargs: object(),
+    )
+    events = []
+
+    pipe._get_or_load_segmenter(events.append)
+    pipe._get_or_load_segmenter(events.append)
+
+    assert [event["stage"] for event in events] == [
+        "loading_model",
+        "model_ready",
+    ]
 
 
 def test_active_learning_loop(tmp_path):

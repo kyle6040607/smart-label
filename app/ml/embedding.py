@@ -13,8 +13,6 @@ from typing import Protocol
 
 import cv2
 import numpy as np
-import torch
-import torchvision.transforms as T
 
 
 
@@ -75,6 +73,12 @@ class DinoEmbedder:
     dim: int = 768
 
     def __init__(self, model_name: str = "facebook/dinov2-base", device: str | None = None):
+        # 重型套件延後到真正啟用 DINO 時才 import，避免純 Web/圖片 instance
+        # 只因載入這個模組就付出 PyTorch 初始化成本。
+        import torch
+        import torchvision.transforms as transforms
+
+        self._torch = torch
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -96,7 +100,10 @@ class DinoEmbedder:
         # 載入模型
         self.model = torch.hub.load("facebookresearch/dinov2", hub_model)
         self.model.eval().to(self.device)
-        self._normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        self._normalize = transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        )
 
     def encode(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
         # 1. 取得遮罩的 bounding box
@@ -113,11 +120,11 @@ class DinoEmbedder:
         crop_resized = cv2.resize(crop_masked, (224, 224), interpolation=cv2.INTER_AREA)
 
         # 5. 轉換為 PyTorch Tensor，縮放到 [0, 1] 並進行 ImageNet 常態化
-        tensor = torch.from_numpy(crop_resized).permute(2, 0, 1).float() / 255.0
+        tensor = self._torch.from_numpy(crop_resized).permute(2, 0, 1).float() / 255.0
         tensor = self._normalize(tensor).unsqueeze(0).to(self.device)
 
         # 6. 推論取得特徵向量
-        with torch.no_grad():
+        with self._torch.no_grad():
             features = self.model(tensor)
 
         # 7. 轉回 1D float64 numpy array，並做 L2 Normalization
