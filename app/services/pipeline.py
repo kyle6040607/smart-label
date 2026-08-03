@@ -381,6 +381,8 @@ class Pipeline:
                 segmenter,
                 parsed_classes,
                 progress_callback,
+                annotation_task_id=annotation_task_id,
+                task_attempt_token=task_attempt_token,
             )
 
     def _segment_text_locked(
@@ -390,6 +392,9 @@ class Pipeline:
         segmenter,
         parsed_classes: list[str] | None = None,
         progress_callback: ProgressCallback | None = None,
+        *,
+        annotation_task_id: str = "",
+        task_attempt_token: str = "",
     ) -> list[Segment]:
 
         if progress_callback:
