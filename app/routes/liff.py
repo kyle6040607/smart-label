@@ -58,6 +58,7 @@ from werkzeug.utils import secure_filename
 from app.models import AnnotationTask, ImageRecord
 from app.routes import get_config, get_repo, get_storage
 from app.services import line_login
+from app.services.cloud_run_jobs import trigger_task_worker
 
 
 bp = Blueprint(
@@ -372,6 +373,17 @@ def upload_task():
 
     repo.add_task(task)
 
+    # 先確保任務已寫入資料庫，再要求 Cloud Run 啟動 Worker。觸發失敗時
+    # 不能回滾上傳或刪除任務，讓人工執行或低頻 Scheduler 仍可補處理。
+    job_operation_name = ""
+    try:
+        job_operation_name = trigger_task_worker(cfg)
+    except Exception:  # noqa: BLE001 外部 API 失敗不可連帶讓任務建立失敗
+        current_app.logger.exception(
+            "LIFF 任務已建立，但 Cloud Run Job 觸發失敗：task_id=%s",
+            task.id,
+        )
+
     return (
         jsonify(
             {
@@ -379,6 +391,7 @@ def upload_task():
                 "message": "標註任務建立成功",
                 "task_id": task.id,
                 "task_status": task.status,
+                "job_triggered": bool(job_operation_name),
                 "status_url": url_for(
                     "liff.task_status",
                     task_id=task.id,

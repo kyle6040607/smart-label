@@ -176,6 +176,25 @@ class Config:
         os.getenv("TASK_RETRY_BASE_SECONDS", "60")
     )
 
+    # --- LIFF 建立任務後觸發 Cloud Run Job ---
+    # Job 名稱留空時停用，確保地端與測試環境不會誤觸正式 Job。
+    cloud_run_task_job_name: str = os.getenv(
+        "CLOUD_RUN_TASK_JOB_NAME", ""
+    ).strip()
+    cloud_run_task_job_region: str = os.getenv(
+        "CLOUD_RUN_TASK_JOB_REGION", "asia-east1"
+    ).strip()
+    cloud_run_task_job_project_id: str = (
+        os.getenv("CLOUD_RUN_TASK_JOB_PROJECT_ID", "")
+        or os.getenv("GCS_PROJECT_ID", "")
+        or os.getenv("GCP_PROJECT_ID", "")
+        or os.getenv("GCP_PROJECT", "")
+        or os.getenv("GOOGLE_CLOUD_PROJECT", "")
+    ).strip()
+    cloud_run_task_job_trigger_timeout_seconds: float = float(
+        os.getenv("CLOUD_RUN_TASK_JOB_TRIGGER_TIMEOUT_SECONDS", "5")
+    )
+
     @property
     def use_mysql(self) -> bool:
         if self.db_backend == "mysql":

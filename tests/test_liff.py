@@ -87,6 +87,7 @@ def test_liff_upload_creates_annotation_task(
     assert result is not None
     assert result["ok"] is True
     assert result["task_status"] == "pending"
+    assert result["job_triggered"] is False
     assert result["image_count"] == 1
     assert result["user_id"] == ""
 
@@ -109,6 +110,73 @@ def test_liff_upload_creates_annotation_task(
     assert image_record.width == 20
     assert image_record.height == 10
     assert Path(image_record.path).exists()
+
+
+def test_liff_upload_triggers_configured_cloud_run_job(app, monkeypatch):
+    app.smart_config.cloud_run_task_job_name = "smart-label-task-worker"
+    operations = []
+    monkeypatch.setattr(
+        "app.routes.liff.trigger_task_worker",
+        lambda config: operations.append(config.cloud_run_task_job_name)
+        or "operations/job-run-1",
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-job-trigger-test",
+            "name": "Job 觸發測試",
+            "picture": "",
+        },
+    )
+
+    response = app.test_client().post(
+        "/liff/upload",
+        data={
+            "prompt": "cat",
+            "id_token": "fake-id-token",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    assert result["job_triggered"] is True
+    assert operations == ["smart-label-task-worker"]
+    assert app.repo.get_task(result["task_id"]).status == "pending"
+
+
+def test_liff_upload_keeps_pending_task_when_job_trigger_fails(app, monkeypatch):
+    app.smart_config.cloud_run_task_job_name = "smart-label-task-worker"
+    monkeypatch.setattr(
+        "app.routes.liff.trigger_task_worker",
+        lambda config: (_ for _ in ()).throw(RuntimeError(config.cloud_run_task_job_name)),
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-job-trigger-failure",
+            "name": "Job 失敗測試",
+            "picture": "",
+        },
+    )
+
+    response = app.test_client().post(
+        "/liff/upload",
+        data={
+            "prompt": "cat",
+            "id_token": "fake-id-token",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    assert result["job_triggered"] is False
+    assert app.repo.get_task(result["task_id"]).status == "pending"
 
 
 def test_liff_upload_assigns_linked_user_default_project(
