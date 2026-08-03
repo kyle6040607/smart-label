@@ -13,9 +13,9 @@ from app.config import Config
 
 def send_verification_code(cfg: Config, to_email: str, code: str) -> None:
     """寄出 6 位數驗證碼。寄送失敗會往外拋例外，由呼叫端決定怎麼回應使用者。"""
-    subject = "Smart Label 驗證碼"
+    subject = "Seer 驗證碼"
     body = (
-        f"你的 Smart Label 驗證碼是：{code}\n\n"
+        f"你的 Seer 驗證碼是：{code}\n\n"
         f"驗證碼 {cfg.otp_ttl_seconds // 60} 分鐘內有效。\n"
         "如果這不是你本人的操作，請忽略這封信。"
     )

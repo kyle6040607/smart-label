@@ -52,7 +52,12 @@ header {
 
 header h1 {
   margin: 0;
-  font-size: 22px;
+  font-family: 'Cinzel', 'Outfit', Georgia, serif;
+  font-size: 32px;
+  font-weight: 600;
+  /* Cinzel 是羅馬碑刻體、實際渲染成大寫，加點字距才不會擠在一起 */
+  letter-spacing: 0.06em;
+  line-height: 1.1;
 }
 
 .subtitle {

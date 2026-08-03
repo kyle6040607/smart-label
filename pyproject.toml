@@ -1,7 +1,7 @@
 [project]
 name = "smart-label"
 version = "0.1.0"
-description = "智慧分割標記助手 — SAM 驅動的 AI 影像標記網頁"
+description = "Seer — SAM 驅動的 AI 影像標記網頁"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

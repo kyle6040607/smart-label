@@ -3,8 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>登入 · 智慧分割標記助手</title>
+  <title>登入 · Seer</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- 品牌字只用在卡片標題的 "Seer"，用 text= 子集化只載 S/e/r 三個字符 -->
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&text=Seer&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   <script>
     (function() {
@@ -73,10 +77,11 @@
 
     .login-card h1 {
       margin: 0;
-      font-size: 22px;
-      font-weight: 700;
+      font-family: 'Cinzel', Georgia, serif;
+      font-size: 26px;
+      font-weight: 600;
       text-align: center;
-      letter-spacing: 0.3px;
+      letter-spacing: 0.06em;
     }
     .login-card .subtitle {
       margin: 6px 0 26px;
@@ -196,7 +201,7 @@
           <circle cx="8.5" cy="8.5" r="1.5" />
         </svg>
       </div>
-      <h1>智慧分割標記助手</h1>
+      <h1>Seer</h1>
       <p class="subtitle">請登入以繼續</p>
 
       {% if request.args.get('next') %}
