@@ -107,6 +107,10 @@ class Config:
     # --- 後端模型開關：mock 先跑通流程，之後抽換真模型 ---
     use_real_sam: bool = os.getenv("USE_REAL_SAM", "0") == "1"
     use_real_embedding: bool = os.getenv("USE_REAL_EMBEDDING", "0") == "1"
+    # 同一個 instance 只允許一個 AI 推論；等待時間必須短於 Cloud Run request timeout。
+    inference_lock_timeout_seconds: float = float(
+        os.getenv("INFERENCE_LOCK_TIMEOUT_SECONDS", "240")
+    )
 
     # --- 檔案儲存（本機 / Google Cloud Storage）---
     use_gcs: bool = _env_bool("USE_GCS")

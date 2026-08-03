@@ -16,6 +16,7 @@ from app.routes import (
     get_repo,
     get_storage,
 )
+from app.services.pipeline import InferenceBusyError
 
 bp = Blueprint("segment", __name__, url_prefix="/api")
 
@@ -42,6 +43,12 @@ def segment_image(image_id: str):
             
             segments = pipeline.segment_image(img, progress_callback=progress_callback)
             q.put({"event": "done", "segments": segments})
+        except InferenceBusyError as e:
+            q.put({
+                "event": "error",
+                "code": "model_busy",
+                "message": str(e),
+            })
         except Exception as e:
             q.put({"event": "error", "message": str(e)})
 
@@ -65,7 +72,11 @@ def segment_image(image_id: str):
                     }) + "\n"
                     break
                 elif data["event"] == "error":
-                    yield json.dumps({"event": "error", "message": data["message"]}) + "\n"
+                    yield json.dumps({
+                        "event": "error",
+                        "code": data.get("code"),
+                        "message": data["message"],
+                    }) + "\n"
                     break
                 else:
                     yield json.dumps(data) + "\n"
@@ -105,6 +116,12 @@ def segment_text(image_id: str):
             
             segments = pipeline.segment_text(img, prompt, progress_callback=progress_callback)
             q.put({"event": "done", "segments": segments})
+        except InferenceBusyError as e:
+            q.put({
+                "event": "error",
+                "code": "model_busy",
+                "message": str(e),
+            })
         except Exception as e:
             q.put({"event": "error", "message": str(e)})
 
@@ -122,7 +139,11 @@ def segment_text(image_id: str):
                     }) + "\n"
                     break
                 elif data["event"] == "error":
-                    yield json.dumps({"event": "error", "message": data["message"]}) + "\n"
+                    yield json.dumps({
+                        "event": "error",
+                        "code": data.get("code"),
+                        "message": data["message"],
+                    }) + "\n"
                     break
                 else:
                     yield json.dumps(data) + "\n"

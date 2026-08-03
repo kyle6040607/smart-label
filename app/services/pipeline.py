@@ -8,6 +8,11 @@
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+import logging
+import threading
+import time
+
 import cv2
 import numpy as np
 from typing import Callable
@@ -19,9 +24,18 @@ from app.ml.embedding import build_embedder
 from app.ml.sam import build_segmenter
 from app.models import ImageRecord, LabelExample, Segment
 from app.repository import Repository
-from app.ml.yolo_world import YoloWorldDetector
 from app.services.gemini import GeminiService
 from app.storage import (StorageService, require_configured_storage,)
+
+
+logger = logging.getLogger(__name__)
+
+
+class InferenceBusyError(RuntimeError):
+    """同一個 instance 的推論槽等待逾時。"""
+
+
+ProgressCallback = Callable[[dict], None]
 
 
 class Pipeline:
@@ -36,23 +50,169 @@ class Pipeline:
         self.storage = require_configured_storage(config, storage,)
         self.yolo_detector = None
         self.gemini_service = GeminiService(config.gemini_api_key)
-        self.segmenter = build_segmenter(
-            config.use_real_sam,
-            max_masks=config.sam_max_masks,
-            min_area_ratio=config.sam_min_area_ratio,
-            flood_tol=config.sam_flood_tol,
-            checkpoint=config.sam_checkpoint,
-            model_type=config.sam_model_type,
-            points_per_side=config.sam_points_per_side,
-            min_mask_region_area=config.sam_min_mask_region_area,
-        )
-        self.embedder = build_embedder(config.use_real_embedding)
+        self._segmenter = None
+        self._embedder = None
+        self._model_init_lock = threading.Lock()
+        self._inference_lock = threading.Lock()
         # 每位使用者各自擁有分類器，避免範例、類別與預測互相污染。
         # classifier 保留為 owner_id="" 的相容別名，供舊資料與既有測試使用。
         self.classifiers: dict[str, FewShotClassifier] = {}
         self.classifier = self._new_classifier()
         self.classifiers[""] = self.classifier
         self.refit()
+
+    @staticmethod
+    def _emit_progress(
+        callback: ProgressCallback | None,
+        *,
+        stage: str,
+        message: str,
+        progress: int,
+    ) -> None:
+        if callback is not None:
+            callback({
+                "event": "progress",
+                "stage": stage,
+                "message": message,
+                "progress": progress,
+            })
+
+    @contextmanager
+    def _inference_slot(self, callback: ProgressCallback | None = None):
+        if self._inference_lock.locked():
+            self._emit_progress(
+                callback,
+                stage="waiting_for_inference",
+                message="前方有其他推論，正在等待…",
+                progress=1,
+            )
+
+        acquired = self._inference_lock.acquire(
+            timeout=self.config.inference_lock_timeout_seconds
+        )
+        if not acquired:
+            raise InferenceBusyError(
+                "model_busy：模型目前忙碌，請稍後再試"
+            )
+        try:
+            yield
+        finally:
+            self._inference_lock.release()
+
+    def _get_or_load_segmenter(
+        self,
+        callback: ProgressCallback | None = None,
+    ):
+        if self._segmenter is not None:
+            return self._segmenter
+
+        with self._model_init_lock:
+            if self._segmenter is not None:
+                return self._segmenter
+
+            self._emit_progress(
+                callback,
+                stage="loading_model",
+                message="模型正在喚醒並載入 MobileSAM 權重…",
+                progress=2,
+            )
+            started = time.perf_counter()
+            logger.info("model_load_started model=mobile_sam")
+            try:
+                segmenter = build_segmenter(
+                    self.config.use_real_sam,
+                    max_masks=self.config.sam_max_masks,
+                    min_area_ratio=self.config.sam_min_area_ratio,
+                    flood_tol=self.config.sam_flood_tol,
+                    checkpoint=self.config.sam_checkpoint,
+                    model_type=self.config.sam_model_type,
+                    points_per_side=self.config.sam_points_per_side,
+                    min_mask_region_area=self.config.sam_min_mask_region_area,
+                )
+            except Exception:
+                logger.exception("model_load_failed model=mobile_sam")
+                raise
+
+            self._segmenter = segmenter
+            duration_ms = round((time.perf_counter() - started) * 1000)
+            logger.info(
+                "model_load_completed model=mobile_sam duration_ms=%s",
+                duration_ms,
+            )
+            self._emit_progress(
+                callback,
+                stage="model_ready",
+                message="MobileSAM 載入完成，開始分割…",
+                progress=5,
+            )
+            return self._segmenter
+
+    def _get_or_load_embedder(self):
+        if self._embedder is not None:
+            return self._embedder
+
+        with self._model_init_lock:
+            if self._embedder is None:
+                started = time.perf_counter()
+                logger.info("model_load_started model=embedder")
+                try:
+                    embedder = build_embedder(
+                        self.config.use_real_embedding
+                    )
+                except Exception:
+                    logger.exception("model_load_failed model=embedder")
+                    raise
+                self._embedder = embedder
+                logger.info(
+                    "model_load_completed model=embedder duration_ms=%s",
+                    round((time.perf_counter() - started) * 1000),
+                )
+        return self._embedder
+
+    def _get_or_load_yolo(self, callback: ProgressCallback | None = None):
+        if self.yolo_detector is not None:
+            return self.yolo_detector
+
+        with self._model_init_lock:
+            if self.yolo_detector is not None:
+                return self.yolo_detector
+
+            self._emit_progress(
+                callback,
+                stage="loading_yolo",
+                message="正在載入 YOLO-World 模型…",
+                progress=12,
+            )
+            started = time.perf_counter()
+            logger.info("model_load_started model=yolo_world")
+            try:
+                from app.ml.yolo_world import YoloWorldDetector
+
+                model_path = str(
+                    self.config.base_dir
+                    / "models"
+                    / "yolov8x-worldv2.pt"
+                )
+                detector = YoloWorldDetector(model_path)
+            except Exception:
+                logger.exception("model_load_failed model=yolo_world")
+                raise
+            self.yolo_detector = detector
+            logger.info(
+                "model_load_completed model=yolo_world duration_ms=%s",
+                round((time.perf_counter() - started) * 1000),
+            )
+            return self.yolo_detector
+
+    @property
+    def segmenter(self):
+        """相容既有呼叫；真正模型在第一次使用時才建立。"""
+        return self._get_or_load_segmenter()
+
+    @property
+    def embedder(self):
+        """相容既有測試與呼叫；DINO/Mock embedder 延後建立。"""
+        return self._get_or_load_embedder()
 
     def _new_classifier(self) -> FewShotClassifier:
         return FewShotClassifier(
@@ -117,11 +277,25 @@ class Pipeline:
 
     # ---------- 自動分割整張圖（提案 demo 第 1 步：自動分割）----------
     def segment_image(self, image: ImageRecord, progress_callback: Callable[[dict], None] | None = None) -> list[Segment]:
+        with self._inference_slot(progress_callback):
+            segmenter = self._get_or_load_segmenter(progress_callback)
+            return self._segment_image_locked(
+                image,
+                segmenter,
+                progress_callback,
+            )
+
+    def _segment_image_locked(
+        self,
+        image: ImageRecord,
+        segmenter,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[Segment]:
         if progress_callback:
             progress_callback({"event": "progress", "stage": "segmenting", "progress": 10, "message": "正在執行影像自動切割偵測..."})
 
         img = self._read_rgb(image.path)
-        masks = self.segmenter.segment(img)
+        masks = segmenter.segment(img)
 
         # 取得此圖片目前資料庫中已有的所有片段
         existing_segs = self.repo.list_segments(image.id)
@@ -167,13 +341,19 @@ class Pipeline:
 
     # ---------- 互動式：使用者點一下切一塊 ----------
     def segment_point(self, image: ImageRecord, point: tuple[int, int]) -> Segment:
-        img = self._read_rgb(image.path)
-        md = self.segmenter.segment_at(img, point)
-        seg = Segment(image_id=image.id, bbox=tuple(md["bbox"]), area=md["area"])
-        seg.mask_path = self._save_mask(image.id, seg.id, md["mask"])
-        self._classify_segment(img, seg, md["mask"])
-        self.repo.add_segment(seg)
-        return seg
+        with self._inference_slot():
+            segmenter = self._get_or_load_segmenter()
+            img = self._read_rgb(image.path)
+            md = segmenter.segment_at(img, point)
+            seg = Segment(
+                image_id=image.id,
+                bbox=tuple(md["bbox"]),
+                area=md["area"],
+            )
+            seg.mask_path = self._save_mask(image.id, seg.id, md["mask"])
+            self._classify_segment(img, seg, md["mask"])
+            self.repo.add_segment(seg)
+            return seg
 
     # ---------- 自然語言：用文字找物件並切出遮罩----------
     def segment_text(
@@ -192,6 +372,25 @@ class Pipeline:
             raise ValueError("prompt 不可為空")
         if len(prompt) > 200:
             raise ValueError("prompt 不可超過 200 個字元")
+
+        with self._inference_slot(progress_callback):
+            segmenter = self._get_or_load_segmenter(progress_callback)
+            return self._segment_text_locked(
+                image,
+                prompt,
+                segmenter,
+                parsed_classes,
+                progress_callback,
+            )
+
+    def _segment_text_locked(
+        self,
+        image: ImageRecord,
+        prompt: str,
+        segmenter,
+        parsed_classes: list[str] | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[Segment]:
 
         if progress_callback:
             progress_callback({
@@ -269,22 +468,16 @@ class Pipeline:
 
         print(f"🚀 [Real AI Engine] 正在對圖片使用真實 YOLO-World + MobileSAM 進行 Prompt '{parsed_classes}' 標註分析...")
         # 動態載入 YOLO-World
-        if self.yolo_detector is None:
-            model_path = str(
-                self.config.base_dir
-                / "models"
-                / "yolov8x-worldv2.pt"
-            )
-            self.yolo_detector = YoloWorldDetector(model_path)
+        yolo_detector = self._get_or_load_yolo(progress_callback)
 
         # 先找出所有類別的 bounding boxes，方便計算整體進度
         detections = []
 
         for cls_name in parsed_classes:
-            boxes = self.yolo_detector.predict_boxes(
+            boxes = yolo_detector.predict_boxes(
                 img,
                 cls_name,
-                device=self.segmenter.device,
+                device=segmenter.device,
                 conf=self.config.yolo_world_confidence,
                 imgsz=self.config.yolo_imgsz,
                 include_confidence=True,
@@ -314,7 +507,7 @@ class Pipeline:
                 })
 
             try:
-                md = self.segmenter.segment_by_box(img, bbox)
+                md = segmenter.segment_by_box(img, bbox)
 
                 seg = Segment(
                     image_id=image.id,
@@ -365,6 +558,14 @@ class Pipeline:
 
         用於標種子範例或修正 mock/SAM 切歪的區塊——人決定邊界，最準。
         """
+        with self._inference_slot():
+            return self._segment_polygon_locked(image, points)
+
+    def _segment_polygon_locked(
+        self,
+        image: ImageRecord,
+        points: list[tuple[int, int]],
+    ) -> Segment:
         img = self._read_rgb(image.path)
         h, w = img.shape[:2]
         mask = np.zeros((h, w), np.uint8)
@@ -384,7 +585,7 @@ class Pipeline:
 
     # ---------- 對單一片段做分類 + 信心判斷 ----------
     def _classify_segment(self, img: np.ndarray, seg: Segment, mask: np.ndarray) -> None:
-        feat = self.embedder.encode(img, mask)
+        feat = self._get_or_load_embedder().encode(img, mask)
         owner_id, project_id = self._owner_and_project_for_segment(seg)
         classifier = self._classifier_for(owner_id, project_id)
         if classifier.ready:
@@ -399,6 +600,14 @@ class Pipeline:
 
     # ---------- 把某片段存成 few-shot 種子範例（提案第 3 頁第 1 步）----------
     def add_example_from_segment(self, seg: Segment, label: str) -> LabelExample:
+        with self._inference_slot():
+            return self._add_example_from_segment_locked(seg, label)
+
+    def _add_example_from_segment_locked(
+        self,
+        seg: Segment,
+        label: str,
+    ) -> LabelExample:
         image = self.repo.get_image(seg.image_id)
         if image is None:
             raise ValueError("找不到片段所屬圖片")
@@ -406,7 +615,7 @@ class Pipeline:
         project_id = image.project_id
         img = self._read_rgb(image.path)
         mask = self._read_mask(seg.mask_path)
-        feat = self.embedder.encode(img, mask)
+        feat = self._get_or_load_embedder().encode(img, mask)
 
         # 避免重複範例：刪除來自同一個 seg.id 的歷史範例
         existing = [
@@ -433,7 +642,7 @@ class Pipeline:
 
         # 主動學習迴圈：回訓 + 重新預測未審片段
         self.refit(owner_id, project_id)
-        self.reclassify_pending(owner_id, project_id)
+        self._reclassify_pending_locked(owner_id, project_id)
         return ex
 
     def unreview_segment(self, seg: Segment) -> None:
@@ -461,16 +670,17 @@ class Pipeline:
 
     # ---------- 刪掉標錯的類別（連帶回訓）----------
     def delete_label(self, label: str, owner_id: str = "", project_id: str = "") -> int:
-        n, mask_paths = self.repo.delete_label(label, owner_id, project_id)
-        if hasattr(self, "storage") and self.storage:
-            for p in mask_paths:
-                try:
-                    self.storage.delete(p)
-                except Exception:
-                    pass
-        self.refit(owner_id, project_id)
-        self.reclassify_pending(owner_id, project_id)
-        return n
+        with self._inference_slot():
+            n, mask_paths = self.repo.delete_label(label, owner_id, project_id)
+            if hasattr(self, "storage") and self.storage:
+                for p in mask_paths:
+                    try:
+                        self.storage.delete(p)
+                    except Exception:
+                        pass
+            self.refit(owner_id, project_id)
+            self._reclassify_pending_locked(owner_id, project_id)
+            return n
 
     # ---------- 重命名 / 合併類別（連帶回訓）----------
     def rename_label(self, old_label: str, new_label: str, owner_id: str = "", project_id: str = "") -> int:
@@ -478,6 +688,7 @@ class Pipeline:
         self.refit(owner_id, project_id)
         self.reclassify_pending(owner_id, project_id)
         return n
+
 
     # ---------- 重建分類器 ----------
     def refit(self, owner_id: str | None = None, project_id: str | None = None) -> None:
@@ -506,6 +717,14 @@ class Pipeline:
 
     # ---------- 回訓後重新預測尚未人工審核的片段 ----------
     def reclassify_pending(self, owner_id: str | None = None, project_id: str | None = None) -> None:
+        with self._inference_slot():
+            self._reclassify_pending_locked(owner_id, project_id)
+
+    def _reclassify_pending_locked(
+        self,
+        owner_id: str | None = None,
+        project_id: str | None = None,
+    ) -> None:
         cache: dict[str, np.ndarray] = {}
         for seg in self.repo.list_segments():
             if seg.reviewed:

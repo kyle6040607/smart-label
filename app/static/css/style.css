@@ -293,14 +293,19 @@ button.on {
   display: block;
   transition: transform 0.2s ease, border-color 0.2s ease;
 }
-
-.thumb img:hover {
-  transform: scale(1.03);
+.thumb img:hover { transform: scale(1.03); }
+.thumb img.active { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.thumb img[data-load-state="loading"] {
+  background: linear-gradient(110deg, var(--panel) 30%, var(--border) 45%, var(--panel) 60%);
+  background-size: 200% 100%;
+  animation: thumb-loading 1.2s linear infinite;
 }
-
-.thumb img.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
+.thumb img.image-load-failed {
+  background: var(--panel);
+  border-color: var(--danger);
+}
+@keyframes thumb-loading {
+  to { background-position-x: -200%; }
 }
 
 .thumb-del {

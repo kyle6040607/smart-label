@@ -109,8 +109,27 @@ class AnnotationTask:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
+    @property
+    def effective_project_id(self) -> str:
+        """若 project_id 欄位未持久化至舊 SQL Schema，自動從 prompt 或 best_model_path 解析。"""
+        if self.project_id:
+            return self.project_id
+        if self.prompt and self.prompt.startswith("[project:"):
+            try:
+                return self.prompt.split("]")[0].replace("[project:", "")
+            except Exception:
+                pass
+        if "projects/" in self.best_model_path:
+            try:
+                return self.best_model_path.split("projects/")[1].split("/")[0]
+            except Exception:
+                pass
+        return ""
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["project_id"] = self.effective_project_id
+        return d
 
 
 @dataclass(frozen=True)
