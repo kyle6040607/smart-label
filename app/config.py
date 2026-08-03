@@ -18,6 +18,16 @@ DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 MASK_DIR = DATA_DIR / "masks"
 DB_FILE = DATA_DIR / "store.json"
+MODELS_DIR = BASE_DIR / "models"
+MODELS_DIR.mkdir(exist_ok=True)
+
+# 集中設定 Ultralytics 下載權重目錄至 models/
+try:
+    from ultralytics import settings
+    settings.update({"weights_dir": str(MODELS_DIR.resolve())})
+except Exception:
+    pass
+
 
 
 def _env_bool(name: str, default: str = "0") -> bool:

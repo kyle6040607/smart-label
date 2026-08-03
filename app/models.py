@@ -56,6 +56,7 @@ class AnnotationTask:
 
     # 任務輸入
     user_id: str = ""
+    project_id: str = ""
     line_user_id: str = ""   # LIFF 驗證取得的 LINE 使用者 ID
     prompt: str = ""
     image_ids: list[str] = field(default_factory=list)

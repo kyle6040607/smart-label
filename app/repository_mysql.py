@@ -185,6 +185,7 @@ def _row_to_task(
     return AnnotationTask(
         id=row["id"],
         user_id=row["user_id"],
+        project_id=row.get("project_id", ""),
         line_user_id=row["line_user_id"],
         prompt=row["prompt"],
         image_ids=json.loads(row["image_ids"]),
@@ -294,6 +295,17 @@ class MySQLRepository:
                 )
                 cur.execute(
                     "CREATE INDEX idx_examples_project_id ON examples (project_id)"
+                )
+
+            cur.execute("SHOW COLUMNS FROM annotation_tasks LIKE 'project_id'")
+            if cur.fetchone() is None:
+                cur.execute(
+                    "ALTER TABLE annotation_tasks "
+                    "ADD COLUMN project_id VARCHAR(32) NOT NULL DEFAULT '' "
+                    "AFTER user_id"
+                )
+                cur.execute(
+                    "CREATE INDEX idx_annotation_tasks_project_id ON annotation_tasks (project_id)"
                 )
             # 舊任務補上已處理圖片欄位
             cur.execute(
@@ -553,6 +565,34 @@ class MySQLRepository:
                 cur.execute("SELECT * FROM segments")
             else:
                 cur.execute("SELECT * FROM segments WHERE image_id=%s", (image_id,))
+            rows = cur.fetchall()
+        return [_row_to_segment(r) for r in rows]
+
+    def list_labeled_segments_by_project(
+        self,
+        owner_id: str,
+        project_id: str | None = None,
+    ) -> list[Segment]:
+        """撈出特定使用者與專案下已標註 (final_label IS NOT NULL) 的片段。"""
+        with self._tx() as cur:
+            query = """
+                SELECT s.* 
+                FROM segments s
+                JOIN images i ON s.image_id = i.id
+                WHERE (
+                    (s.human_label IS NOT NULL AND s.human_label != '')
+                    OR (s.predicted_label IS NOT NULL AND s.predicted_label != '')
+                )
+            """
+            params = []
+            if owner_id:
+                query += " AND i.owner_id = %s"
+                params.append(owner_id)
+            if project_id:
+                query += " AND i.project_id = %s"
+                params.append(project_id)
+
+            cur.execute(query, tuple(params))
             rows = cur.fetchall()
         return [_row_to_segment(r) for r in rows]
 

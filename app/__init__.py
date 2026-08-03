@@ -28,6 +28,24 @@ def _seed_default_user(repo: Repository, cfg: Config) -> None:
     )
 
 
+def _cleanup_orphaned_tasks(repo: Repository) -> None:
+    """伺服器重啟時，自動將先前未完成的孤立任務 (processing/pending) 標記為 failed，避免前端卡死。"""
+    try:
+        if hasattr(repo, "tasks"):
+            tasks = list(repo.tasks.values())
+        elif hasattr(repo, "list_tasks_by_user"):
+            tasks = repo.list_tasks_by_user("")
+        else:
+            tasks = []
+        for task in tasks:
+            if task.status in ("processing", "pending"):
+                task.status = "failed"
+                task.error_message = "伺服器重新啟動，舊任務已自動中斷，請重新發起訓練"
+                repo.update_task(task)
+    except Exception:
+        pass
+
+
 def create_app(config: Config | None = None) -> Flask:
     cfg = config or default_config
     cfg.ensure_dirs()
@@ -61,6 +79,7 @@ def create_app(config: Config | None = None) -> Flask:
         app.pipeline.config.yolo_imgsz = int(saved_params["yolo_imgsz"])
 
     _seed_default_user(app.repo, cfg)
+    _cleanup_orphaned_tasks(app.repo)
 
     from app.routes.auth import bp as auth_bp, get_authenticated_user, login_required
     from app.routes.projects import bp as projects_bp
@@ -71,6 +90,7 @@ def create_app(config: Config | None = None) -> Flask:
     from app.routes.export import bp as export_bp
     from app.routes.line_bot import bp as linebot_bp
     from app.routes.liff import bp as liff_bp
+    from app.routes.training import bp as training_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(projects_bp)
@@ -81,6 +101,7 @@ def create_app(config: Config | None = None) -> Flask:
     app.register_blueprint(export_bp)
     app.register_blueprint(linebot_bp)
     app.register_blueprint(liff_bp)
+    app.register_blueprint(training_bp)
 
     @app.before_request
     def require_api_login():

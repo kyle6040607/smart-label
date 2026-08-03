@@ -2709,6 +2709,9 @@ function updateCharts(stats) {
     });
   }
   updateCenterText("reviewProgressChart", progressPercentText, "var(--accent)");
+  if (state.currentProjectId) {
+    checkTrainingStatus(state.currentProjectId);
+  }
 }
 
 const switchWrapper = document.querySelector(".mode-switch-wrapper");
@@ -3065,6 +3068,147 @@ if (batchTextBtn) {
       setSegmentationLoading(false);
       batchTextBtn.disabled = false;
       batchTextBtn.textContent = "⚡ 批次多圖標註";
+    }
+  };
+}
+
+// ==========================================
+// 🤖 YOLOv26x-seg 線上訓練與狀態查詢 (Training UI & Polling)
+// ==========================================
+let trainingPollTimer = null;
+
+async function checkTrainingStatus(projectId) {
+  if (!projectId) return;
+
+  const btn = $("startTrainingBtn");
+  const badge = $("trainingStatusBadge");
+  const text = $("trainingStatusText");
+  const downloadWrap = $("trainingModelDownload");
+  const downloadLink = $("downloadModelLink");
+
+  try {
+    const res = await fetch(`/api/projects/${projectId}/train/status`);
+    if (!res.ok) return;
+
+    const data = await res.json();
+    if (!data.has_training) {
+      if (badge) {
+        badge.style.background = "#9ca3af";
+        badge.style.color = "#fff";
+        badge.textContent = "⚪ 尚未訓練";
+      }
+      if (text) text.textContent = "專案尚未進行訓練，標註完成後可點擊上方按鈕開始訓練。";
+      if (downloadWrap) downloadWrap.style.display = "none";
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🚀 開始訓練 YOLOv26x-seg";
+      }
+      stopTrainingPolling();
+      return;
+    }
+
+    const status = data.status;
+    if (status === "pending" || status === "processing") {
+      if (badge) {
+        badge.style.background = "#3b82f6";
+        badge.style.color = "#fff";
+        badge.textContent = status === "pending" ? "⏳ 排隊等待中..." : "⏳ 訓練進行中...";
+      }
+      if (text) text.textContent = "正在對專案標註資料訓練 YOLOv26x-seg 模型，請稍候...";
+      if (downloadWrap) downloadWrap.style.display = "none";
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "⏳ 訓練處理中...";
+      }
+      startTrainingPolling(projectId);
+    } else if (status === "completed") {
+      if (badge) {
+        badge.style.background = "#10b981";
+        badge.style.color = "#fff";
+        badge.textContent = "✅ 訓練完成";
+      }
+      const rawPath = data.best_model_path || "";
+      const filename = rawPath.split("/").pop() || "best_model.pt";
+      if (text) text.textContent = `最佳模型：${filename}`;
+      if (downloadWrap && downloadLink) {
+        downloadWrap.style.display = "block";
+        downloadLink.href = `/api/projects/${projectId}/train/download`;
+        downloadLink.download = filename;
+      }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🚀 重新訓練 YOLOv26x-seg";
+      }
+      stopTrainingPolling();
+    } else if (status === "failed") {
+      if (badge) {
+        badge.style.background = "#ef4444";
+        badge.style.color = "#fff";
+        badge.textContent = "❌ 訓練失敗";
+      }
+      if (text) text.textContent = `錯誤：${data.error_message || "未知訓練錯誤"}`;
+      if (downloadWrap) downloadWrap.style.display = "none";
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🚀 重新訓練 YOLOv26x-seg";
+      }
+      stopTrainingPolling();
+    }
+  } catch (err) {
+    console.error("查詢訓練狀態異常:", err);
+  }
+}
+
+function startTrainingPolling(projectId) {
+  if (trainingPollTimer) return;
+  trainingPollTimer = setInterval(() => {
+    checkTrainingStatus(projectId);
+  }, 4000);
+}
+
+function stopTrainingPolling() {
+  if (trainingPollTimer) {
+    clearInterval(trainingPollTimer);
+    trainingPollTimer = null;
+  }
+}
+
+const trainBtn = $("startTrainingBtn");
+if (trainBtn) {
+  trainBtn.onclick = async () => {
+    if (!state.currentProjectId) {
+      alert("請先選擇或建立專案！");
+      return;
+    }
+    if (!confirm("確定要對此專案已標註的照片發起 YOLOv26x-seg 模型訓練嗎？")) {
+      return;
+    }
+
+    trainBtn.disabled = true;
+    trainBtn.textContent = "⏳ 正在啟動訓練...";
+
+    try {
+      const res = await fetch(`/api/projects/${state.currentProjectId}/train`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ epochs: 5, imgsz: 640 }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert("啟動訓練失敗：" + (data.error || "未知錯誤"));
+        trainBtn.disabled = false;
+        trainBtn.textContent = "🚀 開始訓練 YOLOv26x-seg";
+        return;
+      }
+
+      alert("🎉 訓練任務已成功發起！正在背景執行訓練...");
+      checkTrainingStatus(state.currentProjectId);
+    } catch (err) {
+      console.error("觸發訓練失敗:", err);
+      alert("發起訓練失敗：" + err.message);
+      trainBtn.disabled = false;
+      trainBtn.textContent = "🚀 開始訓練 YOLOv26x-seg";
     }
   };
 }
