@@ -209,7 +209,7 @@ def test_labels_examples_and_delete_are_isolated_by_user(app):
     assert deleted.status_code == 200
     assert repo.labels(owner.id) == []
     assert repo.labels(other.id) == ["dog"]
-    assert repo.get_segment(owner_segment.id).human_label is None
+    assert repo.get_segment(owner_segment.id) is None
     assert repo.get_segment(other_segment.id).human_label == "dog"
 
 

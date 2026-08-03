@@ -7,8 +7,29 @@ import pytest
 
 from app.config import Config
 from app.services.pipeline import Pipeline
-from app.models import ImageRecord
+from app.models import ImageRecord, Segment, LabelExample
 from app.repository import Repository
+
+
+def test_rename_and_combine_labels(tmp_path):
+    pipe, repo, cfg = _pipeline(tmp_path)
+    path = _make_image(cfg.upload_dir, "rename.png", (100, 100, 100))
+    image = repo.add_image(ImageRecord(filename="rename.png", path=path, width=120, height=120))
+    seg1 = repo.add_segment(Segment(image_id=image.id, human_label="cat", reviewed=True))
+    seg2 = repo.add_segment(Segment(image_id=image.id, human_label="dog", reviewed=True))
+    repo.add_example(LabelExample(label="cat", feature=[1.0, 0.0], source_segment_id=seg1.id))
+    repo.add_example(LabelExample(label="dog", feature=[0.0, 1.0], source_segment_id=seg2.id))
+    pipe.refit()
+
+    # 重命名 cat -> kitten
+    pipe.rename_label("cat", "kitten")
+    assert repo.labels() == ["dog", "kitten"]
+    assert repo.get_segment(seg1.id).human_label == "kitten"
+
+    # 合併 dog -> kitten
+    pipe.rename_label("dog", "kitten")
+    assert repo.labels() == ["kitten"]
+    assert repo.get_segment(seg2.id).human_label == "kitten"
 
 
 def _make_image(tmp_path, name, color):
@@ -63,26 +84,19 @@ def test_active_learning_loop(tmp_path):
     assert stats["num_labels"] == 2
     assert 0.0 <= stats["auto_ratio"] <= 1.0
 
-    # 刪掉建錯的類別：範例消失、用它標的片段退回送審
+    # 刪掉建錯的類別：範例消失、用它標的片段連帶被刪除
     assert rseg.human_label == "red" and rseg.reviewed
     n = pipe.delete_label("red")
     assert n == 1
     assert repo.labels() == ["blue"]
+    # 該類別的片段已徹底刪除
+    assert repo.get_segment(rseg.id) is None
     # 只剩一個類別仍可運作（單類別走相似度信心）
     assert pipe.classifier.ready
-    again = repo.get_segment(rseg.id)
-    assert again.human_label is None and not again.reviewed
-    # 重新預測後不能殘留刪掉的類別；信心是相似度分數，送審與否跟著門檻走
-    # （真實特徵下紅藍純色塊的相似度不一定低，不賭絕對數值）
-    assert set(again.probs) == {"blue"}
-    assert 0.0 <= again.confidence <= 1.0
-    assert again.needs_review == (again.confidence < cfg.confidence_threshold)
 
-    # 範例刪光 → 分類器才真正失效，預測要被清空
+    # 範例刪光 → 分類器才真正失效
     pipe.delete_label("blue")
     assert not pipe.classifier.ready
-    empty = repo.get_segment(rseg.id)
-    assert empty.predicted_label is None and empty.probs == {} and empty.needs_review
     # 刪不存在的類別 → 0
     assert pipe.delete_label("nope") == 0
 

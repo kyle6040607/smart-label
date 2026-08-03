@@ -13,8 +13,342 @@ const state = {
   imgBatchMode: false,
   segBatchMode: false,
   autoSegCompleted: false,
+  undoStack: [],
+  redoStack: [],
+  tagColors: {},
 };
 const $ = (id) => document.getElementById(id);
+
+// ---------- 類別色彩管理機制 (Tag Color Palette Manager) ----------
+const DEFAULT_PALETTE = [
+  "#4F9CFF", // Soft Blue
+  "#36D399", // Emerald Green
+  "#FFD166", // Amber Yellow
+  "#A78BFA", // Violet Purple
+  "#FF885B", // Coral Orange
+  "#F472B6", // Hot Pink
+  "#14B8A6", // Teal
+  "#F59E0B", // Gold
+  "#8B5CF6", // Purple
+  "#3B82F6", // Royal Blue
+  "#EC4899", // Magenta
+  "#84CC16", // Lime Green
+  "#06B6D4", // Cyan
+  "#E11D48", // Crimson
+  "#64748B"  // Slate Gray
+];
+
+function loadTagColors() {
+  try {
+    const saved = localStorage.getItem("smart_label_tag_colors");
+    return saved ? JSON.parse(saved) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+state.tagColors = loadTagColors();
+
+function saveTagColors() {
+  try {
+    localStorage.setItem("smart_label_tag_colors", JSON.stringify(state.tagColors));
+  } catch (e) { }
+}
+
+function getTagColor(label) {
+  if (!label) return "#36d399";
+  if (state.tagColors && state.tagColors[label]) {
+    return state.tagColors[label];
+  }
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) {
+    hash = label.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const idx = Math.abs(hash) % DEFAULT_PALETTE.length;
+  return DEFAULT_PALETTE[idx];
+}
+
+function setTagColor(label, color) {
+  if (!state.tagColors) state.tagColors = {};
+  state.tagColors[label] = color;
+  saveTagColors();
+}
+
+function updateThumbTagDots(label, newColor) {
+  document.querySelectorAll(".thumb-tag-dot").forEach((dot) => {
+    if (dot.dataset.tag === label) {
+      dot.style.backgroundColor = newColor;
+    }
+  });
+}
+
+function hsvToHex(h, s, v) {
+  s /= 100;
+  v /= 100;
+  let r = 0, g = 0, b = 0;
+  let i = Math.floor((h / 60) % 6);
+  let f = (h / 60) - Math.floor(h / 60);
+  let p = v * (1 - s);
+  let q = v * (1 - f * s);
+  let t = v * (1 - (1 - f) * s);
+  switch (i) {
+    case 0: r = v; g = t; b = p; break;
+    case 1: r = q; g = v; b = p; break;
+    case 2: r = p; g = v; b = t; break;
+    case 3: r = p; g = q; b = v; break;
+    case 4: r = t; g = p; b = v; break;
+    case 5: r = v; g = p; b = q; break;
+  }
+  const toHex = x => Math.round(x * 255).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function hexToHsv(hex) {
+  let c = hex.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  let r = parseInt(c.substring(0, 2), 16) / 255 || 0;
+  let g = parseInt(c.substring(2, 4), 16) / 255 || 0;
+  let b = parseInt(c.substring(4, 6), 16) / 255 || 0;
+
+  let max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0, v = max;
+  let d = max - min;
+  s = max === 0 ? 0 : d / max;
+
+  if (max === min) {
+    h = 0;
+  } else {
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return { h: Math.round(h * 360), s: Math.round(s * 100), v: Math.round(v * 100) };
+}
+
+let activeColorPopover = null;
+
+function closeColorPickerPopover() {
+  if (activeColorPopover) {
+    if (activeColorPopover.parentElement) {
+      activeColorPopover.parentElement.removeChild(activeColorPopover);
+    }
+    activeColorPopover = null;
+  }
+}
+
+function openColorPickerPopover(e, label) {
+  e.stopPropagation();
+  closeColorPickerPopover();
+
+  const popover = document.createElement("div");
+  popover.className = "color-picker-popover";
+
+  const rect = e.target.getBoundingClientRect();
+  popover.style.top = `${Math.min(window.innerHeight - 300, Math.max(10, rect.bottom + 6))}px`;
+  popover.style.left = `${Math.min(window.innerWidth - 250, Math.max(10, rect.left - 80))}px`;
+
+  const currentColor = getTagColor(label);
+  const currentHsv = hexToHsv(currentColor);
+
+  popover.innerHTML = `
+    <div class="color-picker-header">
+      <span>「${label}」標籤色彩</span>
+      <button type="button" class="toast-close" style="font-size:14px;">✕</button>
+    </div>
+    <div class="color-presets-grid">
+      ${DEFAULT_PALETTE.map((c) => `
+        <div class="color-swatch ${c.toLowerCase() === currentColor.toLowerCase() ? "active" : ""}" style="background-color: ${c};" data-color="${c}"></div>
+      `).join("")}
+    </div>
+    <div class="custom-picker-section">
+      <div class="sv-box" id="svBox">
+        <div class="sv-handle" id="svHandle"></div>
+      </div>
+      <div class="hue-bar" id="hueBar">
+        <div class="hue-handle" id="hueHandle"></div>
+      </div>
+      <div class="color-inputs-row">
+        <div class="color-preview-box" id="colorPreviewBox"></div>
+        <div class="hex-input-wrap">
+          <span style="opacity:0.6; font-size:11px; font-weight:600;">HEX</span>
+          <input type="text" id="hexInput" class="hex-input" maxLength="7" value="${currentColor}" />
+        </div>
+      </div>
+    </div>
+  `;
+
+  popover.querySelector(".toast-close").onclick = (evt) => {
+    evt.stopPropagation();
+    closeColorPickerPopover();
+  };
+
+  const svBox = popover.querySelector("#svBox");
+  const svHandle = popover.querySelector("#svHandle");
+  const hueBar = popover.querySelector("#hueBar");
+  const hueHandle = popover.querySelector("#hueHandle");
+  const previewBox = popover.querySelector("#colorPreviewBox");
+  const hexInput = popover.querySelector("#hexInput");
+
+  const applyColor = async (newColor, notify = true) => {
+    setTagColor(label, newColor);
+    updateThumbTagDots(label, newColor);
+    if (state.currentImage && state.lastSegments) {
+      await redraw(state.lastSegments);
+    }
+    await refreshSidebar();
+    if (notify) {
+      showToast(`已更新「${label}」的標籤色彩`, "success");
+    }
+  };
+
+  const updateUIFromHsv = (skipApply = false) => {
+    const hex = hsvToHex(currentHsv.h, currentHsv.s, currentHsv.v);
+    svBox.style.backgroundColor = `hsl(${currentHsv.h}, 100%, 50%)`;
+    svHandle.style.left = `${currentHsv.s}%`;
+    svHandle.style.top = `${100 - currentHsv.v}%`;
+    hueHandle.style.left = `${(currentHsv.h / 360) * 100}%`;
+    previewBox.style.backgroundColor = hex;
+    hexInput.value = hex;
+
+    popover.querySelectorAll(".color-swatch").forEach((s) => {
+      s.classList.toggle("active", s.dataset.color.toLowerCase() === hex.toLowerCase());
+    });
+
+    if (!skipApply) {
+      applyColor(hex, false);
+    }
+  };
+
+  let isDraggingSV = false;
+  let isDraggingHue = false;
+
+  const handleSVMove = (evt) => {
+    const boxRect = svBox.getBoundingClientRect();
+    const x = Math.max(0, Math.min(boxRect.width, evt.clientX - boxRect.left));
+    const y = Math.max(0, Math.min(boxRect.height, evt.clientY - boxRect.top));
+    currentHsv.s = Math.round((x / boxRect.width) * 100);
+    currentHsv.v = Math.round((1 - y / boxRect.height) * 100);
+    updateUIFromHsv();
+  };
+
+  const handleHueMove = (evt) => {
+    const barRect = hueBar.getBoundingClientRect();
+    const x = Math.max(0, Math.min(barRect.width, evt.clientX - barRect.left));
+    currentHsv.h = Math.round((x / barRect.width) * 360);
+    updateUIFromHsv();
+  };
+
+  svBox.addEventListener("mousedown", (evt) => {
+    isDraggingSV = true;
+    handleSVMove(evt);
+    evt.preventDefault();
+  });
+
+  hueBar.addEventListener("mousedown", (evt) => {
+    isDraggingHue = true;
+    handleHueMove(evt);
+    evt.preventDefault();
+  });
+
+  const onGlobalMouseMove = (evt) => {
+    if (isDraggingSV) handleSVMove(evt);
+    else if (isDraggingHue) handleHueMove(evt);
+  };
+
+  const onGlobalMouseUp = () => {
+    if (isDraggingSV || isDraggingHue) {
+      isDraggingSV = false;
+      isDraggingHue = false;
+      applyColor(hsvToHex(currentHsv.h, currentHsv.s, currentHsv.v), true);
+    }
+  };
+
+  window.addEventListener("mousemove", onGlobalMouseMove);
+  window.addEventListener("mouseup", onGlobalMouseUp);
+
+  popover.querySelectorAll(".color-swatch").forEach((swatch) => {
+    swatch.onclick = (evt) => {
+      evt.stopPropagation();
+      const col = swatch.dataset.color;
+      const parsed = hexToHsv(col);
+      currentHsv.h = parsed.h;
+      currentHsv.s = parsed.s;
+      currentHsv.v = parsed.v;
+      updateUIFromHsv(false);
+      applyColor(col, true);
+    };
+  });
+
+  hexInput.oninput = (evt) => {
+    let val = evt.target.value.trim();
+    if (!val.startsWith("#")) val = "#" + val;
+    if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+      const parsed = hexToHsv(val);
+      currentHsv.h = parsed.h;
+      currentHsv.s = parsed.s;
+      currentHsv.v = parsed.v;
+      updateUIFromHsv(false);
+      applyColor(val, false);
+    }
+  };
+
+  updateUIFromHsv(true);
+  document.body.appendChild(popover);
+  activeColorPopover = popover;
+}
+
+document.addEventListener("click", (e) => {
+  if (activeColorPopover && !activeColorPopover.contains(e.target)) {
+    closeColorPickerPopover();
+  }
+});
+
+// ---------- 右下角輕量 Toast 通知機制 ----------
+function showToast(message, type = "info", duration = 3000) {
+  const container = $("toastContainer");
+  if (!container) return;
+
+  const icons = {
+    success: "✓",
+    error: "✕",
+    warning: "⚠️",
+    info: "ℹ️"
+  };
+
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[type] || "ℹ️"}</span>
+    <div class="toast-content">${message}</div>
+    <button type="button" class="toast-close" title="關閉">✕</button>
+  `;
+
+  const closeBtn = toast.querySelector(".toast-close");
+  const dismiss = () => {
+    toast.classList.remove("show");
+    toast.style.transform = "translateY(10px)";
+    toast.style.opacity = "0";
+    setTimeout(() => {
+      if (toast.parentElement) toast.parentElement.removeChild(toast);
+    }, 300);
+  };
+
+  closeBtn.onclick = dismiss;
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      toast.classList.add("show");
+    });
+  });
+
+  if (duration > 0) {
+    setTimeout(dismiss, duration);
+  }
+}
 
 // 原圖快取：縮圖與重繪共用同一份，避免重複下載解碼
 const imageCache = new Map();
@@ -285,11 +619,11 @@ function initDropZone() {
       state.isAborted = true;
       try {
         fetch("/api/images/cancel_upload", { method: "POST" });
-      } catch (err) {}
+      } catch (err) { }
       if (state.currentXhr) {
         try {
           state.currentXhr.abort();
-        } catch (err) {}
+        } catch (err) { }
         state.currentXhr = null;
       }
       await loadThumbs();
@@ -413,7 +747,7 @@ $("uploadBtn").onclick = async (e) => {
                 expandGallery();
               }
             }
-          } catch (err) {}
+          } catch (err) { }
         }
       };
 
@@ -435,7 +769,7 @@ $("uploadBtn").onclick = async (e) => {
                   if (data.event === "done" && Array.isArray(data.created)) {
                     createdImages = data.created;
                   }
-                } catch (e) {}
+                } catch (e) { }
               }
             } else {
               createdImages = JSON.parse(text);
@@ -456,7 +790,7 @@ $("uploadBtn").onclick = async (e) => {
           try {
             const json = JSON.parse(xhr.responseText);
             errorMsg = json.error || json.message || xhr.responseText;
-          } catch (e) {}
+          } catch (e) { }
           reject(new Error(errorMsg || `HTTP ${xhr.status}`));
         }
       };
@@ -536,6 +870,9 @@ function createThumbElement(im) {
   el.loading = "lazy";
   el.src = `/api/images/${im.id}/file`;
   el.title = im.filename;
+  if (state.currentImage && state.currentImage.id === im.id) {
+    el.classList.add("active");
+  }
   el.onclick = () => {
     if (state.imgBatchMode) {
       chk.checked = !chk.checked;
@@ -569,6 +906,32 @@ function createThumbElement(im) {
   del.onclick = (e) => { e.stopPropagation(); deleteImage(im); };
 
   wrap.append(chk, el, del);
+
+  // 💡 若照片已有分割紀錄，動態繪製左上角標記徽章與右下角類別顏色圓點
+  const segCount = im.segment_count || 0;
+  if (segCount > 0) {
+    const badge = document.createElement("div");
+    badge.className = "thumb-seg-badge";
+    badge.title = `這張照片已有 ${segCount} 個遮罩片段`;
+    badge.innerHTML = `✓ ${segCount}`;
+    wrap.appendChild(badge);
+
+    const tags = im.segment_tags || [];
+    if (tags.length > 0) {
+      const dotsContainer = document.createElement("div");
+      dotsContainer.className = "thumb-tag-dots";
+      dotsContainer.title = `包含類別：${tags.join("、")}`;
+      tags.forEach((tag) => {
+        const dot = document.createElement("span");
+        dot.className = "thumb-tag-dot";
+        dot.dataset.tag = tag;
+        dot.style.backgroundColor = getTagColor(tag);
+        dotsContainer.appendChild(dot);
+      });
+      wrap.appendChild(dotsContainer);
+    }
+  }
+
   return wrap;
 }
 
@@ -591,15 +954,69 @@ function initGalleryCollapse() {
   });
 }
 
+function getFilteredImages() {
+  if (!state.allImages) return [];
+  const filter = state.imgFilter || "all";
+  if (filter === "all") return state.allImages;
+  if (filter === "unsegmented") {
+    return state.allImages.filter((im) => (im.segment_count || 0) === 0);
+  }
+  if (filter === "segmented") {
+    return state.allImages.filter((im) => (im.segment_count || 0) > 0);
+  }
+  if (filter.startsWith("tag:")) {
+    const tagName = filter.substring(4);
+    return state.allImages.filter((im) => (im.segment_tags || []).includes(tagName));
+  }
+  return state.allImages;
+}
+
+function updateImgFilterOptions() {
+  const sel = $("imgFilterSelect");
+  if (!sel) return;
+
+  const currentValue = sel.value || state.imgFilter || "all";
+  const tagsSet = new Set();
+  (state.allImages || []).forEach((im) => {
+    (im.segment_tags || []).forEach((t) => tagsSet.add(t));
+  });
+
+  let html = `
+    <option value="all">全部照片</option>
+    <option value="unsegmented">未標記/未分割 (0 遮罩)</option>
+    <option value="segmented">已標記/已有遮罩 (≥1 遮罩)</option>
+  `;
+
+  if (tagsSet.size > 0) {
+    html += `<optgroup label="依標籤類別篩選">`;
+    Array.from(tagsSet).sort().forEach((tag) => {
+      html += `<option value="tag:${tag}">類別：${tag}</option>`;
+    });
+    html += `</optgroup>`;
+  }
+
+  sel.innerHTML = html;
+  if (sel.querySelector(`option[value="${currentValue}"]`)) {
+    sel.value = currentValue;
+  } else {
+    sel.value = "all";
+    state.imgFilter = "all";
+  }
+}
+
 function updateGalleryToggleUI(isExpanded) {
   const icon = $("galleryToggleIcon");
   const text = $("galleryToggleText");
+  const filtered = getFilteredImages();
   const totalCount = state.allImages ? state.allImages.length : 0;
+  const filteredCount = filtered.length;
   const wrapper = $("thumbsWrapper");
   const isCurrentlyCollapsed = wrapper ? wrapper.classList.contains("collapsed") : true;
 
+  const countStr = filteredCount === totalCount ? `${totalCount}` : `${filteredCount}/${totalCount}`;
+
   if (icon) icon.textContent = isCurrentlyCollapsed ? "▼" : "▲";
-  if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${totalCount})` : `折疊照片庫 (${totalCount})`;
+  if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${countStr})` : `折疊照片庫 (${countStr})`;
 }
 
 function expandGallery() {
@@ -612,8 +1029,9 @@ function expandGallery() {
 initGalleryCollapse();
 
 function renderMoreThumbs() {
-  if (!state.allImages || state.renderedImageCount >= state.allImages.length) return;
-  const nextSlice = state.allImages.slice(state.renderedImageCount, state.renderedImageCount + GALLERY_PAGE_SIZE);
+  const images = getFilteredImages();
+  if (!images || state.renderedImageCount >= images.length) return;
+  const nextSlice = images.slice(state.renderedImageCount, state.renderedImageCount + GALLERY_PAGE_SIZE);
   state.renderedImageCount += nextSlice.length;
 
   const box = $("thumbs");
@@ -645,6 +1063,8 @@ function appendThumbs(newImages) {
     }
   });
 
+  updateImgFilterOptions();
+
   const box = $("thumbs");
   if (!box) return;
 
@@ -670,6 +1090,8 @@ async function loadThumbs() {
   state.allImages = Array.isArray(imgs) ? imgs : [];
   state.renderedImageCount = 0;
 
+  updateImgFilterOptions();
+
   const box = $("thumbs");
   if (box) {
     box.innerHTML = "";
@@ -678,12 +1100,13 @@ async function loadThumbs() {
 
   renderMoreThumbs();
   updateGalleryToggleUI();
+  updateImgNavUI();
 }
 
 async function deleteImage(im) {
   if (!confirm(`確定刪除「${im.filename}」？連同它的遮罩會一起清掉。`)) return;
   const res = await fetch(`/api/images/${im.id}`, { method: "DELETE" });
-  if (!res.ok) return alert("刪除失敗：" + (await res.text()));
+  if (!res.ok) return showToast("刪除失敗：" + (await res.text()), "error");
   // 若刪的是目前選中的圖，清空畫布
   if (state.currentImage && state.currentImage.id === im.id) {
     state.currentImage = null;
@@ -692,7 +1115,167 @@ async function deleteImage(im) {
   }
   await loadThumbs();
   await refreshSidebar();
+  updateImgNavUI();
+  showToast("已刪除照片", "info");
 }
+
+// ---------- 照片切換導航 (上一張 / 下一張 + 鍵盤捷徑) ----------
+function updateImgNavUI() {
+  const prevBtn = $("prevImgBtn");
+  const nextBtn = $("nextImgBtn");
+  const counter = $("imgNavCounter");
+  if (!prevBtn || !nextBtn || !counter) return;
+
+  const total = state.allImages ? state.allImages.length : 0;
+  if (total === 0) {
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    counter.textContent = "0 / 0";
+    return;
+  }
+
+  prevBtn.disabled = total <= 1;
+  nextBtn.disabled = total <= 1;
+
+  const currentIdx = state.currentImage ? state.allImages.findIndex((img) => img.id === state.currentImage.id) : -1;
+  if (currentIdx > -1) {
+    counter.textContent = `${currentIdx + 1} / ${total}`;
+  } else {
+    counter.textContent = `0 / ${total}`;
+  }
+}
+
+function switchPrevImage() {
+  const images = getFilteredImages();
+  if (!images || images.length === 0 || state.segmenting) return;
+  const total = images.length;
+  let currentIdx = state.currentImage ? images.findIndex((img) => img.id === state.currentImage.id) : -1;
+
+  let targetIdx;
+  if (currentIdx === -1) {
+    targetIdx = 0;
+  } else if (currentIdx === 0) {
+    targetIdx = total - 1; // 循環到最後一張
+  } else {
+    targetIdx = currentIdx - 1;
+  }
+
+  const targetImg = images[targetIdx];
+  if (targetImg) {
+    const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${targetImg.id}/file"]`) ||
+      document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
+    selectImage(targetImg, thumbImg);
+  }
+}
+
+function switchNextImage() {
+  const images = getFilteredImages();
+  if (!images || images.length === 0 || state.segmenting) return;
+  const total = images.length;
+  let currentIdx = state.currentImage ? images.findIndex((img) => img.id === state.currentImage.id) : -1;
+
+  let targetIdx;
+  if (currentIdx === -1 || currentIdx >= total - 1) {
+    targetIdx = 0; // 循環到第一張
+  } else {
+    targetIdx = currentIdx + 1;
+  }
+
+  const targetImg = images[targetIdx];
+  if (targetImg) {
+    const thumbImg = document.querySelector(`.thumb img[src*="/api/images/${targetImg.id}/file"]`) ||
+      document.querySelector(`.thumb-chk[data-id="${targetImg.id}"]`)?.nextElementSibling;
+    selectImage(targetImg, thumbImg);
+  }
+}
+
+function pushUndoAction(action) {
+  // 只記錄目前照片的操作
+  if (!state.currentImage || action.imageId !== state.currentImage.id) return;
+  state.undoStack.push(action);
+  updateUndoUI();
+}
+
+function updateUndoUI() {
+  const undoBtn = $("undoBtn");
+  if (undoBtn) undoBtn.disabled = state.undoStack.length === 0;
+}
+
+async function performUndo() {
+  if (state.undoStack.length === 0 || state.segmenting) return;
+  const action = state.undoStack.pop();
+  updateUndoUI();
+
+  try {
+    if (action.type === "REVIEW_SEGMENT") {
+      if (action.prevLabel) {
+        await fetch(`/api/segments/${action.segId}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: action.prevLabel }),
+        });
+      } else {
+        // 原本沒有人工審核標籤，復原即取消審核狀態並刪除範例數量
+        await fetch(`/api/segments/${action.segId}/unreview`, { method: "POST" });
+      }
+      await refreshAfterSegChange();
+    } else if (action.type === "CREATE_SEGMENTS") {
+      // 復原新分割的區塊 (刪除那些 segments)
+      if (Array.isArray(action.segIds) && action.segIds.length > 0) {
+        for (const id of action.segIds) {
+          try {
+            await fetch(`/api/segments/${id}`, { method: "DELETE" });
+          } catch (e) { }
+        }
+      }
+      state.autoSegCompleted = false;
+      updateAutoSegBtn();
+      await refreshAfterSegChange();
+    }
+  } catch (err) {
+    console.error("復原失敗:", err);
+  } finally {
+    updateUndoUI();
+  }
+}
+
+function initImgNavEvents() {
+  const prevBtn = $("prevImgBtn");
+  const nextBtn = $("nextImgBtn");
+  const undoBtn = $("undoBtn");
+
+  if (prevBtn) prevBtn.onclick = () => switchPrevImage();
+  if (nextBtn) nextBtn.onclick = () => switchNextImage();
+  if (undoBtn) undoBtn.onclick = () => performUndo();
+
+  window.addEventListener("keydown", (e) => {
+    // 若正在輸入框打字、彈窗開啟中、或正進行 AI 分割，忽略快捷鍵
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT" || activeEl.isContentEditable)) {
+      return;
+    }
+    const modalOverlay = $("modalOverlay");
+    if (modalOverlay && modalOverlay.classList.contains("active")) {
+      return;
+    }
+
+    // Ctrl+Z (Undo)
+    if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      performUndo();
+      return;
+    }
+
+    if (e.key === "a" || e.key === "A" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      switchPrevImage();
+    } else if (e.key === "d" || e.key === "D" || e.key === "ArrowRight") {
+      e.preventDefault();
+      switchNextImage();
+    }
+  });
+}
+initImgNavEvents();
 
 // ---------- 選圖並畫到 canvas ----------
 function selectImage(im, el, targetSegId = null) {
@@ -700,6 +1283,12 @@ function selectImage(im, el, targetSegId = null) {
   state.currentImage = im;
   document.querySelectorAll(".thumb img").forEach((i) => i.classList.remove("active"));
   if (el) el.classList.add("active");
+
+  updateImgNavUI();
+
+  // 切換圖片時，清空歷史紀錄並停用復原按鈕
+  state.undoStack = [];
+  updateUndoUI();
 
   state.autoSegCompleted = false;
   updateAutoSegBtn(true);
@@ -773,14 +1362,18 @@ $("autoSegBtn").onclick = async () => {
 
 
 
-    await redraw(data.segments);
-    await refreshSidebar();
+    await refreshAfterSegChange();
+
+    if (Array.isArray(data.segments) && data.segments.length > 0) {
+      pushUndoAction({ type: "CREATE_SEGMENTS", segIds: data.segments.map((s) => s.id), imageId });
+    }
 
     state.autoSegCompleted = true;
     updateAutoSegBtn();
+    showToast("整張自動分割完成！", "success");
   } catch (error) {
     console.error(error);
-    alert(error instanceof Error ? error.message : "自動分割失敗");
+    showToast(error instanceof Error ? error.message : "自動分割失敗", "error");
   } finally {
     setSegmentationLoading(false);
   }
@@ -788,9 +1381,10 @@ $("autoSegBtn").onclick = async () => {
 
 // ---------- 自然語言分割 (YOLO-World) ----------
 $("textSegBtn").onclick = async () => {
+  if (!state.currentImage) return showToast("請先從左側照片庫或導航按鈕選取一張照片", "warning");
+  if (state.segmenting) return;
   const promptVal = $("textPromptInput").value.trim();
-  if (!promptVal) return alert("請輸入想搜尋的物件名稱（例如：飛機）");
-  if (!state.currentImage || state.segmenting) return;
+  if (!promptVal) return showToast("請輸入想搜尋的物件名稱（例如：飛機）", "warning");
 
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, `正在搜尋「${promptVal}」並進行分割…`, true);
@@ -815,11 +1409,17 @@ $("textSegBtn").onclick = async () => {
       }
     );
 
-    await redraw(data.segments);
-    await refreshSidebar();
+    await refreshAfterSegChange();
+
+    if (Array.isArray(data.segments) && data.segments.length > 0) {
+      pushUndoAction({ type: "CREATE_SEGMENTS", segIds: data.segments.map((s) => s.id), imageId });
+      showToast(`搜尋「${promptVal}」完成，找到 ${data.segments.length} 個物件`, "success");
+    } else {
+      showToast(`搜尋「${promptVal}」未找到符合物件`, "info");
+    }
   } catch (error) {
     console.error(error);
-    alert(error instanceof Error ? error.message : "文字分割失敗");
+    showToast(error instanceof Error ? error.message : "文字分割失敗", "error");
   } finally {
     setSegmentationLoading(false);
   }
@@ -846,7 +1446,6 @@ $("drawBtn").onclick = () => {
 // ---------- 單點分割（一般模式：點 canvas）----------
 canvas.onclick = async (e) => {
   if (!state.currentImage || state.drawMode || state.segmenting) return;
-  if (state.mode === "layman") return;
   const { x, y } = toImageXY(e);
   const imageId = state.currentImage.id;
   setSegmentationLoading(true, "單點分割中…");
@@ -863,10 +1462,13 @@ canvas.onclick = async (e) => {
     const all = await listRes.json();
     await redraw(all);
     await refreshSidebar();
-    promptLabel(seg);
+
+    pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId });
+    showToast("單點分割完成", "success");
+    await promptLabel(seg, true);
   } catch (error) {
     console.error(error);
-    alert(error instanceof Error ? error.message : "單點分割失敗");
+    showToast(error instanceof Error ? error.message : "單點分割失敗", "error");
   } finally {
     setSegmentationLoading(false);
   }
@@ -907,12 +1509,15 @@ canvas.onmouseup = async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ points }),
   });
-  if (!res.ok) return alert("描邊失敗：" + (await res.text()));
+  if (!res.ok) return showToast("描邊失敗：" + (await res.text()), "error");
   const seg = await res.json();
   const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
   await redraw(all);
   await refreshSidebar();
-  promptLabel(seg);
+
+  pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId: state.currentImage.id });
+  showToast("手動描邊分割完成", "success");
+  await promptLabel(seg, true);
 };
 
 // 行動端觸控事件繪圖支援
@@ -955,14 +1560,18 @@ canvas.addEventListener("touchend", async (e) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ points }),
     });
-    if (!res.ok) return alert("描邊失敗：" + (await res.text()));
+    if (!res.ok) return showToast("描邊失敗：" + (await res.text()), "error");
     const seg = await res.json();
     const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
     await redraw(all);
     await refreshSidebar();
-    promptLabel(seg);
+
+    pushUndoAction({ type: "CREATE_SEGMENTS", segIds: [seg.id], imageId: state.currentImage.id });
+    showToast("手動描邊分割完成", "success");
+    await promptLabel(seg, true);
   } catch (err) {
     console.error(err);
+    showToast("描邊分割失敗", "error");
   } finally {
     setSegmentationLoading(false);
   }
@@ -981,7 +1590,9 @@ async function redraw(segments, highlightId = null) {
   // 💡 步驟 1：先畫所有不規則的 SAM 遮罩（Mask），著色結果按 (segId, color) 快取，hover 重繪只剩 drawImage
   for (const s of segments) {
     const hi = s.id === highlightId;
-    const color = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
+    const label = s.final_label || s.predicted_label;
+    const tagColor = getTagColor(label);
+    const color = hi ? "#ffd166" : (s.needs_review && !s.final_label ? "#ff5470" : tagColor);
     const tinted = getTintedMask(s, color);
 
     if (tinted) {
@@ -1008,40 +1619,90 @@ async function redraw(segments, highlightId = null) {
 
   // 💡 步驟 2：只畫文字標籤（方框已移除）
   for (const s of segments) {
-    if (s.final_label) {
+    const label = s.final_label || s.predicted_label;
+    if (label) {
       const [x, y] = s.bbox;
       const hi = s.id === highlightId;
-      ctx.fillStyle = hi ? "#ffd166" : (s.needs_review ? "#ff5470" : "#36d399");
+      const tagColor = getTagColor(label);
+      ctx.fillStyle = hi ? "#ffd166" : (s.needs_review && !s.final_label ? "#ff5470" : tagColor);
       ctx.font = "14px sans-serif";
-      ctx.fillText(`${s.final_label} ${s.confidence.toFixed(2)}`, x + 2, y + 14);
+      ctx.fillText(`${label} ${s.confidence.toFixed(2)}`, x + 2, y + 14);
     }
   }
 }
 
 // 點完一塊後問使用者類別，存成種子範例
-async function promptLabel(seg) {
+async function promptLabel(seg, isNewSegment = false) {
   const label = prompt("這塊是什麼類別？（留空跳過）");
-  if (!label) return;
+  if (!label) {
+    if (isNewSegment) {
+      await refreshAfterSegChange();
+    }
+    return;
+  }
   await fetch(`/api/segments/${seg.id}/label`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),
   });
-  const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
-  await redraw(all);
-  await refreshSidebar();
+  if (!isNewSegment) {
+    pushUndoAction({
+      type: "REVIEW_SEGMENT",
+      segId: seg.id,
+      prevLabel: seg.final_label || "",
+      predictedLabel: seg.predicted_label || "",
+      newLabel: label,
+      imageId: seg.image_id
+    });
+  }
+  await refreshAfterSegChange();
 }
 
-// 刪掉建錯的類別（連同它的種子範例，並回訓）
+// 刪掉類別（連同它的種子範例與關聯遮罩片段，並回訓）
 async function deleteLabel(name) {
-  if (!confirm(`刪除類別「${name}」？它的種子範例會一起清掉。`)) return;
+  if (!confirm(`確定刪除類別「${name}」？其所有範例與標有此類別的遮罩將會一併刪除。`)) return;
   const res = await fetch(`/api/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
-  if (!res.ok) return alert("刪除失敗：" + (await res.text()));
-  if (state.currentImage) {
-    const all = await (await fetch(`/api/images/${state.currentImage.id}/segments`)).json();
-    await redraw(all);
+  if (!res.ok) return showToast("刪除失敗：" + (await res.text()), "error");
+  await refreshAfterSegChange();
+  showToast(`已刪除類別「${name}」及其所有遮罩`, "info");
+}
+
+// 重新命名或合併類別標籤
+async function renameLabel(name) {
+  const newName = prompt(`請輸入「${name}」的新類別名稱：`, name);
+  if (!newName || !newName.trim() || newName.trim() === name) return;
+  const targetName = newName.trim();
+
+  let res = await fetch("/api/labels/rename", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ old_label: name, new_label: targetName, combine: false }),
+  });
+
+  if (res.status === 409) {
+    if (confirm(`類別「${targetName}」已存在！\n是否要將「${name}」的所有標記與範例合併至「${targetName}」？`)) {
+      res = await fetch("/api/labels/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ old_label: name, new_label: targetName, combine: true }),
+      });
+      if (!res.ok) return showToast("合併類別失敗：" + (await res.text()), "error");
+      await refreshAfterSegChange();
+      showToast(`已成功將類別「${name}」合併至「${targetName}」`, "success");
+      return;
+    } else {
+      return;
+    }
   }
-  await refreshSidebar();
+
+  if (!res.ok) return showToast("重命名失敗：" + (await res.text()), "error");
+  if (state.tagColors && state.tagColors[name]) {
+    state.tagColors[targetName] = state.tagColors[name];
+    delete state.tagColors[name];
+    saveTagColors();
+  }
+  await refreshAfterSegChange();
+  showToast(`已將類別「${name}」重新命名為「${targetName}」`, "success");
 }
 
 // 片段有變動後重畫目前的圖 + 更新側欄
@@ -1051,6 +1712,7 @@ async function refreshAfterSegChange() {
     await redraw(all);
   }
   await refreshSidebar();
+  await loadThumbs();
 }
 
 // ---------- 右側：統計 + 審核佇列 ----------
@@ -1072,13 +1734,66 @@ async function refreshSidebar() {
   if (!labels.length) ll.innerHTML = "<li class='hint'>尚未建立任何類別</li>";
   labels.forEach((name) => {
     const li = document.createElement("li");
-    li.textContent = name;
+    li.style.display = "flex";
+    li.style.alignItems = "center";
+    li.style.justifyContent = "space-between";
+    li.style.gap = "6px";
+
+    const leftGroup = document.createElement("div");
+    leftGroup.style.display = "flex";
+    leftGroup.style.alignItems = "center";
+    leftGroup.style.gap = "8px";
+    leftGroup.style.flex = "1";
+    leftGroup.style.minWidth = "0";
+
+    const colorDot = document.createElement("span");
+    colorDot.className = "tag-color-dot";
+    colorDot.style.width = "14px";
+    colorDot.style.height = "14px";
+    colorDot.style.borderRadius = "50%";
+    colorDot.style.backgroundColor = getTagColor(name);
+    colorDot.style.cursor = "pointer";
+    colorDot.style.flexShrink = "0";
+    colorDot.style.border = "1.5px solid rgba(255, 255, 255, 0.3)";
+    colorDot.style.boxShadow = "0 1px 3px rgba(0,0,0,0.3)";
+    colorDot.style.display = "inline-block";
+    colorDot.title = `點擊更換「${name}」的標籤色彩`;
+    colorDot.onclick = (e) => openColorPickerPopover(e, name);
+
+    const span = document.createElement("span");
+    span.textContent = name;
+    span.style.overflow = "hidden";
+    span.style.textOverflow = "ellipsis";
+    span.style.whiteSpace = "nowrap";
+
+    leftGroup.appendChild(colorDot);
+    leftGroup.appendChild(span);
+    li.appendChild(leftGroup);
+
+    const btnGroup = document.createElement("div");
+    btnGroup.style.display = "flex";
+    btnGroup.style.gap = "4px";
+    btnGroup.style.alignItems = "center";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "btn-secondary";
+    editBtn.style.padding = "1px 5px";
+    editBtn.style.fontSize = "11px";
+    editBtn.textContent = "✏️";
+    editBtn.title = "重命名或合併此類別";
+    editBtn.onclick = () => renameLabel(name);
+
     const del = document.createElement("button");
+    del.type = "button";
     del.className = "label-del";
     del.textContent = "×";
     del.title = "刪除這個類別";
     del.onclick = () => deleteLabel(name);
-    li.appendChild(del);
+
+    btnGroup.appendChild(editBtn);
+    btnGroup.appendChild(del);
+    li.appendChild(btnGroup);
     ll.appendChild(li);
   });
 
@@ -1094,6 +1809,10 @@ async function refreshSidebar() {
     const probs = Object.entries(s.probs)
       .map(([k, v]) => `${k}:${v.toFixed(2)}`)
       .join(" · ") || "（尚無範例可分類）";
+    const pred = (s.predicted_label || "").trim();
+    const placeholderText = pred ? `預設：${pred}` : "正確類別";
+    const confirmTitle = pred ? `按「確認」或 Enter 將直接採納預測標籤：「${pred}」` : "確認標籤";
+
     li.innerHTML = `
       <div class="queue-item">
         <input type="checkbox" class="seg-chk" data-id="${s.id}" />
@@ -1101,9 +1820,9 @@ async function refreshSidebar() {
         <div class="queue-body">
           <div>預測：${s.predicted_label ?? "—"} · 信心 ${s.confidence.toFixed(2)}</div>
           <div class="probs">${probs}</div>
-          <div style="margin-top:6px">
-            <input placeholder="正確類別" data-seg="${s.id}" />
-            <button class="confirm">確認</button>
+          <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+            <input placeholder="${placeholderText}" data-seg="${s.id}" style="flex:1; min-width:80px;" />
+            <button class="confirm" title="${confirmTitle}">確認</button>
             <button class="seg-del" title="刪掉這個切壞的片段">刪除</button>
           </div>
         </div>
@@ -1157,10 +1876,16 @@ async function refreshSidebar() {
     };
     const inputEl = li.querySelector("input[data-seg]");
     const submitReview = async () => {
-      const label = inputEl.value.trim();
-      if (!label) return;
+      let label = inputEl.value.trim();
+      if (!label && pred) {
+        label = pred; // 輸入框留白時，直接採納 AI 預測標籤！
+      }
+      if (!label) {
+        showToast("請輸入類別標籤", "warning");
+        return;
+      }
 
-      //  樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
+      // 樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
       li.style.opacity = "0.3";
       li.style.pointerEvents = "none";
 
@@ -1171,12 +1896,21 @@ async function refreshSidebar() {
           body: JSON.stringify({ label }),
         });
         if (!res.ok) throw new Error("審核失敗");
+        pushUndoAction({
+          type: "REVIEW_SEGMENT",
+          segId: s.id,
+          prevLabel: s.final_label || "",
+          predictedLabel: s.predicted_label || "",
+          newLabel: label,
+          imageId: s.image_id
+        });
         await refreshAfterSegChange();
+        showToast(`標籤審核完成：「${label}」`, "success");
       } catch (err) {
         console.error(err);
         li.style.opacity = "1";
         li.style.pointerEvents = "auto";
-        alert("審核失敗，請重試");
+        showToast("審核失敗，請重試", "error");
       }
     };
     li.querySelector(".confirm").onclick = submitReview;
@@ -1190,14 +1924,15 @@ async function refreshSidebar() {
       try {
         const res = await fetch(`/api/segments/${s.id}`, { method: "DELETE" });
         if (!res.ok) {
-          return alert("刪除失敗：" + (await res.text()));
+          return showToast("刪除失敗：" + (await res.text()), "error");
         }
         state.autoSegCompleted = false;
         updateAutoSegBtn();
         await refreshAfterSegChange();
+        showToast("已刪除遮罩片段", "info");
       } catch (error) {
         console.error(error);
-        alert("刪除時發生錯誤");
+        showToast("刪除時發生錯誤", "error");
       }
     };
     ul.appendChild(li);
@@ -1282,7 +2017,8 @@ if (dropZone && fileInput && selectFileBtn && fileCountHint) {
 function updateImgBatchBtnState() {
   if (!state.selectedImageIds) state.selectedImageIds = new Set();
   const count = state.selectedImageIds.size;
-  const total = state.allImages ? state.allImages.length : 0;
+  const filtered = getFilteredImages();
+  const total = filtered.length;
   const btn = $("batchDelImgsBtn");
   if (btn) {
     btn.disabled = count === 0;
@@ -1336,13 +2072,27 @@ function toggleSegBatchUI(isBatch) {
 $("toggleSegBatchModeBtn").onclick = () => toggleSegBatchUI(true);
 $("cancelSegBatchBtn").onclick = () => toggleSegBatchUI(false);
 
-// 照片全選 (包含未渲染至 DOM 的巨量照片)
+// 照片篩選器變更事件
+const filterSelectEl = $("imgFilterSelect");
+if (filterSelectEl) {
+  filterSelectEl.onchange = (e) => {
+    state.imgFilter = e.target.value;
+    state.renderedImageCount = 0;
+    const box = $("thumbs");
+    if (box) box.innerHTML = "";
+    renderMoreThumbs();
+    updateGalleryToggleUI();
+  };
+}
+
+// 照片全選 (根據目前篩選結果進行全選)
 $("selectAllImgs").onchange = (e) => {
   const isChecked = e.target.checked;
   if (!state.selectedImageIds) state.selectedImageIds = new Set();
+  const images = getFilteredImages();
 
   if (isChecked) {
-    (state.allImages || []).forEach((im) => state.selectedImageIds.add(im.id));
+    (images || []).forEach((im) => state.selectedImageIds.add(im.id));
   } else {
     state.selectedImageIds.clear();
   }
@@ -1410,8 +2160,9 @@ $("batchDelImgsBtn").onclick = async () => {
     $("thumbs").classList.remove("batch-active");
     await loadThumbs();
     await refreshSidebar();
+    showToast(`成功刪除 ${deletedTotal} 張照片`, "success");
   } catch (err) {
-    alert("批次刪除失敗: " + err.message);
+    showToast("批次刪除失敗: " + err.message, "error");
     await loadThumbs();
   } finally {
     btn.textContent = originalText;
@@ -1460,8 +2211,9 @@ $("batchDelSegsBtn").onclick = async () => {
     $("selectAllSegsLabel").style.display = "none";
     $("reviewQueue").classList.remove("batch-active");
     await refreshAfterSegChange();
+    showToast(`成功刪除 ${ids.length} 個遮罩片段`, "success");
   } catch (err) {
-    alert("批次刪除失敗: " + err.message);
+    showToast("批次刪除失敗: " + err.message, "error");
   } finally {
     btn.textContent = originalText;
     btn.disabled = false;
@@ -1493,7 +2245,7 @@ async function fetchProjects() {
     (data.projects || []).forEach((p) => {
       const opt = document.createElement("option");
       opt.value = p.id;
-      opt.textContent = p.name + (p.mode === "engineer" ? " [工程師]" : "");
+      opt.textContent = p.name;
       if (p.id === data.active_project_id) opt.selected = true;
       select.appendChild(opt);
     });
@@ -1624,7 +2376,7 @@ function initProjectControls() {
       if (!state.currentProjectId) return;
       const selectEl = $("projectSelect");
       const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
-      const oldName = currentOpt ? currentOpt.textContent.replace(/ \[工程師\]$/, "") : "";
+      const oldName = currentOpt ? currentOpt.textContent : "";
       const newName = await showModal({
         title: "✏️ 重新命名專案",
         showInput: true,
@@ -1653,7 +2405,7 @@ function initProjectControls() {
       if (!state.currentProjectId) return;
       const selectEl = $("projectSelect");
       const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
-      const projName = currentOpt ? currentOpt.textContent.replace(/ \[工程師\]$/, "") : "此專案";
+      const projName = currentOpt ? currentOpt.textContent : "此專案";
       const confirmed = await showModal({
         title: "⚠️ 確定要刪除專案嗎？",
         desc: `專案「${projName}」內的所有照片、遮罩檔及分類成果將會被永久刪除且無法復原！`,
@@ -1838,16 +2590,7 @@ function updateCharts(stats) {
   const counts = Object.values(labelCounts);
   $("categorySub").innerHTML = `已建立類別數: <b>${stats.num_labels}</b>`;
 
-  const roygbivColors = [
-    '#ff5470', // Red
-    '#ff9f43', // Orange
-    '#ffd166', // Yellow
-    '#36d399', // Green
-    '#4f9cff', // Blue
-    '#706fd3', // Indigo
-    '#b33771'  // Violet
-  ];
-  const colors = labels.map((_, idx) => roygbivColors[idx % roygbivColors.length]);
+  const colors = labels.map((lbl) => getTagColor(lbl));
 
   const cType = state.categoryChartType || "bar";
   if (categoryDistributionChartInstance && categoryDistributionChartInstance.config.type !== cType) {
@@ -2111,6 +2854,111 @@ if (toggleBtn) {
   };
 }
 
+// ---------- 資料集匯出預覽 Modal (Dataset Export Preview Modal) ----------
+function initExportPreviewModal() {
+  const exportBtn = $("exportBtn");
+  const modal = $("exportPreviewModal");
+  const closeBtn = $("closeExportPreviewModalBtn");
+  const cancelBtn = $("cancelExportPreviewBtn");
+  const confirmBtn = $("confirmExportBtn");
+  const formatSelect = $("exportFormat");
+
+  if (!exportBtn || !modal) return;
+
+  const toggleExportModal = (show) => {
+    const isVisible = show !== undefined ? Boolean(show) : modal.style.display !== "flex";
+    modal.style.display = isVisible ? "flex" : "none";
+    if (isVisible) modal.classList.add("active");
+    else modal.classList.remove("active");
+  };
+
+  if (closeBtn) closeBtn.onclick = () => toggleExportModal(false);
+  if (cancelBtn) cancelBtn.onclick = () => toggleExportModal(false);
+  modal.onclick = (e) => {
+    if (e.target === modal) toggleExportModal(false);
+  };
+
+  exportBtn.onclick = async () => {
+    const fmt = formatSelect ? formatSelect.value : "coco";
+    try {
+      const res = await fetch(`/api/export/preview?format=${fmt}`);
+      if (!res.ok) throw new Error("讀取匯出資料預覽失敗");
+      const data = await res.json();
+
+      // 更新格式標籤與說明
+      const fmtTitles = {
+        coco: "COCO Instance Segmentation",
+        yolo: "YOLOv8-seg / YOLO11 Format",
+        mask: "Semantic Mask PNG Format"
+      };
+      const fmtDescs = {
+        coco: "相容於 Detectron2, MMDetection, YOLOv8 格式",
+        yolo: "包含 txt 多邊形點座標與 data.yaml 訓練設定檔",
+        mask: "包含二值化語意分割 PNG 圖片檔與 classes.txt 對照表"
+      };
+
+      $("exportFmtTag").textContent = fmtTitles[fmt] || fmt.toUpperCase();
+      $("exportFmtDesc").textContent = fmtDescs[fmt] || "";
+
+      // 更新統計卡片數據
+      $("exportStatImages").textContent = data.annotated_images || 0;
+      $("exportStatSegments").textContent = data.total_segments || 0;
+      $("exportStatLabels").textContent = data.num_labels || 0;
+
+      // 更新類別分佈表格
+      const tbody = $("exportClassTbody");
+      if (tbody) {
+        tbody.innerHTML = "";
+        const labelCounts = data.label_counts || {};
+        const totalSegs = data.total_segments || 1;
+        const labels = Object.keys(labelCounts);
+
+        if (labels.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--muted); padding:10px;">尚未有已完成標記的類別數據</td></tr>`;
+        } else {
+          labels.forEach((lbl) => {
+            const cnt = labelCounts[lbl];
+            const pct = ((cnt / totalSegs) * 100).toFixed(1);
+            const color = getTagColor(lbl);
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>
+                <span class="tag-color-dot" style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:${color}; margin-right:6px;"></span>
+                <b>${lbl}</b>
+              </td>
+              <td>${cnt} 個遮罩</td>
+              <td>${pct}%</td>
+            `;
+            tbody.appendChild(tr);
+          });
+        }
+      }
+
+      // 更新 ZIP 目錄結構預覽
+      const treeBox = $("exportFileTree");
+      if (treeBox) {
+        const treeLines = (data.format_trees && data.format_trees[fmt]) || [];
+        treeBox.textContent = treeLines.join("\n");
+      }
+
+      toggleExportModal(true);
+    } catch (err) {
+      console.error(err);
+      showToast("載入匯出預覽失敗", "error");
+    }
+  };
+
+  if (confirmBtn) {
+    confirmBtn.onclick = () => {
+      const fmt = formatSelect ? formatSelect.value : "coco";
+      toggleExportModal(false);
+      window.location.href = `/api/export?format=${fmt}`;
+      showToast(`已開始下載 ${fmt.toUpperCase()} 格式資料集 ZIP 壓縮檔`, "success");
+    };
+  }
+}
+
+initExportPreviewModal();
 applyMode(state.mode);
 
 // ==========================================
