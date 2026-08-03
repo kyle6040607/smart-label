@@ -297,16 +297,6 @@ class MySQLRepository:
                     "CREATE INDEX idx_examples_project_id ON examples (project_id)"
                 )
 
-            cur.execute("SHOW COLUMNS FROM annotation_tasks LIKE 'project_id'")
-            if cur.fetchone() is None:
-                cur.execute(
-                    "ALTER TABLE annotation_tasks "
-                    "ADD COLUMN project_id VARCHAR(32) NOT NULL DEFAULT '' "
-                    "AFTER user_id"
-                )
-                cur.execute(
-                    "CREATE INDEX idx_annotation_tasks_project_id ON annotation_tasks (project_id)"
-                )
             # 舊任務補上已處理圖片欄位
             cur.execute(
                 "SHOW COLUMNS FROM annotation_tasks "
@@ -851,6 +841,30 @@ class MySQLRepository:
             _row_to_task(row)
             for row in rows
         ]
+
+    def list_tasks_by_user(self, user_id: str = "") -> list[AnnotationTask]:
+        """依使用者 ID 取得訓練與標註任務清單。"""
+        with self._tx() as cursor:
+            if user_id:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM annotation_tasks
+                    WHERE user_id = %s
+                    ORDER BY updated_at DESC
+                    """,
+                    (user_id,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM annotation_tasks
+                    ORDER BY updated_at DESC
+                    """
+                )
+            rows = cursor.fetchall()
+        return [_row_to_task(row) for row in rows]
 
     def claim_next_pending_task(
         self,

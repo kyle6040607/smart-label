@@ -44,7 +44,7 @@ def trigger_training(project_id: str):
     task = AnnotationTask(
         user_id=user_id,
         project_id=project_id,
-        prompt=f"YOLOv26x-seg 訓練 ({proj.name})",
+        prompt=f"[project:{project_id}] YOLOv26x-seg 訓練 ({proj.name})",
         status="pending",
     )
     repo.add_task(task)
@@ -90,15 +90,18 @@ def get_training_status(project_id: str):
         abort(404, "查無此專案")
 
     # 尋找該專案最新一筆任務
+    def _matches_project(t: AnnotationTask) -> bool:
+        pid = getattr(t, "effective_project_id", getattr(t, "project_id", ""))
+        return t.user_id == user_id and (pid == project_id or f"[project:{project_id}]" in t.prompt)
+
     tasks = [
         t for t in repo.tasks.values()
-        if t.user_id == user_id and getattr(t, "project_id", "") == project_id
+        if _matches_project(t)
     ] if hasattr(repo, "tasks") else []
 
-    if not tasks:
-        # 相容 MySQLRepository 查詢
-        all_user_tasks = [t for t in repo.list_tasks_by_user(user_id)] if hasattr(repo, "list_tasks_by_user") else []
-        tasks = [t for t in all_user_tasks if getattr(t, "project_id", "") == project_id]
+    if not tasks and hasattr(repo, "list_tasks_by_user"):
+        all_user_tasks = repo.list_tasks_by_user(user_id)
+        tasks = [t for t in all_user_tasks if _matches_project(t)]
 
     if not tasks:
         return jsonify({
