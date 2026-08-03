@@ -103,6 +103,7 @@ def create_app(
     from app.routes.export import bp as export_bp
     from app.routes.line_bot import bp as linebot_bp
     from app.routes.liff import bp as liff_bp
+    from app.routes.training import bp as training_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(projects_bp)
@@ -113,6 +114,7 @@ def create_app(
     app.register_blueprint(export_bp)
     app.register_blueprint(linebot_bp)
     app.register_blueprint(liff_bp)
+    app.register_blueprint(training_bp)
 
     @app.before_request
     def require_api_login():

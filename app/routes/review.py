@@ -46,6 +46,15 @@ def review_segment(seg_id: str):
     return jsonify({"example": ex.to_dict(), "segment": seg.to_dict()})
 
 
+@bp.post("/segments/<seg_id>/unreview")
+def unreview_segment(seg_id: str):
+    """將片段的審核狀態與標籤重置，並刪除對應的種子範例。"""
+    repo, pipeline = get_repo(), get_pipeline()
+    seg = get_owned_segment(seg_id)
+    pipeline.unreview_segment(seg)
+    return jsonify({"segment": seg.to_dict()})
+
+
 @bp.get("/stats")
 def stats():
     """整體統計：自動接受比例 ≈ 省下的工時、送審數量等。"""

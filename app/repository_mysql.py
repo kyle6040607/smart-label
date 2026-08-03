@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS annotation_tasks (
     id VARCHAR(32) PRIMARY KEY,
     user_id VARCHAR(32) NOT NULL DEFAULT '',
+    project_id VARCHAR(32) NOT NULL DEFAULT '',
     line_user_id VARCHAR(64) NOT NULL DEFAULT '',
     prompt TEXT NOT NULL,
     image_ids JSON NOT NULL,
@@ -145,6 +146,7 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
     created_at DOUBLE NOT NULL,
     updated_at DOUBLE NOT NULL,
     INDEX idx_annotation_tasks_user_id (user_id),
+    INDEX idx_annotation_tasks_project_id (project_id),
     INDEX idx_annotation_tasks_line_user_id (line_user_id),
     INDEX idx_annotation_tasks_claimable (status, next_attempt_at, created_at),
     INDEX idx_annotation_tasks_lease (status, lease_expires_at),
@@ -220,6 +222,7 @@ def _row_to_task(
     return AnnotationTask(
         id=row["id"],
         user_id=row["user_id"],
+        project_id=row.get("project_id", ""),
         line_user_id=row["line_user_id"],
         prompt=row["prompt"],
         image_ids=json.loads(row["image_ids"]),
@@ -435,6 +438,17 @@ class MySQLRepository:
                 cur.execute(
                     "CREATE INDEX idx_segments_task_attempt "
                     "ON segments (annotation_task_id, task_attempt_token)"
+                )
+
+            cur.execute("SHOW COLUMNS FROM annotation_tasks LIKE 'project_id'")
+            if cur.fetchone() is None:
+                cur.execute(
+                    "ALTER TABLE annotation_tasks "
+                    "ADD COLUMN project_id VARCHAR(32) NOT NULL DEFAULT '' "
+                    "AFTER user_id"
+                )
+                cur.execute(
+                    "CREATE INDEX idx_annotation_tasks_project_id ON annotation_tasks (project_id)"
                 )
 
             # 舊任務補上已處理圖片欄位
@@ -808,6 +822,34 @@ class MySQLRepository:
             rows = cur.fetchall()
         return [_row_to_segment(r) for r in rows]
 
+    def list_labeled_segments_by_project(
+        self,
+        owner_id: str,
+        project_id: str | None = None,
+    ) -> list[Segment]:
+        """撈出特定使用者與專案下已標註 (final_label IS NOT NULL) 的片段。"""
+        with self._tx() as cur:
+            query = """
+                SELECT s.*
+                FROM segments s
+                JOIN images i ON s.image_id = i.id
+                WHERE (
+                    (s.human_label IS NOT NULL AND s.human_label != '')
+                    OR (s.predicted_label IS NOT NULL AND s.predicted_label != '')
+                )
+            """
+            params = []
+            if owner_id:
+                query += " AND i.owner_id = %s"
+                params.append(owner_id)
+            if project_id:
+                query += " AND i.project_id = %s"
+                params.append(project_id)
+
+            cur.execute(query, tuple(params))
+            rows = cur.fetchall()
+        return [_row_to_segment(r) for r in rows]
+
     def list_review_queue(self) -> list[Segment]:
         with self._tx() as cur:
             cur.execute("SELECT * FROM segments WHERE needs_review=1 AND reviewed=0")
@@ -820,6 +862,7 @@ class MySQLRepository:
             r = cur.fetchone()
             if r is None:
                 return None
+            cur.execute("DELETE FROM examples WHERE source_segment_id=%s", (seg_id,))
             cur.execute("DELETE FROM segments WHERE id=%s", (seg_id,))
         return r["mask_path"] or None
 
@@ -831,6 +874,7 @@ class MySQLRepository:
             fmt = ",".join(["%s"] * len(seg_ids))
             cur.execute(f"SELECT mask_path FROM segments WHERE id IN ({fmt}) FOR UPDATE", tuple(seg_ids))
             paths = [r["mask_path"] for r in cur.fetchall() if r.get("mask_path")]
+            cur.execute(f"DELETE FROM examples WHERE source_segment_id IN ({fmt})", tuple(seg_ids))
             cur.execute(f"DELETE FROM segments WHERE id IN ({fmt})", tuple(seg_ids))
         return [p for p in paths if p]
 
@@ -852,6 +896,10 @@ class MySQLRepository:
                 ),
             )
         return ex
+
+    def delete_example(self, example_id: str) -> None:
+        with self._tx() as cur:
+            cur.execute("DELETE FROM examples WHERE id=%s", (example_id,))
 
     def list_examples(self, owner_id: str | None = None, project_id: str | None = None) -> list[LabelExample]:
         with self._tx() as cur:
@@ -891,37 +939,80 @@ class MySQLRepository:
             rows = cur.fetchall()
         return [r["label"] for r in rows]
 
-    def delete_label(self, label: str, owner_id: str | None = None) -> int:
-        """刪掉某類別的所有種子範例，連帶把該類別的人工標記退回送審。"""
+    def delete_label(self, label: str, owner_id: str | None = None, project_id: str | None = None) -> tuple[int, list[str]]:
+        """刪除某類別的所有種子範例與關聯的遮罩片段，回傳 (刪除範例數, 要刪除的遮罩檔案路徑列表)。"""
         with self._tx() as cur:
-            if owner_id is None:
-                deleted = cur.execute(
-                    "DELETE FROM examples WHERE label=%s",
-                    (label,),
-                )
-                cur.execute(
-                    "UPDATE segments SET human_label=NULL, "
-                    "reviewed=0, needs_review=1 WHERE human_label=%s",
-                    (label,),
-                )
+            if owner_id is None and project_id is None:
+                deleted = cur.execute("DELETE FROM examples WHERE label=%s", (label,))
+            elif project_id is not None:
+                deleted = cur.execute("DELETE FROM examples WHERE label=%s AND project_id=%s", (label, project_id))
             else:
-                deleted = cur.execute(
-                    "DELETE FROM examples WHERE label=%s AND owner_id=%s",
-                    (label, owner_id),
-                )
-                cur.execute(
-                    """
-                    UPDATE segments AS segment
-                    JOIN images AS image ON image.id = segment.image_id
-                    SET segment.human_label=NULL,
-                        segment.reviewed=0,
-                        segment.needs_review=1
-                    WHERE segment.human_label=%s
-                      AND image.owner_id=%s
-                    """,
-                    (label, owner_id),
-                )
-        return deleted
+                deleted = cur.execute("DELETE FROM examples WHERE label=%s AND owner_id=%s", (label, owner_id))
+
+            where_clause = "WHERE (segment.human_label=%s OR (segment.human_label IS NULL AND segment.predicted_label=%s))"
+            params = [label, label]
+            if project_id:
+                where_clause += " AND image.project_id=%s"
+                params.append(project_id)
+            elif owner_id:
+                where_clause += " AND image.owner_id=%s"
+                params.append(owner_id)
+
+            cur.execute(
+                f"SELECT segment.id, segment.mask_path FROM segments AS segment JOIN images AS image ON image.id = segment.image_id {where_clause}",
+                tuple(params),
+            )
+            rows = cur.fetchall()
+            seg_ids = [r["id"] for r in rows]
+            mask_paths = [r["mask_path"] for r in rows if r.get("mask_path")]
+
+            if seg_ids:
+                fmt = ",".join(["%s"] * len(seg_ids))
+                cur.execute(f"DELETE FROM segments WHERE id IN ({fmt})", tuple(seg_ids))
+
+        return deleted, mask_paths
+
+    def rename_label(
+        self,
+        old_label: str,
+        new_label: str,
+        owner_id: str | None = None,
+        project_id: str | None = None,
+    ) -> int:
+        """將舊類別名稱修改為新類別名稱（若新類別已存在則直接合併）。"""
+        with self._tx() as cur:
+            if owner_id is None and project_id is None:
+                cur.execute("UPDATE examples SET label=%s WHERE label=%s", (new_label, old_label))
+            elif project_id is not None:
+                cur.execute("UPDATE examples SET label=%s WHERE label=%s AND project_id=%s", (new_label, old_label, project_id))
+            else:
+                cur.execute("UPDATE examples SET label=%s WHERE label=%s AND owner_id=%s", (new_label, old_label, owner_id))
+
+            where_human = "WHERE segment.human_label=%s"
+            params_human = [new_label, old_label]
+            where_pred = "WHERE segment.predicted_label=%s"
+            params_pred = [new_label, old_label]
+
+            if project_id:
+                where_human += " AND image.project_id=%s"
+                params_human.append(project_id)
+                where_pred += " AND image.project_id=%s"
+                params_pred.append(project_id)
+            elif owner_id:
+                where_human += " AND image.owner_id=%s"
+                params_human.append(owner_id)
+                where_pred += " AND image.owner_id=%s"
+                params_pred.append(owner_id)
+
+            cur.execute(
+                f"UPDATE segments AS segment JOIN images AS image ON image.id = segment.image_id SET segment.human_label=%s {where_human}",
+                tuple(params_human),
+            )
+            cur.execute(
+                f"UPDATE segments AS segment JOIN images AS image ON image.id = segment.image_id SET segment.predicted_label=%s {where_pred}",
+                tuple(params_pred),
+            )
+        return 1
 
     # ---------- 標註任務 ----------
     def add_task(self, task: AnnotationTask, ) -> AnnotationTask:
@@ -931,6 +1022,7 @@ class MySQLRepository:
                 INSERT INTO annotation_tasks (
                     id,
                     user_id,
+                    project_id,
                     line_user_id,
                     prompt,
                     image_ids,
@@ -968,12 +1060,13 @@ class MySQLRepository:
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
-                    %s
+                    %s, %s
                 )
                 """,
                 (
                     task.id,
                     task.user_id,
+                    task.project_id,
                     task.line_user_id,
                     task.prompt,
                     json.dumps(task.image_ids),
@@ -1399,6 +1492,7 @@ class MySQLRepository:
                 UPDATE annotation_tasks
                 SET
                     user_id = %s,
+                    project_id = %s,
                     line_user_id = %s,
                     prompt = %s,
                     image_ids = %s,
@@ -1431,6 +1525,7 @@ class MySQLRepository:
                 """,
                 (
                     task.user_id,
+                    task.project_id,
                     task.line_user_id,
                     task.prompt,
                     json.dumps(task.image_ids),

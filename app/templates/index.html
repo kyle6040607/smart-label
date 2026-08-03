@@ -1,29 +1,39 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>智慧分割標記助手</title>
+  <title>Seer</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap"
+    rel="stylesheet" />
+  <!-- 品牌字只用在 header 的 "Seer"，用 text= 子集化只載 S/e/r 三個字符 -->
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&text=Seer&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
+
 <body>
   <header>
     <div>
-      <h1>智慧分割標記助手</h1>
-      <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
+      <h1>Seer</h1>
     </div>
     <div class="header-center-controls">
-      <div class="project-selector-wrapper" style="display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.05); padding: 4px 8px; border-radius: 8px;">
+      <div class="project-selector-wrapper"
+        style="display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.05); padding: 4px 8px; border-radius: 8px;">
         <label for="projectSelect" style="font-size: 13px; font-weight: 600; white-space: nowrap;">📂 專案：</label>
-        <select id="projectSelect" class="project-select" style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border-color, #ccc); background: var(--panel-bg, #fff); color: var(--text-color, #333); font-size: 13px; font-weight: 500; cursor: pointer;">
+        <select id="projectSelect" class="project-select"
+          style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border-color, #ccc); background: var(--panel-bg, #fff); color: var(--text-color, #333); font-size: 13px; font-weight: 500; cursor: pointer;">
         </select>
-        <button id="createProjectBtn" class="btn-secondary" type="button" style="padding: 4px 8px; font-size: 12px;" title="建立新專案">+ 新建</button>
-        <button id="renameProjectBtn" class="btn-secondary" type="button" style="padding: 4px 8px; font-size: 12px;" title="重新命名專案">重新命名</button>
-        <button id="deleteProjectBtn" class="btn-danger" type="button" style="padding: 4px 8px; font-size: 12px;" title="刪除此專案">刪除</button>
+        <button id="createProjectBtn" class="btn-secondary" type="button" style="padding: 4px 8px; font-size: 12px;"
+          title="建立新專案">+ 新建</button>
+        <button id="renameProjectBtn" class="btn-secondary" type="button" style="padding: 4px 8px; font-size: 12px;"
+          title="重新命名專案">重新命名</button>
+        <button id="deleteProjectBtn" class="btn-danger" type="button" style="padding: 4px 8px; font-size: 12px;"
+          title="刪除此專案">刪除</button>
       </div>
       <div class="mode-switch-wrapper">
         <div class="mode-switch-bg"></div>
@@ -31,7 +41,8 @@
         <button id="engineerModeBtn" class="mode-btn" type="button">工程師模式</button>
       </div>
       <button id="themeToggleBtn" class="theme-toggle-btn" type="button" title="切換深色/淺色模式" aria-label="切換深色/淺色模式">
-        <svg class="theme-icon sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="theme-icon sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="5"></circle>
           <line x1="12" y1="1" x2="12" y2="3"></line>
           <line x1="12" y1="21" x2="12" y2="23"></line>
@@ -42,7 +53,8 @@
           <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
           <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
         </svg>
-        <svg class="theme-icon moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg class="theme-icon moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
         </svg>
       </button>
@@ -50,9 +62,9 @@
     <div class="header-actions">
       {% if display_name %}<span class="hi">{{ display_name }}</span>{% endif %}
       {% if line_bound %}
-        <span class="line-badge">已綁定 LINE</span>
+      <span class="line-badge">已綁定 LINE</span>
       {% else %}
-        <a class="btn-link line" href="{{ url_for('auth.line_start') }}">綁定 LINE</a>
+      <a class="btn-link line" href="{{ url_for('auth.line_start') }}">綁定 LINE</a>
       {% endif %}
       <a class="btn-link" href="{{ url_for('auth.logout') }}">登出</a>
     </div>
@@ -63,10 +75,12 @@
       <!-- 1. 上傳 -->
       <section class="panel">
         <h2 style="margin-bottom: 8px;">1 · 上傳照片與資料集</h2>
-        <input type="file" id="fileInput" multiple accept="image/*,.zip,.7z,.tar,.gz,.tgz,.bz2,.xz" style="display: none;" />
+        <input type="file" id="fileInput" multiple accept="image/*,.zip,.7z,.tar,.gz,.tgz,.bz2,.xz"
+          style="display: none;" />
         <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="點擊或拖曳檔案至此進行上傳">
           <div class="drop-zone-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="36" height="36">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+              stroke-linejoin="round" width="36" height="36">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="17 8 12 3 7 8"></polyline>
               <line x1="12" y1="3" x2="12" y2="15"></line>
@@ -77,13 +91,16 @@
             <p class="drop-zone-subtitle">或點擊此處選擇檔案 — 支援單張照片與資料集壓縮檔</p>
 
             <div class="drop-zone-specs">
-              <div class="spec-line"><span class="spec-label">單張照片 &lt;25 MB</span> — JPG, PNG, WEBP, BMP, TIFF, HEIC, AVIF</div>
+              <div class="spec-line"><span class="spec-label">單張照片 &lt;25 MB</span> — JPG, PNG, WEBP, BMP, TIFF, HEIC,
+                AVIF</div>
               <div class="spec-line"><span class="spec-label">資料集壓縮檔 &lt;8 GB</span> — ZIP, TAR, 7Z (自動解壓提取圖片)</div>
             </div>
 
-            <div class="drop-zone-actions" style="display: flex; justify-content: center; gap: 8px; align-items: center; margin-top: 14px;">
+            <div class="drop-zone-actions"
+              style="display: flex; justify-content: center; gap: 8px; align-items: center; margin-top: 14px;">
               <button id="uploadBtn" type="button" style="display: none;">開始上傳</button>
-              <button id="cancelUploadBtn" type="button" class="btn-danger" style="display: none; padding: 7px 14px; font-size: 13px;">取消上傳</button>
+              <button id="cancelUploadBtn" type="button" class="btn-danger"
+                style="display: none; padding: 7px 14px; font-size: 13px;">取消上傳</button>
             </div>
             <span class="hint" id="fileCountHint" style="display: block; margin-top: 10px;">尚未選擇檔案</span>
           </div>
@@ -99,15 +116,29 @@
 
         <!-- 縮圖容器 (可折疊 + 固定高度滾動) -->
         <div id="thumbsWrapper" class="thumbs-wrapper collapsed">
-          <!-- 批次管理控制條 -->
+          <!-- 批次管理與篩選控制條 -->
           <div class="batch-control-bar">
-            <label id="selectAllImgsLabel" style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <label for="imgFilterSelect"
+                style="font-size: 12px; margin: 0; white-space: nowrap; opacity: 0.85;">篩選：</label>
+              <select id="imgFilterSelect" class="btn-secondary"
+                style="padding: 3px 8px; font-size: 12px; border-radius: 4px; cursor: pointer;">
+                <option value="all">全部照片</option>
+                <option value="unsegmented">未標記/未分割 (0 遮罩)</option>
+                <option value="segmented">已標記/已有遮罩 (≥1 遮罩)</option>
+              </select>
+            </div>
+            <label id="selectAllImgsLabel"
+              style="display: none; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin: 0;">
               <input type="checkbox" id="selectAllImgs" /> 全選
             </label>
             <div style="display: flex; gap: 8px; margin-left: auto;">
-              <button id="toggleImgBatchModeBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px;">批次管理</button>
-              <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;" disabled>確認刪除</button>
-              <button id="cancelImgBatchBtn" class="btn-secondary" style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
+              <button id="toggleImgBatchModeBtn" class="btn-secondary"
+                style="padding: 4px 10px; font-size: 12px;">批次管理</button>
+              <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;"
+                disabled>確認刪除</button>
+              <button id="cancelImgBatchBtn" class="btn-secondary"
+                style="padding: 4px 10px; font-size: 12px; display: none;">取消</button>
             </div>
           </div>
           <div id="thumbs" class="thumbs"></div>
@@ -119,10 +150,12 @@
         <h2>0 · 參數調整</h2>
         <div class="param-card">
           <div class="param-group">
-            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
+            <div
+              style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
               <label for="confThresholdInput" style="margin: 0; flex: 1; font-weight: 500;">低信心待審門檻:</label>
               <div style="flex: 1; text-align: center;">
-                <input type="number" id="confThresholdValue" min="0.0" max="1.0" step="0.01" value="0.60" class="param-val-input" />
+                <input type="number" id="confThresholdValue" min="0.0" max="1.0" step="0.01" value="0.60"
+                  class="param-val-input" />
               </div>
               <div style="flex: 1; text-align: right;">
                 <span id="confThresholdHint" style="font-weight: 500; font-size: 13px;"></span>
@@ -134,16 +167,20 @@
             </div>
             <div style="position: relative; height: 22px; font-size: 13px; color: var(--muted); margin-top: 6px;">
               <span style="position: absolute; left: 0;">0.00 (全自動通關)</span>
-              <span style="position: absolute; left: 60%; transform: translateX(-50%); color: var(--accent); font-weight: 600;">0.60 (標準建議)</span>
+              <span
+                style="position: absolute; left: 60%; transform: translateX(-50%); color: var(--accent); font-weight: 600;">0.60
+                (標準建議)</span>
               <span style="position: absolute; right: 0;">1.00 (全人工審核)</span>
             </div>
             <span class="hint" style="display: block; margin-top: 8px; font-size: 13px;">低於此值會被標紅送審</span>
           </div>
           <div class="param-group" style="margin-top: 24px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
+            <div
+              style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
               <label for="yoloConfInput" style="margin: 0; flex: 1; font-weight: 500;">YOLO-World 信心度:</label>
               <div style="flex: 1; text-align: center;">
-                <input type="number" id="yoloConfValue" min="0.1" max="1.0" step="0.01" value="0.40" class="param-val-input" />
+                <input type="number" id="yoloConfValue" min="0.1" max="1.0" step="0.01" value="0.40"
+                  class="param-val-input" />
               </div>
               <div style="flex: 1; text-align: right;">
                 <span id="yoloConfHint" style="font-weight: 500; font-size: 13px;"></span>
@@ -155,13 +192,16 @@
             </div>
             <div style="position: relative; height: 22px; font-size: 13px; color: var(--muted); margin-top: 6px;">
               <span style="position: absolute; left: 0;">0.10 (極高靈敏)</span>
-              <span style="position: absolute; left: 33.33%; transform: translateX(-50%); color: var(--accent); font-weight: 600;">0.40 (標準建議)</span>
+              <span
+                style="position: absolute; left: 33.33%; transform: translateX(-50%); color: var(--accent); font-weight: 600;">0.40
+                (標準建議)</span>
               <span style="position: absolute; right: 0;">1.00 (極高精確)</span>
             </div>
             <span class="hint" style="display: block; margin-top: 8px; font-size: 13px;">文字分割偵測的信心度</span>
           </div>
           <div class="param-group" style="margin-top: 24px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
+            <div
+              style="display: flex; align-items: center; justify-content: space-between; font-size: 15px; margin-bottom: 8px; color: var(--text);">
               <label for="yoloImgszInput" style="margin: 0; flex: 1; font-weight: 500;">推論解析度:</label>
               <div style="flex: 1; text-align: right;">
                 <select id="yoloImgszInput" class="param-val-input" style="width: auto; min-width: 96px;">
@@ -180,7 +220,22 @@
 
     <!-- 2. 標記畫布 -->
     <section class="panel">
-      <h2>2 · 標記 / 分割</h2>
+      <div
+        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+        <h2 style="margin: 0;">2 · 標記 / 分割</h2>
+        <div class="nav-img-group" style="display: flex; gap: 6px; align-items: center;">
+          <button id="undoBtn" type="button" class="btn-secondary" style="padding: 4px 8px; font-size: 12px;"
+            title="復原此照片的標記或變更 (Ctrl+Z)" disabled>↺ 復原</button>
+          <span style="border-left: 1px solid var(--border); height: 16px; margin: 0 2px;"></span>
+          <button id="prevImgBtn" type="button" class="btn-secondary" style="padding: 4px 10px; font-size: 13px;"
+            title="上一張照片 (A 或 ←)" disabled>◄ 上一張</button>
+          <span id="imgNavCounter"
+            style="font-size: 12px; color: var(--muted); font-weight: 600; min-width: 54px; text-align: center;">0 /
+            0</span>
+          <button id="nextImgBtn" type="button" class="btn-secondary" style="padding: 4px 10px; font-size: 13px;"
+            title="下一張照片 (D 或 →)" disabled>下一張 ►</button>
+        </div>
+      </div>
       <div class="toolbar">
         <div class="tool-group">
           <button id="autoSegBtn" class="layman-hide" disabled>自動分割整張</button>
@@ -201,13 +256,17 @@
       <div class="canvas-wrap">
         <canvas id="canvas"></canvas>
         <div id="segmentLoading" class="canvas-loading" role="status" aria-live="polite" hidden>
-          <div class="loading-content" style="display: flex; flex-direction: column; align-items: center; gap: 12px; width: 80%; max-width: 320px;">
+          <div class="loading-content"
+            style="display: flex; flex-direction: column; align-items: center; gap: 12px; width: 80%; max-width: 320px;">
             <div style="display: flex; align-items: center; gap: 10px;">
               <span class="spinner" aria-hidden="true"></span>
               <span id="segmentLoadingText">分割中…</span>
             </div>
-            <div id="progressBarContainer" style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.15); border-radius: 3px; overflow: hidden; display: none;">
-              <div id="progressBar" style="width: 0%; height: 100%; background: var(--accent); transition: width 0.2s ease; border-radius: 3px;"></div>
+            <div id="progressBarContainer"
+              style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.15); border-radius: 3px; overflow: hidden; display: none;">
+              <div id="progressBar"
+                style="width: 0%; height: 100%; background: var(--accent); transition: width 0.2s ease; border-radius: 3px;">
+              </div>
             </div>
             <span id="progressPercentText" style="font-size: 12px; color: var(--muted); display: none;">0%</span>
           </div>
@@ -230,13 +289,17 @@
       <div id="reviewQueueWrapper" class="queue-wrapper">
         <!-- 批次管理控制條 -->
         <div class="batch-control-bar">
-          <label id="selectAllSegsLabel" style="display: none; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; margin: 0;">
+          <label id="selectAllSegsLabel"
+            style="display: none; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; margin: 0;">
             <input type="checkbox" id="selectAllSegs" /> 全選
           </label>
           <div style="display: flex; gap: 6px; margin-left: auto;">
-            <button id="toggleSegBatchModeBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px;">批次管理</button>
-            <button id="batchDelSegsBtn" class="btn-danger" style="padding: 3px 8px; font-size: 11px; display: none;" disabled>確認刪除</button>
-            <button id="cancelSegBatchBtn" class="btn-secondary" style="padding: 3px 8px; font-size: 11px; display: none;">取消</button>
+            <button id="toggleSegBatchModeBtn" class="btn-secondary"
+              style="padding: 3px 8px; font-size: 11px;">批次管理</button>
+            <button id="batchDelSegsBtn" class="btn-danger" style="padding: 3px 8px; font-size: 11px; display: none;"
+              disabled>確認刪除</button>
+            <button id="cancelSegBatchBtn" class="btn-secondary"
+              style="padding: 3px 8px; font-size: 11px; display: none;">取消</button>
           </div>
         </div>
         <ul id="reviewQueue" class="queue"></ul>
@@ -252,6 +315,29 @@
         <button id="exportBtn">下載 ZIP</button>
         <p class="hint">只匯出已標好類別的片段（圖 + 遮罩 + 標籤）</p>
       </div>
+
+      <!-- YOLOv26x-seg 訓練區塊 -->
+      <div class="training-panel" style="margin-top: 18px; padding: 14px; background: var(--card-bg, rgba(255,255,255,0.04)); border: 1px solid var(--border-color, rgba(255,255,255,0.1)); border-radius: 10px;">
+        <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+          <span>🤖 YOLOv26x-seg 線上訓練</span>
+        </h3>
+        <button id="startTrainingBtn" class="btn-primary" style="width: 100%; padding: 8px 12px; font-weight: 600; background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none; border-radius: 6px; color: #fff; cursor: pointer; transition: all 0.2s;">
+          🚀 開始訓練 YOLOv26x-seg
+        </button>
+        <div id="trainingStatusContainer" style="margin-top: 10px; font-size: 12px; line-height: 1.5;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span id="trainingStatusBadge" style="display: inline-block; padding: 2px 8px; border-radius: 12px; font-weight: 600; font-size: 11px; background: #9ca3af; color: #fff;">
+              ⚪ 尚未訓練
+            </span>
+          </div>
+          <p id="trainingStatusText" style="margin: 6px 0 0 0; color: var(--muted, #888); word-break: break-all;"></p>
+          <div id="trainingModelDownload" style="margin-top: 8px; display: none;">
+            <a id="downloadModelLink" href="#" target="_blank" class="btn-link" style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; text-decoration: none; color: #3b82f6;">
+              📦 下載最佳模型權重檔 (.pt)
+            </a>
+          </div>
+        </div>
+      </div>
     </aside>
 
     <!-- 4. 工程師儀表板 -->
@@ -265,9 +351,12 @@
             <canvas id="laborSavingChart"></canvas>
           </div>
           <div id="laborSavingSub" class="chart-sub"></div>
-          <div class="chart-legend" style="display: flex; gap: 12px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
-            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #36d399; border-radius: 2px;"></span>自動過審</span>
-            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #4f9cff; border-radius: 2px;"></span>手動標籤</span>
+          <div class="chart-legend"
+            style="display: flex; gap: 12px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
+            <span style="display: flex; align-items: center; gap: 4px;"><span
+                style="display: inline-block; width: 10px; height: 10px; background-color: #36d399; border-radius: 2px;"></span>自動過審</span>
+            <span style="display: flex; align-items: center; gap: 4px;"><span
+                style="display: inline-block; width: 10px; height: 10px; background-color: #4f9cff; border-radius: 2px;"></span>手動標籤</span>
           </div>
         </div>
 
@@ -275,13 +364,16 @@
         <div class="chart-card">
           <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
             <h3>類別分布圖</h3>
-            <button id="toggleCategoryChartTypeBtn" type="button" class="btn-secondary" style="padding: 3px 8px; font-size: 11px; margin-top: -8px;">切換為圓餅圖</button>
+            <button id="toggleCategoryChartTypeBtn" type="button" class="btn-secondary"
+              style="padding: 3px 8px; font-size: 11px; margin-top: -8px;">切換為圓餅圖</button>
           </div>
           <div class="chart-wrapper">
             <canvas id="categoryDistributionChart"></canvas>
           </div>
           <div id="categorySub" class="chart-sub"></div>
-          <div id="categoryLegend" class="chart-legend" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;"></div>
+          <div id="categoryLegend" class="chart-legend"
+            style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
+          </div>
         </div>
 
         <!-- 圖表 3: 審核進度 -->
@@ -291,9 +383,12 @@
             <canvas id="reviewProgressChart"></canvas>
           </div>
           <div id="reviewSub" class="chart-sub"></div>
-          <div class="chart-legend" style="display: flex; gap: 12px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
-            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #4f9cff; border-radius: 2px;"></span>已審核</span>
-            <span style="display: flex; align-items: center; gap: 4px;"><span style="display: inline-block; width: 10px; height: 10px; background-color: #ff5470; border-radius: 2px;"></span>待人工審核</span>
+          <div class="chart-legend"
+            style="display: flex; gap: 12px; margin-top: 8px; font-size: 11px; align-self: flex-start; justify-content: flex-start; width: 100%;">
+            <span style="display: flex; align-items: center; gap: 4px;"><span
+                style="display: inline-block; width: 10px; height: 10px; background-color: #4f9cff; border-radius: 2px;"></span>已審核</span>
+            <span style="display: flex; align-items: center; gap: 4px;"><span
+                style="display: inline-block; width: 10px; height: 10px; background-color: #ff5470; border-radius: 2px;"></span>待人工審核</span>
           </div>
         </div>
       </div>
@@ -318,7 +413,78 @@
     </div>
   </div>
 
+  <!-- 5. 資料集匯出預覽與統計 Modal -->
+  <div id="exportPreviewModal" class="modal-overlay">
+    <div class="modal-card export-modal-card">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border);">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 20px;">📦</span>
+          <h3 style="margin: 0; font-size: 16px;">資料集匯出預覽 (Dataset Export Preview)</h3>
+        </div>
+        <button id="closeExportPreviewModalBtn" type="button" class="toast-close" style="font-size: 18px;">✕</button>
+      </div>
+
+      <div class="export-preview-content">
+        <!-- 格式標籤列 -->
+        <div class="export-format-badge-row">
+          <span class="export-fmt-tag" id="exportFmtTag">COCO Instance Segmentation</span>
+          <span style="font-size: 12px; color: var(--muted);" id="exportFmtDesc">相容於 Detectron2, MMDetection, YOLOv8 格式</span>
+        </div>
+
+        <!-- 統計數據卡片 -->
+        <div class="export-stats-grid">
+          <div class="export-stat-card">
+            <span class="export-stat-val" id="exportStatImages">0</span>
+            <span class="export-stat-label">📸 匯出照片數</span>
+          </div>
+          <div class="export-stat-card">
+            <span class="export-stat-val" id="exportStatSegments">0</span>
+            <span class="export-stat-label">🏷️ 標記遮罩數</span>
+          </div>
+          <div class="export-stat-card">
+            <span class="export-stat-val" id="exportStatLabels">0</span>
+            <span class="export-stat-label">📁 類別總數</span>
+          </div>
+        </div>
+
+        <!-- 類別分布表 -->
+        <div style="margin-top: 12px;">
+          <h4 style="margin: 0 0 6px 0; font-size: 12.5px; color: var(--muted);">類別數量分佈 (Class Distribution)</h4>
+          <div style="max-height: 120px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 2px;">
+            <table class="export-class-table">
+              <thead>
+                <tr>
+                  <th>類別名稱</th>
+                  <th>片段數量</th>
+                  <th>佔比</th>
+                </tr>
+              </thead>
+              <tbody id="exportClassTbody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ZIP 資料夾目錄結構預覽 -->
+        <div style="margin-top: 12px;">
+          <h4 style="margin: 0 0 6px 0; font-size: 12.5px; color: var(--muted);">ZIP 內部目錄結構預覽 (Package Structure)</h4>
+          <div class="file-tree-box" id="exportFileTree"></div>
+        </div>
+
+        <p class="hint" style="margin-top: 10px; font-size: 12px;">系統只會匯出已完成標記且附有標籤的有效區塊。</p>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px;">
+        <button id="cancelExportPreviewBtn" type="button" class="btn-secondary">取消</button>
+        <button id="confirmExportBtn" type="button" class="btn-primary" style="background: var(--accent); color: white; display: flex; align-items: center; gap: 6px;">
+          <span>📦 開始打包並下載 ZIP</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="{{ url_for('static', filename='js/vendor/chart.umd.min.js') }}"></script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
+
 </html>

@@ -407,6 +407,15 @@ class Pipeline:
         img = self._read_rgb(image.path)
         mask = self._read_mask(seg.mask_path)
         feat = self.embedder.encode(img, mask)
+
+        # 避免重複範例：刪除來自同一個 seg.id 的歷史範例
+        existing = [
+            ex for ex in self.repo.list_examples(owner_id, project_id)
+            if getattr(ex, "source_segment_id", None) == seg.id
+        ]
+        for ex in existing:
+            self.repo.delete_example(ex.id)
+
         ex = LabelExample(
             owner_id=owner_id,
             project_id=project_id,
@@ -427,9 +436,45 @@ class Pipeline:
         self.reclassify_pending(owner_id, project_id)
         return ex
 
+    def unreview_segment(self, seg: Segment) -> None:
+        """撤銷片段的審核狀態，刪除對應種子範例並重新訓練模型"""
+        image = self.repo.get_image(seg.image_id)
+        if image is None:
+            return
+        owner_id = image.owner_id
+        project_id = image.project_id
+
+        # 刪除對應的種子範例
+        examples = self.repo.list_examples(owner_id, project_id)
+        for ex in examples:
+            if getattr(ex, "source_segment_id", None) == seg.id:
+                self.repo.delete_example(ex.id)
+
+        seg.human_label = None
+        seg.final_label = None
+        seg.reviewed = False
+        seg.needs_review = True
+        self.repo.update_segment(seg)
+
+        self.refit(owner_id, project_id)
+        self.reclassify_pending(owner_id, project_id)
+
     # ---------- 刪掉標錯的類別（連帶回訓）----------
     def delete_label(self, label: str, owner_id: str = "", project_id: str = "") -> int:
-        n = self.repo.delete_label(label, owner_id)
+        n, mask_paths = self.repo.delete_label(label, owner_id, project_id)
+        if hasattr(self, "storage") and self.storage:
+            for p in mask_paths:
+                try:
+                    self.storage.delete(p)
+                except Exception:
+                    pass
+        self.refit(owner_id, project_id)
+        self.reclassify_pending(owner_id, project_id)
+        return n
+
+    # ---------- 重命名 / 合併類別（連帶回訓）----------
+    def rename_label(self, old_label: str, new_label: str, owner_id: str = "", project_id: str = "") -> int:
+        n = self.repo.rename_label(old_label, new_label, owner_id, project_id)
         self.refit(owner_id, project_id)
         self.reclassify_pending(owner_id, project_id)
         return n
