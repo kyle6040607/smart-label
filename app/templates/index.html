@@ -4,21 +4,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>智慧分割標記助手</title>
+  <title>Seer</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap"
     rel="stylesheet" />
+  <!-- 品牌字只用在 header 的 "Seer"，用 text= 子集化只載 S/e/r 三個字符 -->
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&text=Seer&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 
 <body>
   <header>
     <div>
-      <h1>智慧分割標記助手</h1>
-      <p class="subtitle">SAM 驅動的 AI 影像標記 · 人機協作</p>
+      <h1>Seer</h1>
     </div>
     <div class="header-center-controls">
       <div class="project-selector-wrapper"

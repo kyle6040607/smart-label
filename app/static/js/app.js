@@ -1,4 +1,4 @@
-// 智慧分割標記助手 — 前端最小可用版
+// Seer — 前端最小可用版
 // 流程：上傳 → 選圖 → 自動/單點分割 → 標種子 → 審核紅色低信心片段 → 看統計
 "use strict";
 
@@ -38,9 +38,20 @@ const DEFAULT_PALETTE = [
   "#64748B"  // Slate Gray
 ];
 
+const TAG_COLORS_KEY = "seer_tag_colors";
+const TAG_COLORS_KEY_LEGACY = "smart_label_tag_colors";
+
 function loadTagColors() {
   try {
-    const saved = localStorage.getItem("smart_label_tag_colors");
+    let saved = localStorage.getItem(TAG_COLORS_KEY);
+    if (saved === null) {
+      // 改名前的舊 key，搬過來一次就好，免得使用者的標籤顏色被重置
+      saved = localStorage.getItem(TAG_COLORS_KEY_LEGACY);
+      if (saved !== null) {
+        localStorage.setItem(TAG_COLORS_KEY, saved);
+        localStorage.removeItem(TAG_COLORS_KEY_LEGACY);
+      }
+    }
     return saved ? JSON.parse(saved) : {};
   } catch (e) {
     return {};
@@ -51,7 +62,7 @@ state.tagColors = loadTagColors();
 
 function saveTagColors() {
   try {
-    localStorage.setItem("smart_label_tag_colors", JSON.stringify(state.tagColors));
+    localStorage.setItem(TAG_COLORS_KEY, JSON.stringify(state.tagColors));
   } catch (e) { }
 }
 

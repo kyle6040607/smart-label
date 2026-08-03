@@ -442,7 +442,7 @@ def download_task_dataset(task_id: str):
     if not storage.exists(task.dataset_zip_path):
         return jsonify({"ok": False, "message": "ZIP 檔案不存在"}), 404
 
-    download_name = f"smart_label_{task.id}_yolo.zip"
+    download_name = f"seer_{task.id}_yolo.zip"
     try:
         signed_url = storage.generate_download_url(
             task.dataset_zip_path,

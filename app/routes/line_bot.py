@@ -96,7 +96,7 @@ def handle_follow(event):
     """使用者加入好友時，引導他改由 Rich Menu 操作。"""
     reply_text(
         event.reply_token,
-        "歡迎使用 Smart Label 👋\n\n"
+        "歡迎使用 Seer 👋\n\n"
         "請使用聊天室下方的 Rich Menu：\n"
         "・建立標註任務\n"
         "・查看標註任務\n\n"

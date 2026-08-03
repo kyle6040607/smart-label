@@ -1,5 +1,5 @@
 # ==============================================================================
-# Smart Label - Google Cloud Run Optimized Dockerfile
+# Seer - Google Cloud Run Optimized Dockerfile
 # ==============================================================================
 FROM python:3.13-slim
 

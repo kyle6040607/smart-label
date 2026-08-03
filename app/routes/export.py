@@ -26,7 +26,7 @@ def _get_project_filename_prefix(repo, project_id: str | None) -> str:
             )
             if clean_name:
                 return clean_name
-    return "smart_label"
+    return "seer"
 
 
 @bp.get("/export/preview")
