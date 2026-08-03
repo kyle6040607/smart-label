@@ -84,6 +84,13 @@ class FakeBucket:
     def blob(self, name: str) -> FakeBlob:
         return FakeBlob(self.objects, name)
 
+    def list_blobs(self, prefix: str):
+        return [
+            FakeBlob(self.objects, name)
+            for name in list(self.objects)
+            if name.startswith(prefix)
+        ]
+
 
 class FakeClient:
     def __init__(self):
@@ -226,6 +233,28 @@ def test_gcs_storage_and_legacy_local_path_can_coexist(tmp_path):
     assert storage.read_bytes(local_path) == b"local-image"
     assert storage.delete(gcs_path) is True
     assert storage.delete(gcs_path) is False
+
+
+@pytest.mark.parametrize("use_gcs", [False, True])
+def test_storage_delete_prefix_only_removes_selected_attempt(
+    tmp_path,
+    use_gcs,
+):
+    storage = make_storage(tmp_path, use_gcs=use_gcs)
+    stale = storage.save_bytes(
+        "previews/tasks/task-1/attempts/stale/a.jpg",
+        b"stale",
+    )
+    current = storage.save_bytes(
+        "previews/tasks/task-1/attempts/current/b.jpg",
+        b"current",
+    )
+
+    assert storage.delete_prefix(
+        "previews/tasks/task-1/attempts/stale"
+    ) == 1
+    assert not storage.exists(stale)
+    assert storage.exists(current)
 
 
 def test_pipeline_rejects_missing_storage_when_gcs_is_enabled(

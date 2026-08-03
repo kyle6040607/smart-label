@@ -9,9 +9,18 @@ from __future__ import annotations
 import json
 import threading
 import time
+import uuid
 from pathlib import Path
 
-from app.models import AnnotationTask, ImageRecord, Segment, LabelExample, User, Project
+from app.models import (
+    AnnotationTask,
+    ImageRecord,
+    LabelExample,
+    Project,
+    RecoveredTaskAttempt,
+    Segment,
+    User,
+)
 
 
 class Repository:
@@ -204,12 +213,26 @@ class Repository:
         )
     def claim_next_pending_task(
         self,
+        worker_id: str = "local-worker",
+        lease_seconds: float = 900.0,
+        max_attempts: int = 3,
     ) -> AnnotationTask | None:
+        now = time.time()
         with self._lock:
             pending_tasks = [
                 task
                 for task in self.tasks.values()
-                if task.status == "pending"
+                if (
+                    task.attempt_count < max_attempts
+                    and not task.claim_token
+                    and (
+                        task.status == "pending"
+                        or (
+                            task.status == "retry_wait"
+                            and task.next_attempt_at <= now
+                        )
+                    )
+                )
             ]
 
             if not pending_tasks:
@@ -221,11 +244,175 @@ class Repository:
             )
 
             task.status = "processing"
+            task.claimed_by = worker_id
+            task.claim_token = uuid.uuid4().hex
+            task.processing_started_at = now
+            task.heartbeat_at = now
+            task.lease_expires_at = now + lease_seconds
+            task.attempt_count += 1
+            task.next_attempt_at = 0.0
             task.error_message = ""
-            task.updated_at = time.time()
+            task.updated_at = now
 
             self._save()
 
+            return task
+
+    def heartbeat_task(
+        self,
+        task_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> bool:
+        """延長目前 attempt 的 lease；token 不符代表任務已被重新領取。"""
+        now = time.time()
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if (
+                task is None
+                or task.status != "processing"
+                or task.claim_token != claim_token
+            ):
+                return False
+            task.heartbeat_at = now
+            task.lease_expires_at = now + lease_seconds
+            task.updated_at = now
+            self._save()
+        return True
+
+    def recover_stale_tasks(
+        self,
+        *,
+        now: float | None = None,
+        max_attempts: int = 3,
+        limit: int = 10,
+    ) -> list[RecoveredTaskAttempt]:
+        """回收 lease 到期任務；JSON 版以單一鎖模擬資料庫排他更新。"""
+        now = time.time() if now is None else now
+        recovered: list[RecoveredTaskAttempt] = []
+        with self._lock:
+            stale = sorted(
+                (
+                    task for task in self.tasks.values()
+                    if (
+                        (
+                            task.status == "processing"
+                            and task.lease_expires_at > 0
+                            and task.lease_expires_at <= now
+                        )
+                        or (
+                            task.status in {"retry_wait", "failed"}
+                            and bool(task.claim_token)
+                        )
+                    )
+                ),
+                key=lambda task: task.lease_expires_at or task.updated_at,
+            )[:limit]
+            for task in stale:
+                stale_attempt_token = task.claim_token
+                if task.status == "processing":
+                    message = task.last_error or "Worker lease 已逾時"
+                    task.last_error = message
+                    task.error_message = message
+                    task.claimed_by = ""
+                    # claim_token 暫留作清理憑證；清理完成後才清空，期間
+                    # claim_next_pending_task 不會重新領取這筆任務。
+                    task.heartbeat_at = 0.0
+                    task.lease_expires_at = 0.0
+                    task.updated_at = now
+                    if task.attempt_count >= max_attempts:
+                        task.status = "failed"
+                        task.next_attempt_at = 0.0
+                    else:
+                        task.status = "retry_wait"
+                        task.next_attempt_at = now
+                recovered.append(
+                    RecoveredTaskAttempt(task, stale_attempt_token)
+                )
+            if recovered:
+                self._save()
+        return recovered
+
+    def finish_recovered_task_cleanup(
+        self,
+        task_id: str,
+        attempt_token: str,
+    ) -> bool:
+        """清理完成後才移除舊 token，讓 retry_wait 可以重新被領取。"""
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if (
+                task is None
+                or task.status not in {"retry_wait", "failed"}
+                or task.claim_token != attempt_token
+            ):
+                return False
+            task.claim_token = ""
+            task.claimed_by = ""
+            task.updated_at = time.time()
+            self._save()
+        return True
+
+    def fail_or_retry_task(
+        self,
+        task_id: str,
+        claim_token: str,
+        error_message: str,
+        *,
+        max_attempts: int,
+        retry_at: float,
+    ) -> AnnotationTask | None:
+        """以 fencing token 記錄失敗；回傳 None 表示 attempt 已失去 lease。"""
+        now = time.time()
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if (
+                task is None
+                or task.status != "processing"
+                or task.claim_token != claim_token
+            ):
+                return None
+            task.last_error = error_message
+            task.error_message = error_message
+            task.claimed_by = ""
+            task.claim_token = ""
+            task.heartbeat_at = 0.0
+            task.lease_expires_at = 0.0
+            task.updated_at = now
+            if task.attempt_count >= max_attempts:
+                task.status = "failed"
+                task.next_attempt_at = 0.0
+            else:
+                task.status = "retry_wait"
+                task.next_attempt_at = retry_at
+            self._save()
+            return task
+
+    def complete_claimed_task(
+        self,
+        task: AnnotationTask,
+        claim_token: str,
+    ) -> AnnotationTask | None:
+        """只有仍持有 claim_token 的 Worker 可以發布完成結果。"""
+        with self._lock:
+            stored = self.tasks.get(task.id)
+            if (
+                stored is None
+                or stored.status != "processing"
+                or stored.claim_token != claim_token
+            ):
+                return None
+            task.status = "completed"
+            task.claimed_by = ""
+            task.claim_token = ""
+            task.heartbeat_at = 0.0
+            task.lease_expires_at = 0.0
+            task.next_attempt_at = 0.0
+            task.error_message = ""
+            task.last_error = ""
+            task.updated_at = time.time()
+            self.tasks[task.id] = task
+            self._save()
             return task
     # 背景執行
     def update_task(

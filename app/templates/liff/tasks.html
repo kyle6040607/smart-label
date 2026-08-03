@@ -90,6 +90,25 @@
                 >
                     新增照片
                 </button>
+
+                <button
+                    class="submit-button task-excluded-toggle"
+                    type="button"
+                    hidden
+                >
+                    查看未通過圖片
+                </button>
+            </div>
+
+            <div class="task-excluded-panel" hidden>
+                <div class="task-excluded-list"></div>
+                <button
+                    class="submit-button task-excluded-more"
+                    type="button"
+                    hidden
+                >
+                    載入更多
+                </button>
             </div>
         </article>
     </template>
@@ -105,7 +124,7 @@
         src="https://static.line-scdn.net/liff/edge/2/sdk.js"
     ></script>
     <script
-        src="{{ url_for('static', filename='js/liff_tasks.js') }}?v=2"
+        src="{{ url_for('static', filename='js/liff_tasks.js') }}?v=3"
     ></script>
 </body>
 </html>

@@ -13,6 +13,7 @@ const taskCardTemplate = document.getElementById("task-card-template");
 const TASK_STATUS_LABELS = {
     pending: "排隊中",
     processing: "處理中",
+    retry_wait: "等待重試",
     completed: "已完成",
     failed: "失敗",
 };
@@ -46,6 +47,10 @@ function createTaskCard(task) {
     const taskInfoElement = card.querySelector(".task-info");
     const taskErrorElement = card.querySelector(".task-error");
     const downloadElement = card.querySelector(".task-download");
+    const excludedToggle = card.querySelector(".task-excluded-toggle");
+    const excludedPanel = card.querySelector(".task-excluded-panel");
+    const excludedList = card.querySelector(".task-excluded-list");
+    const excludedMore = card.querySelector(".task-excluded-more");
 
     promptElement.textContent = task.prompt;
     taskStatusElement.textContent =
@@ -56,8 +61,12 @@ function createTaskCard(task) {
         ? `資料集 v${task.dataset_version}`
         : "尚未產生資料集";
 
+    const resultText = task.task_status === "completed"
+        ? `匯出 ${task.exported_count}・未通過 ${task.excluded_count}・未偵測 ${task.no_detection_count}`
+        : `第 ${task.attempt_count} 次嘗試`;
+
     taskInfoElement.textContent =
-        `${task.image_count} 張圖片・${versionText}・`
+        `${task.image_count} 張圖片・${versionText}・${resultText}・`
         + `更新於 ${formatUpdatedAt(task.updated_at)}`;
 
     if (task.error_message) {
@@ -74,6 +83,61 @@ function createTaskCard(task) {
         });
     }
 
+    if (task.excluded_count > 0) {
+        excludedToggle.textContent = `查看未通過圖片（${task.excluded_count}）`;
+        excludedToggle.hidden = false;
+        let nextPage = 1;
+
+        const loadPage = async () => {
+            excludedMore.disabled = true;
+            const response = await fetch(`/liff/tasks/${task.task_id}/excluded`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    id_token: liff.getIDToken(),
+                    page: nextPage,
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.message || "無法載入未通過圖片");
+            }
+            for (const item of result.items) {
+                const figure = document.createElement("figure");
+                figure.className = "task-excluded-item";
+                const image = document.createElement("img");
+                image.src = item.thumbnail_url;
+                image.alt = "低信心標註縮圖";
+                image.loading = "lazy";
+                const caption = document.createElement("figcaption");
+                caption.textContent = `信心 ${(item.detection_confidence * 100).toFixed(1)}%`;
+                figure.append(image, caption);
+                excludedList.appendChild(figure);
+            }
+            nextPage += 1;
+            excludedMore.hidden = !result.has_more;
+            excludedMore.disabled = false;
+        };
+
+        excludedToggle.addEventListener("click", async () => {
+            excludedPanel.hidden = !excludedPanel.hidden;
+            if (!excludedPanel.hidden && excludedList.children.length === 0) {
+                try {
+                    await loadPage();
+                } catch (error) {
+                    excludedList.textContent = error.message;
+                }
+            }
+        });
+        excludedMore.addEventListener("click", async () => {
+            try {
+                await loadPage();
+            } catch (error) {
+                excludedList.textContent = error.message;
+            }
+        });
+    }
+
     return card;
 }
 
@@ -85,10 +149,10 @@ function renderTasks(tasks) {
     historyTasksElement.replaceChildren();
 
     const activeTasks = tasks.filter(
-        (task) => ["pending", "processing"].includes(task.task_status)
+        (task) => ["pending", "retry_wait", "processing"].includes(task.task_status)
     );
     const historyTasks = tasks.filter(
-        (task) => !["pending", "processing"].includes(task.task_status)
+        (task) => !["pending", "retry_wait", "processing"].includes(task.task_status)
     );
 
     for (const task of activeTasks) {

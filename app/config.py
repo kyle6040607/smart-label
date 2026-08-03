@@ -76,6 +76,16 @@ class Config:
     # Ultralytics 要求為 32 的倍數，可用範圍見 routes/segment.py 的驗證。
     yolo_imgsz: int = int(os.getenv("YOLO_IMGSZ", "640"))
 
+    # --- LIFF 固定推論/匯出設定（不讀取 Web 動態 parameters）---
+    # 先以較寬鬆門檻取得候選，再以 detection confidence 決定是否匯出。
+    liff_yolo_world_confidence: float = float(
+        os.getenv("LIFF_YOLO_WORLD_CONFIDENCE", "0.15")
+    )
+    liff_export_confidence_threshold: float = float(
+        os.getenv("LIFF_EXPORT_CONFIDENCE_THRESHOLD", "0.5")
+    )
+    liff_yolo_imgsz: int = int(os.getenv("LIFF_YOLO_IMGSZ", "640"))
+
     # --- few-shot 分類器（提案第 6、7 頁）---
     # classifier: "knn" | "softmax"
     classifier_kind: str = os.getenv("CLASSIFIER", "knn")
@@ -161,6 +171,43 @@ class Config:
     # Cloud Run / App Engine 掛 Cloud SQL 時走 unix socket：
     # /cloudsql/<PROJECT>:<REGION>:<INSTANCE>；設了這個就不用 mysql_host
     mysql_unix_socket: str = os.getenv("MYSQL_UNIX_SOCKET", "")
+
+    # --- LIFF 背景任務 lease / retry ---
+    task_heartbeat_seconds: float = float(
+        os.getenv("TASK_HEARTBEAT_SECONDS", "60")
+    )
+    task_lease_seconds: float = float(
+        os.getenv("TASK_LEASE_SECONDS", "900")
+    )
+    task_recovery_scan_seconds: float = float(
+        os.getenv("TASK_RECOVERY_SCAN_SECONDS", "60")
+    )
+    task_recovery_batch_size: int = int(
+        os.getenv("TASK_RECOVERY_BATCH_SIZE", "10")
+    )
+    task_max_attempts: int = int(os.getenv("TASK_MAX_ATTEMPTS", "3"))
+    task_retry_base_seconds: float = float(
+        os.getenv("TASK_RETRY_BASE_SECONDS", "60")
+    )
+
+    # --- LIFF 建立任務後觸發 Cloud Run Job ---
+    # Job 名稱留空時停用，確保地端與測試環境不會誤觸正式 Job。
+    cloud_run_task_job_name: str = os.getenv(
+        "CLOUD_RUN_TASK_JOB_NAME", ""
+    ).strip()
+    cloud_run_task_job_region: str = os.getenv(
+        "CLOUD_RUN_TASK_JOB_REGION", "asia-east1"
+    ).strip()
+    cloud_run_task_job_project_id: str = (
+        os.getenv("CLOUD_RUN_TASK_JOB_PROJECT_ID", "")
+        or os.getenv("GCS_PROJECT_ID", "")
+        or os.getenv("GCP_PROJECT_ID", "")
+        or os.getenv("GCP_PROJECT", "")
+        or os.getenv("GOOGLE_CLOUD_PROJECT", "")
+    ).strip()
+    cloud_run_task_job_trigger_timeout_seconds: float = float(
+        os.getenv("CLOUD_RUN_TASK_JOB_TRIGGER_TIMEOUT_SECONDS", "5")
+    )
 
     @property
     def use_mysql(self) -> bool:

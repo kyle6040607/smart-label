@@ -77,6 +77,73 @@ def push_task_download(
         return False
 
 
+def push_task_no_export(
+    line_user_id: str,
+    task_id: str,
+    excluded_count: int,
+) -> bool:
+    """推播已完成但沒有可匯出 ZIP 的結果。"""
+    if not line_user_id or not task_id:
+        return False
+    detail = (
+        f"共有 {excluded_count} 個結果低於匯出信心門檻。"
+        if excluded_count > 0
+        else "沒有偵測到可匯出的結果。"
+    )
+    try:
+        with ApiClient(configuration) as api_client:
+            MessagingApi(api_client).push_message(
+                PushMessageRequest(
+                    to=line_user_id,
+                    messages=[
+                        TextMessage(
+                            text=(
+                                f"標註任務 {task_id} 已完成，但未產生 ZIP。\n"
+                                f"{detail}\n"
+                                "請從 Rich Menu 開啟任務紀錄查看未通過縮圖。"
+                            )
+                        )
+                    ],
+                )
+            )
+        return True
+    except Exception as exc:
+        print(f"LINE 無匯出結果通知發送失敗：{exc}")
+        return False
+
+
+def push_task_failed(
+    line_user_id: str,
+    task_id: str,
+    error_message: str,
+) -> bool:
+    """推播達最大嘗試次數後的最終失敗通知。"""
+    if not line_user_id or not task_id:
+        return False
+    message = error_message.strip() or "處理圖片時發生錯誤"
+    if len(message) > 300:
+        message = f"{message[:297]}..."
+    try:
+        with ApiClient(configuration) as api_client:
+            MessagingApi(api_client).push_message(
+                PushMessageRequest(
+                    to=line_user_id,
+                    messages=[
+                        TextMessage(
+                            text=(
+                                f"標註任務 {task_id} 處理失敗。\n"
+                                f"系統已完成自動重試，請稍後重新建立任務。\n"
+                                f"原因：{message}"
+                            )
+                        )
+                    ],
+                )
+            )
+        return True
+    except Exception as exc:
+        print(f"LINE 任務失敗通知發送失敗：{exc}")
+        return False
+
 @bp.post("/callback")
 def callback():
     """驗證 LINE 簽章並轉交 Webhook 事件。"""

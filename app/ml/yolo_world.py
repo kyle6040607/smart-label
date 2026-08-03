@@ -63,7 +63,8 @@ class YoloWorldDetector:
         conf: float | None = None,
         imgsz: int = 640,
         scaleup: bool = False,
-    ) -> list[list[float]]:
+        include_confidence: bool = False,
+    ) -> list:
         """給定影像與文字，找出所有符合的 bounding boxes。
 
         參數:
@@ -75,7 +76,8 @@ class YoloWorldDetector:
             scaleup: 是否放大圖片 (預設 False，若小於 imgsz 則不放大，僅補邊)
 
         回傳:
-            格式為 list[list[float]]，每個元素為原圖空間座標 [x1, y1, x2, y2]
+            預設回傳原圖座標；include_confidence=True 時回傳
+            (bbox, detection_confidence)，供 LIFF 匯出門檻使用。
         """
         orig_h, orig_w = image.shape[:2]
 
@@ -143,7 +145,13 @@ class YoloWorldDetector:
             x2 = max(0.0, min(float(orig_w), float(x2)))
             y2 = max(0.0, min(float(orig_h), float(y2)))
 
-            boxes.append([x1, y1, x2, y2])
+            bbox = [x1, y1, x2, y2]
+            detection_confidence = float(box.conf[0].cpu().item())
+            boxes.append(
+                (bbox, detection_confidence)
+                if include_confidence
+                else bbox
+            )
 
         print(
             f"🎯 [YOLO-World] (Letterbox imgsz={imgsz}, scaleup={scaleup}) 符合 Prompt '{prompt}' 的原圖座標框數: {len(boxes)}"

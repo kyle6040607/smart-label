@@ -6,7 +6,7 @@ from PIL import Image
 
 from app import create_app
 from app.config import Config
-from app.models import AnnotationTask
+from app.models import AnnotationTask, User
 from app.services import line_login
 
 
@@ -87,6 +87,7 @@ def test_liff_upload_creates_annotation_task(
     assert result is not None
     assert result["ok"] is True
     assert result["task_status"] == "pending"
+    assert result["job_triggered"] is False
     assert result["image_count"] == 1
     assert result["user_id"] == ""
 
@@ -109,6 +110,118 @@ def test_liff_upload_creates_annotation_task(
     assert image_record.width == 20
     assert image_record.height == 10
     assert Path(image_record.path).exists()
+
+
+def test_liff_upload_triggers_configured_cloud_run_job(app, monkeypatch):
+    app.smart_config.cloud_run_task_job_name = "smart-label-task-worker"
+    operations = []
+    monkeypatch.setattr(
+        "app.routes.liff.trigger_task_worker",
+        lambda config: operations.append(config.cloud_run_task_job_name)
+        or "operations/job-run-1",
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-job-trigger-test",
+            "name": "Job 觸發測試",
+            "picture": "",
+        },
+    )
+
+    response = app.test_client().post(
+        "/liff/upload",
+        data={
+            "prompt": "cat",
+            "id_token": "fake-id-token",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    assert result["job_triggered"] is True
+    assert operations == ["smart-label-task-worker"]
+    assert app.repo.get_task(result["task_id"]).status == "pending"
+
+
+def test_liff_upload_keeps_pending_task_when_job_trigger_fails(app, monkeypatch):
+    app.smart_config.cloud_run_task_job_name = "smart-label-task-worker"
+    monkeypatch.setattr(
+        "app.routes.liff.trigger_task_worker",
+        lambda config: (_ for _ in ()).throw(RuntimeError(config.cloud_run_task_job_name)),
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-job-trigger-failure",
+            "name": "Job 失敗測試",
+            "picture": "",
+        },
+    )
+
+    response = app.test_client().post(
+        "/liff/upload",
+        data={
+            "prompt": "cat",
+            "id_token": "fake-id-token",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    assert result["job_triggered"] is False
+    assert app.repo.get_task(result["task_id"]).status == "pending"
+
+
+def test_liff_upload_assigns_linked_user_default_project(
+    app,
+    monkeypatch,
+):
+    linked_user = User(
+        username="linked-user",
+        line_user_id="U-linked-user",
+        display_name="已綁定使用者",
+    )
+    app.repo.add_user(linked_user)
+
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-linked-user",
+            "name": "LINE 顯示名稱",
+            "picture": "",
+        },
+    )
+
+    response = app.test_client().post(
+        "/liff/upload",
+        data={
+            "prompt": "請標註圖片中的貓咪",
+            "id_token": "fake-id-token",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    task = app.repo.get_task(result["task_id"])
+    image_record = app.repo.get_image(task.image_ids[0])
+    project = app.repo.get_project(image_record.project_id)
+
+    assert task.user_id == linked_user.id
+    assert image_record.owner_id == linked_user.id
+    assert project is not None
+    assert project.owner_id == linked_user.id
+    assert task.settings_snapshot["project_id"] == project.id
+    assert image_record in app.repo.list_images(project.id)
 
 def test_liff_task_download_checks_token_and_status(
     app,
@@ -212,6 +325,7 @@ def test_liff_task_status_returns_download_url(
     assert "download_url" not in pending_result
 
     task.status = "completed"
+    task.dataset_zip_path = "dataset.zip"
     app.repo.update_task(task)
 
     completed_response = client.get(
@@ -341,3 +455,51 @@ def test_liff_task_list_only_returns_verified_user_tasks(
     assert "download_url" in task_result
     assert "line_user_id" not in task_result
     assert "download_token" not in task_result
+
+
+def test_liff_excluded_results_require_owner_and_return_thumbnail(
+    app,
+    tmp_path,
+    monkeypatch,
+):
+    preview = tmp_path / "preview.jpg"
+    preview.write_bytes(b"jpeg-preview")
+    task = app.repo.add_task(
+        AnnotationTask(
+            line_user_id="U-owner",
+            status="completed",
+            excluded_count=1,
+            excluded_results=[
+                {
+                    "segment_id": "seg-1",
+                    "image_id": "img-1",
+                    "detection_confidence": 0.3,
+                    "preview_path": str(preview),
+                }
+            ],
+        )
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda token, *args: {
+            "sub": "U-owner" if token == "owner-token" else "U-other"
+        },
+    )
+    client = app.test_client()
+    denied = client.post(
+        f"/liff/tasks/{task.id}/excluded",
+        json={"id_token": "other-token"},
+    )
+    assert denied.status_code == 404
+
+    response = client.post(
+        f"/liff/tasks/{task.id}/excluded",
+        json={"id_token": "owner-token"},
+    )
+    assert response.status_code == 200
+    item = response.get_json()["items"][0]
+    assert "preview_path" not in item
+    thumbnail = client.get(item["thumbnail_url"])
+    assert thumbnail.status_code == 200
+    assert thumbnail.data == b"jpeg-preview"

@@ -362,6 +362,9 @@ class Pipeline:
         prompt: str,
         parsed_classes: list[str] | None = None,
         progress_callback: Callable[[dict], None] | None = None,
+        *,
+        annotation_task_id: str = "",
+        task_attempt_token: str = "",
     ) -> list[Segment]:
         """依文字提示分割圖片中的物件。"""
         prompt = prompt.strip()
@@ -433,6 +436,8 @@ class Pipeline:
                     image_id=image.id,
                     bbox=(x1, y1, x2 - x1, y2 - y1),
                     area=int(mask.sum()),
+                    annotation_task_id=annotation_task_id,
+                    task_attempt_token=task_attempt_token,
                 )
                 seg.mask_path = self._save_mask(
                     image.id,
@@ -442,6 +447,7 @@ class Pipeline:
                 seg.predicted_label = cls
                 seg.probs = {cls: 1.0}
                 seg.confidence = 0.88
+                seg.detection_confidence = 0.88
                 seg.needs_review = needs_review(
                     seg.confidence,
                     self.config.confidence_threshold,
@@ -474,17 +480,18 @@ class Pipeline:
                 device=segmenter.device,
                 conf=self.config.yolo_world_confidence,
                 imgsz=self.config.yolo_imgsz,
+                include_confidence=True,
             )
             detections.extend(
-                (cls_name, bbox)
-                for bbox in boxes
+                (cls_name, bbox, detection_confidence)
+                for bbox, detection_confidence in boxes
             )
 
         segments: list[Segment] = []
         total_boxes = len(detections)
 
         # 將每個 bounding box 交給 SAM 分割
-        for i, (cls_name, bbox) in enumerate(detections):
+        for i, (cls_name, bbox, detection_confidence) in enumerate(detections):
             if progress_callback:
                 progress_val = 75 + int(
                     (i / max(total_boxes, 1)) * 20
@@ -506,6 +513,9 @@ class Pipeline:
                     image_id=image.id,
                     bbox=tuple(md["bbox"]),
                     area=md["area"],
+                    detection_confidence=detection_confidence,
+                    annotation_task_id=annotation_task_id,
+                    task_attempt_token=task_attempt_token,
                 )
                 seg.mask_path = self._save_mask(
                     image.id,
@@ -695,7 +705,7 @@ class Pipeline:
             if classifier is None:
                 classifier = self._new_classifier()
                 self.classifiers[key] = classifier
-            
+
             if ":" in key:
                 o_id, p_id = key.split(":", 1)
                 examples = self.repo.list_examples(owner_id=o_id, project_id=p_id)

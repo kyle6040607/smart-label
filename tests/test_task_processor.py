@@ -1,4 +1,5 @@
 import zipfile
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -6,9 +7,66 @@ import pytest
 
 from app.config import Config
 from app.models import AnnotationTask, ImageRecord
+from app.models import Segment
 from app.repository import Repository
 from app.services.pipeline import Pipeline
-from app.services.task_processor import process_task
+from app.services.task_processor import cleanup_task_attempt, process_task
+from app.storage import LocalStorage, StorageService
+
+
+def test_cleanup_task_attempt_removes_only_stale_attempt_artifacts(tmp_path):
+    repo = Repository(tmp_path / "store.json")
+    storage = StorageService(
+        local=LocalStorage(
+            data_dir=tmp_path / "data",
+            upload_dir=tmp_path / "uploads",
+            mask_dir=tmp_path / "masks",
+        )
+    )
+    stale_mask = storage.save_bytes("masks/stale.png", b"mask")
+    current_mask = storage.save_bytes("masks/current.png", b"mask")
+    stale_preview = storage.save_bytes(
+        "previews/tasks/task-1/attempts/stale/segment.jpg",
+        b"preview",
+    )
+    current_preview = storage.save_bytes(
+        "previews/tasks/task-1/attempts/current/segment.jpg",
+        b"preview",
+    )
+    stale_zip = storage.save_bytes(
+        "datasets/task-1/attempts/stale/dataset_v1.zip",
+        b"zip",
+    )
+    current_zip = storage.save_bytes(
+        "datasets/task-1/attempts/current/dataset_v1.zip",
+        b"zip",
+    )
+    stale_segment = repo.add_segment(
+        Segment(
+            mask_path=stale_mask,
+            annotation_task_id="task-1",
+            task_attempt_token="stale",
+        )
+    )
+    current_segment = repo.add_segment(
+        Segment(
+            mask_path=current_mask,
+            annotation_task_id="task-1",
+            task_attempt_token="current",
+        )
+    )
+
+    cleanup_task_attempt(repo, storage, "task-1", "stale")
+
+    remaining_ids = {segment.id for segment in repo.list_segments()}
+    assert stale_segment.id not in remaining_ids
+    assert current_segment.id in remaining_ids
+    assert not storage.exists(stale_mask)
+    assert storage.exists(current_mask)
+    assert not storage.exists(stale_preview)
+    assert storage.exists(current_preview)
+    assert not storage.exists(stale_zip)
+    assert storage.exists(current_zip)
 
 
 def test_process_task_creates_yolo_zip(tmp_path):
@@ -103,7 +161,9 @@ def test_process_task_rejects_empty_detection(tmp_path):
             self,
             image,
             prompt,
+            **kwargs,
         ):
+            del image, prompt, kwargs
             return []
 
     repo = Repository(
@@ -139,6 +199,97 @@ def test_process_task_rejects_empty_detection(tmp_path):
         / task.id
         / "dataset_v1.zip"
     ).exists()
+
+
+def test_process_task_refits_linked_user_classifier_for_image_project(tmp_path):
+    class RecordingPipeline:
+        def __init__(self):
+            self.refit_calls = []
+
+        def refit(self, owner_id, project_id):
+            self.refit_calls.append((owner_id, project_id))
+
+        def segment_text(self, image, prompt, **kwargs):
+            del image, prompt, kwargs
+            return []
+
+    repo = Repository(tmp_path / "store.json")
+    image = repo.add_image(
+        ImageRecord(
+            owner_id="owner-1",
+            project_id="project-1",
+            filename="empty.jpg",
+        )
+    )
+    task = repo.add_task(
+        AnnotationTask(
+            user_id="owner-1",
+            prompt="cat",
+            image_ids=[image.id],
+            status="processing",
+        )
+    )
+    pipeline = RecordingPipeline()
+
+    with pytest.raises(ValueError, match="找不到符合標註內容的物件"):
+        process_task(repo, pipeline, task, tmp_path / "tasks")
+
+    assert pipeline.refit_calls == [("owner-1", "project-1")]
+    assert task.settings_snapshot["project_id"] == "project-1"
+
+
+def test_process_task_excludes_low_confidence_and_creates_thumbnail(tmp_path):
+    class LowConfidencePipeline:
+        def segment_text(self, image, prompt, **kwargs):
+            del prompt
+            segment = Segment(
+                image_id=image.id,
+                bbox=(0, 0, 20, 20),
+                area=400,
+                predicted_label="cat",
+                detection_confidence=0.49,
+                annotation_task_id=kwargs["annotation_task_id"],
+                task_attempt_token=kwargs["task_attempt_token"],
+            )
+            repo.add_segment(segment)
+            return [segment]
+
+    image_path = tmp_path / "cat.png"
+    pixels = np.zeros((30, 30, 3), dtype=np.uint8)
+    assert cv2.imwrite(str(image_path), pixels)
+    repo = Repository(tmp_path / "store.json")
+    image = repo.add_image(
+        ImageRecord(
+            filename="cat.png",
+            path=str(image_path),
+            width=30,
+            height=30,
+        )
+    )
+    task = repo.add_task(
+        AnnotationTask(
+            prompt="cat",
+            image_ids=[image.id],
+            status="processing",
+            settings_snapshot={
+                "detection_confidence_threshold": 0.15,
+                "export_confidence_threshold": 0.5,
+                "yolo_imgsz": 640,
+            },
+        )
+    )
+    result = process_task(
+        repo,
+        LowConfidencePipeline(),
+        task,
+        tmp_path / "tasks",
+    )
+    assert result.status == "completed"
+    assert result.exported_count == 0
+    assert result.excluded_count == 1
+    assert result.dataset_zip_path == ""
+    assert result.completion_reason == "all_segments_below_confidence"
+    assert Path(result.excluded_results[0]["preview_path"]).exists()
 
 
 def test_process_task_rejects_local_fallback_when_gcs_is_enabled(
@@ -210,9 +361,18 @@ def test_process_task_only_processes_new_images(
         def __init__(self):
             self.image_ids = []
 
-        def segment_text(self, image, prompt):
+        def segment_text(self, image, prompt, **kwargs):
+            del prompt
             self.image_ids.append(image.id)
-            return [object()]
+            segment = Segment(
+                image_id=image.id,
+                predicted_label="cat",
+                detection_confidence=0.9,
+                annotation_task_id=kwargs.get("annotation_task_id", ""),
+                task_attempt_token=kwargs.get("task_attempt_token", ""),
+            )
+            repo.add_segment(segment)
+            return [segment]
 
     dataset_image_ids = []
 
@@ -222,8 +382,9 @@ def test_process_task_only_processes_new_images(
         output,
         image_ids=None,
         storage=None,
+        **kwargs,
     ):
-        del repo, fmt, storage
+        del repo, fmt, storage, kwargs
         dataset_image_ids.append(set(image_ids or set()))
         output.write(
             f"version-{len(dataset_image_ids)}".encode()
