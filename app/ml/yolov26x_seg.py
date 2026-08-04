@@ -232,8 +232,8 @@ def train_yolov26x_seg(
             if models_dir_file.is_file():
                 weights_file = models_dir_file
             else:
-                # 依序尋找 models/ 內的預設備用權重
-                for fallback_name in ["yolo26n.pt", "yolo26x-seg.pt", "yolov8x-worldv2.pt"]:
+                # 使用唯一的 Segmentation 基礎權重 yolo26x-seg.pt
+                for fallback_name in ["yolo26x-seg.pt"]:
                     fb_path = models_dir / fallback_name
                     if fb_path.is_file():
                         weights_file = fb_path
@@ -243,6 +243,21 @@ def train_yolov26x_seg(
                     weights_file = models_dir / weights_file.name
 
         model = YOLO(str(weights_file))
+
+        # 註冊取消訊號監聽器 Callback (在每個 Batch / Epoch 結束時檢查 task 狀態)
+        def _check_cancel_callback(trainer):
+            if hasattr(repo, "get_task") and task and task.id:
+                refreshed_task = repo.get_task(task.id)
+                current_status = getattr(refreshed_task, "status", task.status)
+            else:
+                current_status = getattr(task, "status", "")
+
+            if current_status == "canceled":
+                logger.warning("🛑 [YOLO Callback] 偵測到任務取消訊號，優化中斷訓練流程...")
+                raise StopIteration("使用者手動取消訓練")
+
+        model.add_callback("on_train_batch_end", _check_cancel_callback)
+        model.add_callback("on_train_epoch_end", _check_cancel_callback)
 
         train_runs_dir = work_dir / "runs"
         results = model.train(
