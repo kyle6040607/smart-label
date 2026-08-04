@@ -321,9 +321,14 @@
         <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
           <span>🤖 YOLOv26x-seg 線上訓練</span>
         </h3>
-        <button id="startTrainingBtn" class="btn-primary" style="width: 100%; padding: 8px 12px; font-weight: 600; background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none; border-radius: 6px; color: #fff; cursor: pointer; transition: all 0.2s;">
-          🚀 開始訓練 YOLOv26x-seg
-        </button>
+        <div style="display: flex; gap: 8px; width: 100%;">
+          <button id="startTrainingBtn" class="btn-primary" style="flex: 1; padding: 8px 12px; font-weight: 600; background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none; border-radius: 6px; color: #fff; cursor: pointer; transition: all 0.2s;">
+            🚀 開始訓練 YOLOv26x-seg
+          </button>
+          <button id="stopTrainingBtn" type="button" class="btn-danger" style="display: none; padding: 8px 12px; font-weight: 600; background: linear-gradient(135deg, #dc2626, #b91c1c); border: none; border-radius: 6px; color: #fff; cursor: pointer; transition: all 0.2s;">
+            🛑 停止訓練
+          </button>
+        </div>
         <div id="trainingStatusContainer" style="margin-top: 10px; font-size: 12px; line-height: 1.5;">
           <div style="display: flex; align-items: center; gap: 6px;">
             <span id="trainingStatusBadge" style="display: inline-block; padding: 2px 8px; border-radius: 12px; font-weight: 600; font-size: 11px; background: #9ca3af; color: #fff;">
