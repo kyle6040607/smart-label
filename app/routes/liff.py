@@ -36,7 +36,9 @@
 """
 import hashlib
 import io
+import re
 import secrets
+import time
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -69,6 +71,11 @@ bp = Blueprint(
 
 _DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 _EXCLUDED_PAGE_SIZE = 20
+_LIFF_UPLOAD_MAX_IMAGES = 30
+_LIFF_UPLOAD_BATCH_MAX_IMAGES = 5
+_LIFF_UPLOAD_BATCH_MAX_BYTES = 15 * 1024 * 1024
+_LIFF_UPLOAD_SESSION_TTL_SECONDS = 24 * 60 * 60
+_LIFF_UPLOAD_BATCH_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _stream_file(storage, reference: str):
@@ -76,6 +83,85 @@ def _stream_file(storage, reference: str):
     with storage.open_reader(reference) as reader:
         while chunk := reader.read(_DOWNLOAD_CHUNK_SIZE):
             yield chunk
+
+
+def _liff_task_settings(cfg, project_id: str) -> dict:
+    """建立不受 Web 動態參數影響的 LIFF 任務設定快照。"""
+    return {
+        "detection_confidence_threshold": cfg.liff_yolo_world_confidence,
+        "export_confidence_threshold": cfg.liff_export_confidence_threshold,
+        "yolo_imgsz": cfg.liff_yolo_imgsz,
+        "model_name": "yolov8x-worldv2",
+        "model_version": "v8.4.0",
+        "project_id": project_id,
+        "exclusion_rule": (
+            "detection_confidence < export_confidence_threshold"
+        ),
+    }
+
+
+def _resolve_liff_owner(repo, profile: dict) -> tuple[str, str, str]:
+    """由已驗證的 LINE profile 決定 Web owner 與預設專案。"""
+    line_user_id = profile["sub"]
+    display_name = profile.get("name", "")
+    user = repo.get_user_by_line_id(line_user_id)
+    web_user_id = user.id if user is not None else ""
+    web_project_id = (
+        repo.get_or_create_default_project(web_user_id).id
+        if web_user_id
+        else ""
+    )
+    response_display_name = (
+        user.display_name or user.username
+        if user is not None
+        else display_name
+    )
+    return web_user_id, web_project_id, response_display_name
+
+
+def _upload_snapshot(task: AnnotationTask) -> dict:
+    return dict(task.settings_snapshot.get("upload") or {})
+
+
+def _upload_expired(task: AnnotationTask) -> bool:
+    expires_at = float(_upload_snapshot(task).get("expires_at", 0.0))
+    return bool(expires_at and expires_at < time.time())
+
+
+def _expire_stale_uploads(repo, storage, line_user_id: str) -> int:
+    """清除同一 LINE 使用者逾期且未 finalize 的 LIFF 上傳。"""
+    expired_count = 0
+    for task in repo.list_tasks_by_line_user_id(line_user_id):
+        if task.status != "uploading" or not _upload_expired(task):
+            continue
+
+        paths = repo.delete_images_batch(task.image_ids)
+        for path in paths:
+            try:
+                storage.delete(path)
+            except Exception:  # noqa: BLE001 清理失敗不可阻擋新的上傳
+                current_app.logger.warning(
+                    "無法刪除逾期 LIFF 上傳檔案：%s",
+                    path,
+                    exc_info=True,
+                )
+        try:
+            storage.delete_prefix(f"liff-uploads/{task.id}")
+        except Exception:  # noqa: BLE001 清理失敗不可阻擋新的上傳
+            current_app.logger.warning(
+                "無法清除逾期 LIFF 上傳前綴：task_id=%s",
+                task.id,
+                exc_info=True,
+            )
+
+        task.image_ids = []
+        task.status = "upload_expired"
+        task.completion_reason = "upload_expired"
+        task.error_message = "圖片上傳工作階段已過期"
+        repo.update_task(task)
+        expired_count += 1
+
+    return expired_count
 
 
 def _verify_liff_profile(id_token: str):
@@ -201,8 +287,13 @@ def list_tasks():
 
     line_user_id = profile["sub"]
     repo = get_repo()
+    _expire_stale_uploads(repo, get_storage(), line_user_id)
 
-    tasks = repo.list_tasks_by_line_user_id(line_user_id)
+    tasks = [
+        task
+        for task in repo.list_tasks_by_line_user_id(line_user_id)
+        if task.status not in {"uploading", "upload_expired"}
+    ]
 
     return jsonify(
         {
@@ -210,6 +301,384 @@ def list_tasks():
             "task_count": len(tasks),
             "tasks": [_task_summary(task) for task in tasks],
         }
+    )
+
+
+@bp.post("/uploads/init")
+def initialize_chunked_upload():
+    """建立 LIFF 分批上傳 session；此時 Worker 尚不可領取。"""
+    payload = request.get_json(silent=True) or {}
+    id_token = str(payload.get("id_token", "")).strip()
+    prompt = str(payload.get("prompt", "")).strip()
+
+    try:
+        expected_image_count = int(payload.get("expected_image_count", 0))
+    except (TypeError, ValueError):
+        expected_image_count = 0
+
+    if not prompt:
+        return jsonify({"ok": False, "message": "請輸入標註內容"}), 400
+    if len(prompt) > 200:
+        return jsonify({"ok": False, "message": "標註內容不可超過 200 字"}), 400
+    if not 1 <= expected_image_count <= _LIFF_UPLOAD_MAX_IMAGES:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "message": (
+                        f"每個任務需選擇 1～{_LIFF_UPLOAD_MAX_IMAGES} 張圖片"
+                    ),
+                }
+            ),
+            400,
+        )
+
+    profile, verification_error = _verify_liff_profile(id_token)
+    if verification_error is not None:
+        return verification_error
+
+    cfg = get_config()
+    repo = get_repo()
+    _expire_stale_uploads(repo, get_storage(), profile["sub"])
+    web_user_id, web_project_id, display_name = _resolve_liff_owner(
+        repo,
+        profile,
+    )
+    expires_at = time.time() + _LIFF_UPLOAD_SESSION_TTL_SECONDS
+    settings_snapshot = _liff_task_settings(cfg, web_project_id)
+    settings_snapshot["upload"] = {
+        "expected_image_count": expected_image_count,
+        "completed_batches": {},
+        "expires_at": expires_at,
+        "finalized_at": 0.0,
+    }
+    task = AnnotationTask(
+        user_id=web_user_id,
+        project_id=web_project_id,
+        line_user_id=profile["sub"],
+        prompt=prompt,
+        status="uploading",
+        settings_snapshot=settings_snapshot,
+    )
+    repo.add_task(task)
+
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "session_id": task.id,
+                "task_status": task.status,
+                "expected_image_count": expected_image_count,
+                "uploaded_count": 0,
+                "expires_at": expires_at,
+                "display_name": display_name,
+                "batch_max_images": _LIFF_UPLOAD_BATCH_MAX_IMAGES,
+                "batch_max_bytes": _LIFF_UPLOAD_BATCH_MAX_BYTES,
+            }
+        ),
+        201,
+    )
+
+
+@bp.post("/uploads/<session_id>/batch")
+def upload_image_batch(session_id: str):
+    """驗證並儲存一小批 LIFF 圖片；相同 batch_id 可安全重送。"""
+    id_token = request.form.get("id_token", "").strip()
+    batch_id = request.form.get("batch_id", "").strip()
+    profile, verification_error = _verify_liff_profile(id_token)
+    if verification_error is not None:
+        return verification_error
+
+    repo = get_repo()
+    task = repo.get_task(session_id)
+    if task is None or task.line_user_id != profile["sub"]:
+        return jsonify({"ok": False, "message": "找不到上傳工作階段"}), 404
+    if _upload_expired(task):
+        _expire_stale_uploads(repo, get_storage(), profile["sub"])
+        return jsonify({"ok": False, "message": "上傳工作階段已過期"}), 410
+    if not _LIFF_UPLOAD_BATCH_ID_PATTERN.fullmatch(batch_id):
+        return jsonify({"ok": False, "message": "無效的上傳批次識別碼"}), 400
+
+    upload = _upload_snapshot(task)
+    completed_batches = dict(upload.get("completed_batches") or {})
+    if batch_id in completed_batches:
+        return jsonify(
+            {
+                "ok": True,
+                "duplicate_batch": True,
+                "batch_id": batch_id,
+                "accepted_count": len(completed_batches[batch_id]),
+                "uploaded_count": len(task.image_ids),
+                "expected_image_count": int(
+                    upload.get("expected_image_count", 0)
+                ),
+            }
+        )
+    if task.status != "uploading":
+        return jsonify({"ok": False, "message": "上傳工作階段已結束"}), 409
+
+    images = [
+        image
+        for image in request.files.getlist("images")
+        if image and image.filename
+    ]
+    if not images:
+        return jsonify({"ok": False, "message": "此批次沒有圖片"}), 400
+    if len(images) > _LIFF_UPLOAD_BATCH_MAX_IMAGES:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "message": (
+                        f"每批最多 {_LIFF_UPLOAD_BATCH_MAX_IMAGES} 張圖片"
+                    ),
+                }
+            ),
+            413,
+        )
+
+    expected_image_count = int(upload.get("expected_image_count", 0))
+    if len(task.image_ids) + len(images) > expected_image_count:
+        return jsonify({"ok": False, "message": "上傳圖片數量超過預期"}), 409
+
+    cfg = get_config()
+    validated_images = []
+    total_bytes = 0
+
+    for index, image in enumerate(images):
+        extension = Path(image.filename).suffix.lower().lstrip(".")
+        if not extension or extension not in cfg.allowed_ext:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "message": (
+                            f"{image.filename} 格式不支援，"
+                            f"允許格式：{', '.join(cfg.allowed_ext)}"
+                        ),
+                    }
+                ),
+                400,
+            )
+
+        image.stream.seek(0)
+        image_bytes = image.stream.read()
+        image.stream.seek(0)
+        total_bytes += len(image_bytes)
+        if len(image_bytes) > cfg.max_image_size:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "message": f"{image.filename} 超過單張圖片大小限制",
+                    }
+                ),
+                413,
+            )
+        if total_bytes > _LIFF_UPLOAD_BATCH_MAX_BYTES:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "message": "此批次圖片總大小超過 15 MiB",
+                    }
+                ),
+                413,
+            )
+
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as uploaded_image:
+                uploaded_image.load()
+                width = uploaded_image.width
+                height = uploaded_image.height
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError):
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "message": f"{image.filename} 不是有效的圖片檔案",
+                    }
+                ),
+                400,
+            )
+
+        image_id = hashlib.sha256(
+            f"{task.id}:{batch_id}:{index}".encode("utf-8")
+        ).hexdigest()[:12]
+        validated_images.append(
+            (
+                image_id,
+                image,
+                extension,
+                image_bytes,
+                width,
+                height,
+            )
+        )
+
+    storage = get_storage()
+    batch_image_ids = []
+    for (
+        image_id,
+        image,
+        extension,
+        image_bytes,
+        width,
+        height,
+    ) in validated_images:
+        existing = repo.get_image(image_id)
+        if existing is not None:
+            if (
+                existing.owner_id != task.user_id
+                or existing.project_id != task.project_id
+            ):
+                return jsonify({"ok": False, "message": "圖片識別碼衝突"}), 409
+            batch_image_ids.append(existing.id)
+            continue
+
+        safe_original_filename = secure_filename(image.filename)
+        if not safe_original_filename:
+            safe_original_filename = f"upload.{extension}"
+        image_record = ImageRecord(
+            id=image_id,
+            owner_id=task.user_id,
+            project_id=task.project_id,
+            filename=safe_original_filename,
+            width=width,
+            height=height,
+            file_hash=hashlib.sha256(image_bytes).hexdigest(),
+        )
+        image_record.path = storage.save_bytes(
+            (
+                f"liff-uploads/{task.id}/"
+                f"{image_record.id}.{extension}"
+            ),
+            image_bytes,
+            image.mimetype or "application/octet-stream",
+        )
+        repo.add_image(image_record)
+        batch_image_ids.append(image_record.id)
+
+    updated_task, recorded = repo.record_liff_upload_batch(
+        task.id,
+        profile["sub"],
+        batch_id,
+        batch_image_ids,
+    )
+    if updated_task is None:
+        return jsonify({"ok": False, "message": "找不到上傳工作階段"}), 404
+    if not recorded and updated_task.status != "uploading":
+        return jsonify({"ok": False, "message": "上傳工作階段已結束"}), 409
+
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "duplicate_batch": not recorded,
+                "batch_id": batch_id,
+                "accepted_count": len(batch_image_ids),
+                "uploaded_count": len(updated_task.image_ids),
+                "expected_image_count": expected_image_count,
+            }
+        ),
+        201 if recorded else 200,
+    )
+
+
+@bp.post("/uploads/<session_id>/finalize")
+def finalize_chunked_upload(session_id: str):
+    """圖片齊全後建立唯一 pending 任務，並只觸發一次 Worker。"""
+    payload = request.get_json(silent=True) or {}
+    id_token = str(payload.get("id_token", "")).strip()
+    profile, verification_error = _verify_liff_profile(id_token)
+    if verification_error is not None:
+        return verification_error
+
+    repo = get_repo()
+    task = repo.get_task(session_id)
+    if task is None or task.line_user_id != profile["sub"]:
+        return jsonify({"ok": False, "message": "找不到上傳工作階段"}), 404
+    if _upload_expired(task):
+        _expire_stale_uploads(repo, get_storage(), profile["sub"])
+        return jsonify({"ok": False, "message": "上傳工作階段已過期"}), 410
+
+    upload = _upload_snapshot(task)
+    expected_image_count = int(upload.get("expected_image_count", 0))
+    if task.status == "uploading" and len(task.image_ids) != expected_image_count:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "code": "UPLOAD_INCOMPLETE",
+                    "message": "圖片尚未全部上傳完成",
+                    "uploaded_count": len(task.image_ids),
+                    "expected_image_count": expected_image_count,
+                }
+            ),
+            409,
+        )
+
+    if task.status == "uploading":
+        storage = get_storage()
+        missing_image_ids = []
+        for image_id in task.image_ids:
+            image_record = repo.get_image(image_id)
+            if (
+                image_record is None
+                or not image_record.path
+                or not storage.exists(image_record.path)
+            ):
+                missing_image_ids.append(image_id)
+        if missing_image_ids:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "code": "UPLOAD_INCOMPLETE",
+                        "message": "部分圖片尚未完成儲存",
+                        "missing_image_ids": missing_image_ids,
+                    }
+                ),
+                409,
+            )
+
+    finalized_task, transitioned = repo.finalize_liff_upload_task(
+        task.id,
+        profile["sub"],
+    )
+    if finalized_task is None:
+        return jsonify({"ok": False, "message": "找不到上傳工作階段"}), 404
+    if not transitioned and finalized_task.status == "uploading":
+        return jsonify({"ok": False, "message": "圖片尚未全部上傳完成"}), 409
+
+    job_operation_name = ""
+    if transitioned:
+        try:
+            job_operation_name = trigger_task_worker(get_config())
+        except Exception:  # noqa: BLE001 外部 API 失敗不可回滾 pending 任務
+            current_app.logger.exception(
+                "LIFF 分批任務已建立，但 Cloud Run Job 觸發失敗：task_id=%s",
+                finalized_task.id,
+            )
+
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "message": "標註任務建立成功",
+                "task_id": finalized_task.id,
+                "task_status": finalized_task.status,
+                "image_count": len(finalized_task.image_ids),
+                "job_triggered": bool(job_operation_name),
+                "already_finalized": not transitioned,
+                "status_url": url_for(
+                    "liff.task_status",
+                    task_id=finalized_task.id,
+                    token=finalized_task.download_token,
+                ),
+            }
+        ),
+        202 if transitioned else 200,
     )
 
 

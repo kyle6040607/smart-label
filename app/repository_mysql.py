@@ -1583,6 +1583,120 @@ class MySQLRepository:
 
         return task
 
+    def record_liff_upload_batch(
+        self,
+        task_id: str,
+        line_user_id: str,
+        batch_id: str,
+        image_ids: list[str],
+    ) -> tuple[AnnotationTask | None, bool]:
+        """原子記錄 LIFF 上傳批次；重送相同 batch_id 不會重複追加。"""
+        now = time.time()
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE id=%s AND line_user_id=%s
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (task_id, line_user_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None, False
+
+            task = _row_to_task(row)
+            upload = dict(task.settings_snapshot.get("upload") or {})
+            completed_batches = dict(upload.get("completed_batches") or {})
+
+            if batch_id in completed_batches:
+                return task, False
+            if task.status != "uploading":
+                return task, False
+
+            completed_batches[batch_id] = list(image_ids)
+            upload["completed_batches"] = completed_batches
+            task.settings_snapshot = {
+                **task.settings_snapshot,
+                "upload": upload,
+            }
+            task.image_ids = list(
+                dict.fromkeys([*task.image_ids, *image_ids])
+            )
+            task.updated_at = now
+
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET image_ids=%s, settings_snapshot=%s, updated_at=%s
+                WHERE id=%s AND line_user_id=%s AND status='uploading'
+                """,
+                (
+                    json.dumps(task.image_ids),
+                    json.dumps(task.settings_snapshot),
+                    now,
+                    task.id,
+                    line_user_id,
+                ),
+            )
+            return task, True
+
+    def finalize_liff_upload_task(
+        self,
+        task_id: str,
+        line_user_id: str,
+    ) -> tuple[AnnotationTask | None, bool]:
+        """僅在圖片齊全時把 uploading 原子轉為 pending。"""
+        now = time.time()
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE id=%s AND line_user_id=%s
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (task_id, line_user_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None, False
+
+            task = _row_to_task(row)
+            if task.status != "uploading":
+                return task, False
+
+            upload = dict(task.settings_snapshot.get("upload") or {})
+            expected_count = int(upload.get("expected_image_count", 0))
+            if expected_count <= 0 or len(task.image_ids) != expected_count:
+                return task, False
+
+            upload["finalized_at"] = now
+            task.settings_snapshot = {
+                **task.settings_snapshot,
+                "upload": upload,
+            }
+            task.status = "pending"
+            task.updated_at = now
+
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET status='pending', settings_snapshot=%s, updated_at=%s
+                WHERE id=%s AND line_user_id=%s AND status='uploading'
+                """,
+                (
+                    json.dumps(task.settings_snapshot),
+                    now,
+                    task.id,
+                    line_user_id,
+                ),
+            )
+            return task, True
+
     def assign_tasks_to_user(
         self,
         line_user_id: str,

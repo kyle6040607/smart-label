@@ -51,6 +51,273 @@ def make_png_file() -> io.BytesIO:
     return image_file
 
 
+def test_liff_chunked_upload_finalizes_one_task_and_triggers_once(
+    app,
+    monkeypatch,
+):
+    operations = []
+    app.smart_config.cloud_run_task_job_name = "smart-label-task-worker"
+    monkeypatch.setattr(
+        "app.routes.liff.trigger_task_worker",
+        lambda config: operations.append(config.cloud_run_task_job_name)
+        or "operations/chunked-job-1",
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-chunked-upload",
+            "name": "分批上傳測試",
+            "picture": "",
+        },
+    )
+    client = app.test_client()
+
+    init_response = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "cat",
+            "expected_image_count": 2,
+        },
+    )
+    assert init_response.status_code == 201
+    init_result = init_response.get_json()
+    session_id = init_result["session_id"]
+    assert app.repo.get_task(session_id).status == "uploading"
+    assert operations == []
+
+    batch_response = client.post(
+        f"/liff/uploads/{session_id}/batch",
+        data={
+            "id_token": "fake-id-token",
+            "batch_id": "batch-1",
+            "images": [
+                (make_png_file(), "cat-1.png"),
+                (make_png_file(), "cat-2.png"),
+            ],
+        },
+        content_type="multipart/form-data",
+    )
+    assert batch_response.status_code == 201
+    assert batch_response.get_json()["uploaded_count"] == 2
+    assert app.repo.get_task(session_id).status == "uploading"
+    assert operations == []
+
+    finalize_response = client.post(
+        f"/liff/uploads/{session_id}/finalize",
+        json={"id_token": "fake-id-token"},
+    )
+    assert finalize_response.status_code == 202
+    finalize_result = finalize_response.get_json()
+    assert finalize_result["task_id"] == session_id
+    assert finalize_result["task_status"] == "pending"
+    assert finalize_result["image_count"] == 2
+    assert finalize_result["already_finalized"] is False
+    assert operations == ["smart-label-task-worker"]
+
+    repeated_response = client.post(
+        f"/liff/uploads/{session_id}/finalize",
+        json={"id_token": "fake-id-token"},
+    )
+    assert repeated_response.status_code == 200
+    assert repeated_response.get_json()["already_finalized"] is True
+    assert operations == ["smart-label-task-worker"]
+
+
+def test_liff_chunked_upload_repeated_batch_is_idempotent(
+    app,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-repeated-batch",
+            "name": "批次重送測試",
+            "picture": "",
+        },
+    )
+    client = app.test_client()
+    init_result = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "cat",
+            "expected_image_count": 1,
+        },
+    ).get_json()
+    session_id = init_result["session_id"]
+
+    first_response = client.post(
+        f"/liff/uploads/{session_id}/batch",
+        data={
+            "id_token": "fake-id-token",
+            "batch_id": "batch-1",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert first_response.status_code == 201
+
+    repeated_response = client.post(
+        f"/liff/uploads/{session_id}/batch",
+        data={
+            "id_token": "fake-id-token",
+            "batch_id": "batch-1",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert repeated_response.status_code == 200
+    repeated_result = repeated_response.get_json()
+    assert repeated_result["duplicate_batch"] is True
+    assert repeated_result["uploaded_count"] == 1
+    assert len(app.repo.get_task(session_id).image_ids) == 1
+
+
+def test_liff_chunked_upload_does_not_finalize_incomplete_task(
+    app,
+    monkeypatch,
+):
+    operations = []
+    monkeypatch.setattr(
+        "app.routes.liff.trigger_task_worker",
+        lambda config: operations.append(config.cloud_run_task_job_name),
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-incomplete-upload",
+            "name": "未完成上傳測試",
+            "picture": "",
+        },
+    )
+    client = app.test_client()
+    init_result = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "cat",
+            "expected_image_count": 2,
+        },
+    ).get_json()
+    session_id = init_result["session_id"]
+
+    client.post(
+        f"/liff/uploads/{session_id}/batch",
+        data={
+            "id_token": "fake-id-token",
+            "batch_id": "batch-1",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+    finalize_response = client.post(
+        f"/liff/uploads/{session_id}/finalize",
+        json={"id_token": "fake-id-token"},
+    )
+
+    assert finalize_response.status_code == 409
+    assert finalize_response.get_json()["code"] == "UPLOAD_INCOMPLETE"
+    assert app.repo.get_task(session_id).status == "uploading"
+    assert operations == []
+
+
+def test_liff_chunked_upload_rejects_different_line_user(
+    app,
+    monkeypatch,
+):
+    def verify_id_token(id_token, *_args):
+        return {
+            "sub": "U-owner" if id_token == "owner-token" else "U-other",
+            "name": "LIFF 使用者",
+            "picture": "",
+        }
+
+    monkeypatch.setattr(line_login, "verify_id_token", verify_id_token)
+    client = app.test_client()
+    init_result = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "owner-token",
+            "prompt": "cat",
+            "expected_image_count": 1,
+        },
+    ).get_json()
+
+    response = client.post(
+        f"/liff/uploads/{init_result['session_id']}/batch",
+        data={
+            "id_token": "other-token",
+            "batch_id": "batch-1",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 404
+    assert app.repo.get_task(init_result["session_id"]).image_ids == []
+
+
+def test_liff_chunked_upload_cleans_expired_session(
+    app,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-expired-upload",
+            "name": "過期上傳測試",
+            "picture": "",
+        },
+    )
+    client = app.test_client()
+    init_result = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "cat",
+            "expected_image_count": 1,
+        },
+    ).get_json()
+    session_id = init_result["session_id"]
+    client.post(
+        f"/liff/uploads/{session_id}/batch",
+        data={
+            "id_token": "fake-id-token",
+            "batch_id": "batch-1",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    task = app.repo.get_task(session_id)
+    image_id = task.image_ids[0]
+    image_path = Path(app.repo.get_image(image_id).path)
+    task.settings_snapshot["upload"]["expires_at"] = 1
+    app.repo.update_task(task)
+    assert image_path.exists()
+
+    response = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "dog",
+            "expected_image_count": 1,
+        },
+    )
+
+    assert response.status_code == 201
+    expired_task = app.repo.get_task(session_id)
+    assert expired_task.status == "upload_expired"
+    assert expired_task.image_ids == []
+    assert app.repo.get_image(image_id) is None
+    assert not image_path.exists()
+
+
 def test_liff_upload_creates_annotation_task(
     app,
     monkeypatch,

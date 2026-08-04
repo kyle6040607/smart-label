@@ -289,6 +289,125 @@ promptElement.addEventListener(
 );
 
 
+const LIFF_UPLOAD_MAX_IMAGES = 30;
+const LIFF_UPLOAD_BATCH_MAX_IMAGES = 5;
+const LIFF_UPLOAD_BATCH_MAX_BYTES = 15 * 1024 * 1024;
+const LIFF_UPLOAD_MAX_RETRIES = 3;
+
+
+function waitForRetry(milliseconds) {
+    return new Promise(
+        (resolve) => window.setTimeout(resolve, milliseconds)
+    );
+}
+
+
+async function requestJson(url, options) {
+    const response = await fetch(url, options);
+    const responseText = await response.text();
+    let result = null;
+
+    if (responseText) {
+        try {
+            result = JSON.parse(responseText);
+        } catch {
+            const error = new Error(
+                `伺服器拒絕請求（HTTP ${response.status}）`
+            );
+            error.status = response.status;
+            throw error;
+        }
+    }
+
+    if (!response.ok) {
+        const error = new Error(
+            result?.message || `請求失敗（HTTP ${response.status}）`
+        );
+        error.status = response.status;
+        error.code = result?.code || "";
+        throw error;
+    }
+
+    if (!result) {
+        const error = new Error("伺服器沒有回傳資料");
+        error.status = response.status;
+        throw error;
+    }
+
+    return result;
+}
+
+
+function createUploadBatches(files) {
+    const batches = [];
+    let currentBatch = [];
+    let currentBytes = 0;
+
+    for (const file of files) {
+        if (file.size > LIFF_UPLOAD_BATCH_MAX_BYTES) {
+            throw new Error(
+                `${file.name} 超過 LIFF 單張 15 MiB 上傳限制`
+            );
+        }
+
+        const exceedsBatch =
+            currentBatch.length >= LIFF_UPLOAD_BATCH_MAX_IMAGES
+            || currentBytes + file.size > LIFF_UPLOAD_BATCH_MAX_BYTES;
+
+        if (currentBatch.length > 0 && exceedsBatch) {
+            batches.push(currentBatch);
+            currentBatch = [];
+            currentBytes = 0;
+        }
+
+        currentBatch.push(file);
+        currentBytes += file.size;
+    }
+
+    if (currentBatch.length > 0) {
+        batches.push(currentBatch);
+    }
+
+    return batches;
+}
+
+
+async function uploadBatchWithRetry(
+    sessionId,
+    batchId,
+    files,
+    lineIdToken
+) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= LIFF_UPLOAD_MAX_RETRIES; attempt += 1) {
+        const formData = new FormData();
+        formData.append("id_token", lineIdToken);
+        formData.append("batch_id", batchId);
+        files.forEach((file) => formData.append("images", file));
+
+        try {
+            return await requestJson(
+                `/liff/uploads/${encodeURIComponent(sessionId)}/batch`,
+                {
+                    method: "POST",
+                    body: formData,
+                }
+            );
+        } catch (error) {
+            lastError = error;
+            const retryable = !error.status || error.status >= 500;
+            if (!retryable || attempt === LIFF_UPLOAD_MAX_RETRIES) {
+                throw error;
+            }
+            await waitForRetry(1000 * (2 ** (attempt - 1)));
+        }
+    }
+
+    throw lastError || new Error("圖片批次上傳失敗");
+}
+
+
 // ========================================
 // 表單送出
 // ========================================
@@ -318,6 +437,13 @@ taskFormElement.addEventListener(
                 "error-message"
             );
 
+            return;
+        }
+
+        if (files.length > LIFF_UPLOAD_MAX_IMAGES) {
+            statusElement.textContent =
+                `每個任務最多選擇 ${LIFF_UPLOAD_MAX_IMAGES} 張圖片`;
+            imageCountElement.classList.add("error-message");
             return;
         }
 
@@ -374,30 +500,6 @@ taskFormElement.addEventListener(
         }
 
 
-        // ------------------------
-        // 建立 FormData
-        // ------------------------
-
-        const formData = new FormData();
-
-        formData.append("prompt", prompt);
-
-        formData.append("id_token", lineIdToken);
-
-        files.forEach(
-            (file) => {
-                formData.append(
-                    "images",
-                    file
-                );
-            }
-        );
-
-
-        // ------------------------
-        // 傳送到 Flask
-        // ------------------------
-
         try {
             submitButtonElement.disabled =
                 true;
@@ -406,76 +508,59 @@ taskFormElement.addEventListener(
                 "上傳中...";
 
             statusElement.textContent =
-                `正在上傳 ${files.length} 張圖片...`;
+                "正在建立上傳工作階段...";
 
-            /*
-             * 使用乾淨的 pathname：
-             * /liff/upload
-             *
-             * 不會把 code、state 等參數一起送出。
-             */
-            const response = await fetch(
-                window.location.pathname,
+            const batches = createUploadBatches(files);
+            const uploadSession = await requestJson(
+                "/liff/uploads/init",
                 {
                     method: "POST",
-                    body: formData,
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        id_token: lineIdToken,
+                        prompt,
+                        expected_image_count: files.length,
+                    }),
                 }
             );
 
+            let uploadedCount = 0;
+            for (let index = 0; index < batches.length; index += 1) {
+                const batch = batches[index];
+                statusElement.textContent =
+                    `正在上傳 ${uploadedCount} / ${files.length} 張圖片...`;
 
-            // ------------------------
-            // 解析 Flask 回傳
-            // ------------------------
-
-            let result;
-
-            try {
-                result =
-                    await response.json();
-
-            } catch {
-                throw new Error(
-                    "伺服器回傳的資料格式錯誤"
+                const batchResult = await uploadBatchWithRetry(
+                    uploadSession.session_id,
+                    `batch-${index + 1}`,
+                    batch,
+                    lineIdToken
                 );
+                uploadedCount = batchResult.uploaded_count;
+                statusElement.textContent =
+                    `已上傳 ${uploadedCount} / ${files.length} 張圖片`;
             }
 
-
-            // ------------------------
-            // LINE Token 過期或無效
-            // ------------------------
-
-            if (response.status === 401) {
-                console.warn(
-                    "LINE 身分驗證失敗：",
-                    result
-                );
-
-                if (
-                    result.code ===
-                    "LINE_ID_TOKEN_EXPIRED"
-                ) {
-                    statusElement.textContent =
-                        "LINE 登入資料已過期";
-                } else {
-                    statusElement.textContent =
-                        result.message ||
-                        "LINE 登入資料無效";
+            statusElement.textContent =
+                "圖片上傳完成，正在建立標註任務...";
+            const result = await requestJson(
+                `/liff/uploads/${encodeURIComponent(uploadSession.session_id)}/finalize`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        id_token: lineIdToken,
+                    }),
                 }
+            );
 
-                restartLineLogin();
-
-                return;
-            }
-
-
-            // ------------------------
-            // 其他後端錯誤
-            // ------------------------
-
-            if (!response.ok) {
+            if (result.task_status !== "pending") {
                 throw new Error(
-                    result.message ||
-                    "圖片上傳失敗"
+                    "任務尚未進入排隊狀態，請稍後再試"
                 );
             }
 
@@ -508,6 +593,13 @@ taskFormElement.addEventListener(
                 "上傳失敗：",
                 error
             );
+
+            if (error.status === 401) {
+                statusElement.textContent =
+                    error.message || "LINE 登入資料已失效";
+                restartLineLogin();
+                return;
+            }
 
             statusElement.textContent =
                 `上傳失敗：${error.message}`;

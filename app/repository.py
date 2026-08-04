@@ -425,6 +425,70 @@ class Repository:
             self._save()
 
         return task
+
+    def record_liff_upload_batch(
+        self,
+        task_id: str,
+        line_user_id: str,
+        batch_id: str,
+        image_ids: list[str],
+    ) -> tuple[AnnotationTask | None, bool]:
+        """原子記錄 LIFF 上傳批次；重送相同 batch_id 不會重複追加。"""
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if task is None or task.line_user_id != line_user_id:
+                return None, False
+
+            upload = dict(task.settings_snapshot.get("upload") or {})
+            completed_batches = dict(upload.get("completed_batches") or {})
+
+            if batch_id in completed_batches:
+                return task, False
+            if task.status != "uploading":
+                return task, False
+
+            completed_batches[batch_id] = list(image_ids)
+            upload["completed_batches"] = completed_batches
+            task.settings_snapshot = {
+                **task.settings_snapshot,
+                "upload": upload,
+            }
+            task.image_ids = list(
+                dict.fromkeys([*task.image_ids, *image_ids])
+            )
+            task.updated_at = time.time()
+            self.tasks[task.id] = task
+            self._save()
+            return task, True
+
+    def finalize_liff_upload_task(
+        self,
+        task_id: str,
+        line_user_id: str,
+    ) -> tuple[AnnotationTask | None, bool]:
+        """僅在圖片齊全時把 uploading 原子轉為 pending。"""
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if task is None or task.line_user_id != line_user_id:
+                return None, False
+            if task.status != "uploading":
+                return task, False
+
+            upload = dict(task.settings_snapshot.get("upload") or {})
+            expected_count = int(upload.get("expected_image_count", 0))
+            if expected_count <= 0 or len(task.image_ids) != expected_count:
+                return task, False
+
+            upload["finalized_at"] = time.time()
+            task.settings_snapshot = {
+                **task.settings_snapshot,
+                "upload": upload,
+            }
+            task.status = "pending"
+            task.updated_at = time.time()
+            self.tasks[task.id] = task
+            self._save()
+            return task, True
     # 讓 LIFF 任務在 Web 綁定 LINE 後自動歸戶
     def assign_tasks_to_user(
         self,
