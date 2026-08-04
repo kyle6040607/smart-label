@@ -244,6 +244,21 @@ def train_yolov26x_seg(
 
         model = YOLO(str(weights_file))
 
+        # 註冊取消訊號監聽器 Callback (在每個 Batch / Epoch 結束時檢查 task 狀態)
+        def _check_cancel_callback(trainer):
+            if hasattr(repo, "get_task") and task and task.id:
+                refreshed_task = repo.get_task(task.id)
+                current_status = getattr(refreshed_task, "status", task.status)
+            else:
+                current_status = getattr(task, "status", "")
+
+            if current_status == "canceled":
+                logger.warning("🛑 [YOLO Callback] 偵測到任務取消訊號，優化中斷訓練流程...")
+                raise StopIteration("使用者手動取消訓練")
+
+        model.add_callback("on_train_batch_end", _check_cancel_callback)
+        model.add_callback("on_train_epoch_end", _check_cancel_callback)
+
         train_runs_dir = work_dir / "runs"
         results = model.train(
             data=str(yaml_path),

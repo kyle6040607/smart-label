@@ -3426,6 +3426,9 @@ async function checkTrainingStatus(projectId) {
         btn.disabled = true;
         btn.textContent = "⏳ 訓練處理中...";
       }
+      const stopBtn = $("stopTrainingBtn");
+      if (stopBtn) stopBtn.style.display = "inline-block";
+
       startTrainingPolling(projectId);
     } else if (status === "completed") {
       if (badge) {
@@ -3445,6 +3448,25 @@ async function checkTrainingStatus(projectId) {
         btn.disabled = false;
         btn.textContent = "🚀 重新訓練 YOLOv26x-seg";
       }
+      const stopBtn = $("stopTrainingBtn");
+      if (stopBtn) stopBtn.style.display = "none";
+
+      stopTrainingPolling();
+    } else if (status === "canceled") {
+      if (badge) {
+        badge.style.background = "#f59e0b";
+        badge.style.color = "#fff";
+        badge.textContent = "🛑 已手動取消";
+      }
+      if (text) text.textContent = `訓練狀況：${data.error_message || "使用者已中斷訓練"}`;
+      if (downloadWrap) downloadWrap.style.display = "none";
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🚀 重新訓練 YOLOv26x-seg";
+      }
+      const stopBtn = $("stopTrainingBtn");
+      if (stopBtn) stopBtn.style.display = "none";
+
       stopTrainingPolling();
     } else if (status === "failed") {
       if (badge) {
@@ -3458,6 +3480,9 @@ async function checkTrainingStatus(projectId) {
         btn.disabled = false;
         btn.textContent = "🚀 重新訓練 YOLOv26x-seg";
       }
+      const stopBtn = $("stopTrainingBtn");
+      if (stopBtn) stopBtn.style.display = "none";
+
       stopTrainingPolling();
     }
   } catch (err) {
@@ -3509,12 +3534,47 @@ if (trainBtn) {
       }
 
       alert("🎉 訓練任務已成功發起！正在背景執行訓練...");
+      const stopBtn = $("stopTrainingBtn");
+      if (stopBtn) stopBtn.style.display = "inline-block";
       checkTrainingStatus(state.currentProjectId);
     } catch (err) {
       console.error("觸發訓練失敗:", err);
       alert("發起訓練失敗：" + err.message);
       trainBtn.disabled = false;
       trainBtn.textContent = "🚀 開始訓練 YOLOv26x-seg";
+    }
+  };
+}
+
+const stopTrainBtn = $("stopTrainingBtn");
+if (stopTrainBtn) {
+  stopTrainBtn.onclick = async () => {
+    if (!state.currentProjectId) return;
+    if (!confirm("確定要中斷停止正在執行中的 YOLO 模型訓練嗎？")) return;
+
+    stopTrainBtn.disabled = true;
+    stopTrainBtn.textContent = "⏳ 停止訊號發送中...";
+
+    try {
+      const res = await fetch(`/api/projects/${state.currentProjectId}/train/stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert("停止訓練失敗：" + (data.message || "未知錯誤"));
+        stopTrainBtn.disabled = false;
+        stopTrainBtn.textContent = "🛑 停止訓練";
+        return;
+      }
+
+      alert("🛑 已成功發送停止訊號，模型將在下一個 Batch 結束時即刻終止訓練！");
+      checkTrainingStatus(state.currentProjectId);
+    } catch (err) {
+      console.error("停止訓練失敗:", err);
+      alert("發送停止訊號失敗：" + err.message);
+      stopTrainBtn.disabled = false;
+      stopTrainBtn.textContent = "🛑 停止訓練";
     }
   };
 }

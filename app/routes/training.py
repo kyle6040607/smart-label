@@ -130,6 +130,50 @@ def get_training_status(project_id: str):
     })
 
 
+@bp.post("/<project_id>/train/stop")
+def stop_training(project_id: str):
+    """手動發送中斷訊號，停止特定專案正在執行中的 YOLO 訓練任務。"""
+    user_id = get_current_user_id()
+    if not user_id:
+        abort(401, "請先登入")
+
+    repo = get_repo()
+    proj = repo.get_project(project_id)
+    if proj is None or proj.owner_id != user_id:
+        abort(404, "查無此專案")
+
+    def _matches_project(t: AnnotationTask) -> bool:
+        pid = getattr(t, "effective_project_id", getattr(t, "project_id", ""))
+        return t.user_id == user_id and (pid == project_id or f"[project:{project_id}]" in t.prompt)
+
+    tasks = [t for t in repo.tasks.values() if _matches_project(t)] if hasattr(repo, "tasks") else []
+    if not tasks and hasattr(repo, "list_tasks_by_user"):
+        all_user_tasks = repo.list_tasks_by_user(user_id)
+        tasks = [t for t in all_user_tasks if _matches_project(t)]
+
+    running_tasks = [t for t in tasks if t.status in ("pending", "processing", "running")]
+    if not running_tasks:
+        return jsonify({
+            "project_id": project_id,
+            "message": "目前該專案沒有正在執行的訓練任務",
+            "stopped": False,
+        }), 400
+
+    latest_task = sorted(running_tasks, key=lambda t: t.created_at, reverse=True)[0]
+    latest_task.status = "canceled"
+    latest_task.error_message = "使用者手動取消訓練"
+    repo.update_task(latest_task)
+
+    print(f"🛑 [Train Stop API] 已發送取消訊號至任務 task_id={latest_task.id} (專案: {project_id})", flush=True)
+
+    return jsonify({
+        "message": "已成功發送停止訊號，YOLO 訓練將在下一個 Batch 結束時終止",
+        "task_id": latest_task.id,
+        "status": "canceled",
+        "stopped": True,
+    })
+
+
 @bp.get("/<project_id>/train/download")
 def download_training_model(project_id: str):
     """下載專案最新的 YOLOv26x-seg 訓練模型權重檔 (.pt)。"""
