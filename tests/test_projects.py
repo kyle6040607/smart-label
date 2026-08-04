@@ -139,3 +139,34 @@ def test_rename_and_delete_project(client):
     # 驗證查無此專案
     res_get = client.get(f"/api/projects/{proj_id}")
     assert res_get.status_code == 404
+
+
+def test_duplicate_project_name_prevention(client):
+    # 1. 建立第一個專案 "Project One"
+    res1 = client.post("/api/projects", json={"name": "Project One"})
+    assert res1.status_code == 201
+
+    # 2. 嘗試建立同名專案 (完全相同或大小寫不同)，應被拒絕
+    res2 = client.post("/api/projects", json={"name": "Project One"})
+    assert res2.status_code == 400
+    assert "專案名稱已存在" in res2.get_json()["error"]
+
+    res2_case = client.post("/api/projects", json={"name": "project one"})
+    assert res2_case.status_code == 400
+    assert "專案名稱已存在" in res2_case.get_json()["error"]
+
+    # 3. 建立第二個不同名稱的專案 "Project Two"
+    res3 = client.post("/api/projects", json={"name": "Project Two"})
+    assert res3.status_code == 201
+    proj_two_id = res3.get_json()["id"]
+
+    # 4. 嘗試將 "Project Two" 重新命名為 "Project One"，應被拒絕
+    res_rename_dupe = client.put(f"/api/projects/{proj_two_id}", json={"name": "Project One"})
+    assert res_rename_dupe.status_code == 400
+    assert "專案名稱已存在" in res_rename_dupe.get_json()["error"]
+
+    # 5. 重新命名為未使用的名字，應成功
+    res_rename_ok = client.put(f"/api/projects/{proj_two_id}", json={"name": "Project Two Updated"})
+    assert res_rename_ok.status_code == 200
+    assert res_rename_ok.get_json()["name"] == "Project Two Updated"
+

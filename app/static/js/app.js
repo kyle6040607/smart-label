@@ -2574,7 +2574,7 @@ async function selectProject(projectId) {
   }
 }
 
-function showModal({ title, desc = "", showInput = false, inputLabel = "", inputValue = "", confirmText = "確認", isDanger = false }) {
+function showModal({ title, desc = "", showInput = false, inputLabel = "", inputValue = "", confirmText = "確認", isDanger = false, showCancel = true }) {
   return new Promise((resolve) => {
     const overlay = $("modalOverlay");
     const titleEl = $("modalTitle");
@@ -2603,6 +2603,7 @@ function showModal({ title, desc = "", showInput = false, inputLabel = "", input
 
     confirmBtn.textContent = confirmText;
     confirmBtn.className = isDanger ? "btn-danger" : "btn-primary";
+    cancelBtn.style.display = showCancel ? "" : "none";
 
     overlay.classList.add("active");
 
@@ -2651,27 +2652,42 @@ function initProjectControls() {
   const createBtn = $("createProjectBtn");
   if (createBtn) {
     createBtn.onclick = async () => {
-      const name = await showModal({
-        title: "✨ 建立新專案",
-        showInput: true,
-        inputLabel: "專案名稱",
-        inputValue: "新專案",
-        confirmText: "建立專案"
-      });
-      if (name === null || !name.trim()) return;
-      try {
-        const res = await fetch("/api/projects", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name.trim(), mode: state.mode })
+      let currentName = "新專案";
+      while (true) {
+        const name = await showModal({
+          title: "✨ 建立新專案",
+          showInput: true,
+          inputLabel: "專案名稱",
+          inputValue: currentName,
+          confirmText: "建立專案"
         });
-        if (!res.ok) throw new Error(await res.text());
-        clearCanvasAndCurrentState();
-        await fetchProjects();
-        await loadThumbs();
-        await refreshSidebar();
-      } catch (err) {
-        alert("建立專案失敗: " + err.message);
+        if (name === null || !name.trim()) return;
+        currentName = name.trim();
+        try {
+          const res = await fetch("/api/projects", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: currentName, mode: state.mode })
+          });
+          if (!res.ok) throw new Error(await res.text());
+          clearCanvasAndCurrentState();
+          await fetchProjects();
+          await loadThumbs();
+          await refreshSidebar();
+          break;
+        } catch (err) {
+          let msg = err.message || "未知錯誤";
+          try {
+            const parsed = JSON.parse(msg);
+            if (parsed.error) msg = parsed.error;
+          } catch (_) {}
+          await showModal({
+            title: "⚠️ 建立專案失敗",
+            desc: msg,
+            confirmText: "確定",
+            showCancel: false
+          });
+        }
       }
     };
   }
@@ -2683,24 +2699,39 @@ function initProjectControls() {
       const selectEl = $("projectSelect");
       const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
       const oldName = currentOpt ? currentOpt.textContent : "";
-      const newName = await showModal({
-        title: "✏️ 重新命名專案",
-        showInput: true,
-        inputLabel: "新的專案名稱",
-        inputValue: oldName,
-        confirmText: "儲存修改"
-      });
-      if (newName === null || !newName.trim() || newName.trim() === oldName) return;
-      try {
-        const res = await fetch(`/api/projects/${state.currentProjectId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: newName.trim() })
+      let currentName = oldName;
+      while (true) {
+        const newName = await showModal({
+          title: "✏️ 重新命名專案",
+          showInput: true,
+          inputLabel: "新的專案名稱",
+          inputValue: currentName,
+          confirmText: "儲存修改"
         });
-        if (!res.ok) throw new Error(await res.text());
-        await fetchProjects();
-      } catch (err) {
-        alert("修改專案名稱失敗: " + err.message);
+        if (newName === null || !newName.trim() || newName.trim() === oldName) return;
+        currentName = newName.trim();
+        try {
+          const res = await fetch(`/api/projects/${state.currentProjectId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: currentName })
+          });
+          if (!res.ok) throw new Error(await res.text());
+          await fetchProjects();
+          break;
+        } catch (err) {
+          let msg = err.message || "未知錯誤";
+          try {
+            const parsed = JSON.parse(msg);
+            if (parsed.error) msg = parsed.error;
+          } catch (_) {}
+          await showModal({
+            title: "⚠️ 修改專案名稱失敗",
+            desc: msg,
+            confirmText: "確定",
+            showCancel: false
+          });
+        }
       }
     };
   }
