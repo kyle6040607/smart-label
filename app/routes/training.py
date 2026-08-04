@@ -50,9 +50,11 @@ def trigger_training(project_id: str):
     repo.add_task(task)
     storage = get_storage()
 
-    # 在同步模式或非同步背景執行訓練
+    # 非同步背景執行訓練 (帶有即時即刻 Log 輸出)
     def run_training_in_background():
         try:
+            print(f"🚀 [Cloud Run Train] 開始為專案 [{project_id}] (使用者: {user_id}) 執行 YOLO 訓練...", flush=True)
+            print(f"⚙️ 訓練參數: epochs={epochs}, imgsz={imgsz}, device={device}", flush=True)
             train_yolov26x_seg(
                 repo=repo,
                 storage=storage,
@@ -61,8 +63,14 @@ def trigger_training(project_id: str):
                 imgsz=imgsz,
                 device=device,
             )
-        except Exception:
-            pass
+            print(f"🎉 [Cloud Run Train] 專案 [{project_id}] 訓練成功完成！", flush=True)
+        except Exception as e:
+            import traceback
+            print(f"❌ [Cloud Run Train Error] 背景訓練發生例外崩潰: {e}", flush=True)
+            traceback.print_exc()
+            task.status = "failed"
+            task.error_message = str(e)
+            repo.update_task(task)
 
     # 非同步背景啟動訓練
     thread = threading.Thread(target=run_training_in_background, daemon=True)

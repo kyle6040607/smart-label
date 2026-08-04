@@ -232,8 +232,8 @@ def train_yolov26x_seg(
             if models_dir_file.is_file():
                 weights_file = models_dir_file
             else:
-                # 依序尋找 models/ 內的預設備用權重
-                for fallback_name in ["yolo26n.pt", "yolo26x-seg.pt", "yolov8x-worldv2.pt"]:
+                # 使用唯一的 Segmentation 基礎權重 yolo26x-seg.pt
+                for fallback_name in ["yolo26x-seg.pt"]:
                     fb_path = models_dir / fallback_name
                     if fb_path.is_file():
                         weights_file = fb_path
