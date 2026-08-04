@@ -6,7 +6,7 @@ from PIL import Image
 
 from app import create_app
 from app.config import Config
-from app.models import AnnotationTask, User
+from app.models import AnnotationTask, ImageRecord, User
 from app.services import line_login
 
 
@@ -123,6 +123,173 @@ def test_liff_chunked_upload_finalizes_one_task_and_triggers_once(
     assert repeated_response.status_code == 200
     assert repeated_response.get_json()["already_finalized"] is True
     assert operations == ["smart-label-task-worker"]
+
+
+def test_liff_append_images_merges_into_completed_task_and_triggers_once(
+    app,
+    monkeypatch,
+):
+    operations = []
+    app.smart_config.cloud_run_task_job_name = "smart-label-task-worker"
+    monkeypatch.setattr(
+        "app.routes.liff.trigger_task_worker",
+        lambda config: operations.append(config.cloud_run_task_job_name)
+        or "operations/append-job-1",
+    )
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-append-owner",
+            "name": "追加照片測試",
+            "picture": "",
+        },
+    )
+    app.repo.add_image(
+        ImageRecord(
+            id="existing-image",
+            owner_id="web-owner",
+            project_id="project-1",
+            filename="existing.png",
+            path="existing.png",
+        )
+    )
+    target = app.repo.add_task(
+        AnnotationTask(
+            user_id="web-owner",
+            project_id="project-1",
+            line_user_id="U-append-owner",
+            prompt="cat",
+            image_ids=["existing-image"],
+            processed_image_ids=["existing-image"],
+            dataset_version=1,
+            dataset_zip_path="dataset-v1.zip",
+            status="completed",
+            attempt_count=2,
+            settings_snapshot={
+                "project_id": "project-1",
+                "export_confidence_threshold": 0.5,
+            },
+        )
+    )
+    client = app.test_client()
+
+    context_response = client.post(
+        f"/liff/tasks/{target.id}/append/context",
+        json={"id_token": "fake-id-token"},
+    )
+    assert context_response.status_code == 200
+    assert context_response.get_json()["prompt"] == "cat"
+
+    init_response = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "front-end-cannot-change-this",
+            "target_task_id": target.id,
+            "expected_image_count": 1,
+        },
+    )
+    assert init_response.status_code == 201
+    init_result = init_response.get_json()
+    assert init_result["append_mode"] is True
+    session_id = init_result["session_id"]
+    session = app.repo.get_task(session_id)
+    assert session.prompt == "cat"
+    assert session.user_id == target.user_id
+    assert session.project_id == target.project_id
+
+    batch_response = client.post(
+        f"/liff/uploads/{session_id}/batch",
+        data={
+            "id_token": "fake-id-token",
+            "batch_id": "append-batch-1",
+            "images": (make_png_file(), "new-cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert batch_response.status_code == 201
+
+    finalize_response = client.post(
+        f"/liff/uploads/{session_id}/finalize",
+        json={"id_token": "fake-id-token"},
+    )
+    assert finalize_response.status_code == 202
+    result = finalize_response.get_json()
+    assert result["task_id"] == target.id
+    assert result["task_status"] == "pending"
+    assert result["added_image_count"] == 1
+    assert result["image_count"] == 2
+    assert operations == ["smart-label-task-worker"]
+
+    updated_target = app.repo.get_task(target.id)
+    assert updated_target.status == "pending"
+    assert updated_target.processed_image_ids == ["existing-image"]
+    assert updated_target.dataset_version == 1
+    assert updated_target.dataset_zip_path == "dataset-v1.zip"
+    assert updated_target.attempt_count == 0
+    assert len(updated_target.image_ids) == 2
+    assert app.repo.get_task(session_id).status == "upload_merged"
+    assert app.repo.get_task(session_id).image_ids == []
+
+    repeated_response = client.post(
+        f"/liff/uploads/{session_id}/finalize",
+        json={"id_token": "fake-id-token"},
+    )
+    assert repeated_response.status_code == 200
+    assert repeated_response.get_json()["already_finalized"] is True
+    assert operations == ["smart-label-task-worker"]
+
+    task_list = client.post(
+        "/liff/tasks",
+        json={"id_token": "fake-id-token"},
+    ).get_json()
+    assert task_list["task_count"] == 1
+    assert task_list["tasks"][0]["task_id"] == target.id
+
+
+def test_liff_append_images_requires_owner_and_completed_task(
+    app,
+    monkeypatch,
+):
+    current_line_user = {"sub": "U-other"}
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": current_line_user["sub"],
+            "name": "測試使用者",
+            "picture": "",
+        },
+    )
+    target = app.repo.add_task(
+        AnnotationTask(
+            line_user_id="U-owner",
+            prompt="cat",
+            status="completed",
+        )
+    )
+    client = app.test_client()
+
+    unauthorized = client.post(
+        f"/liff/tasks/{target.id}/append/context",
+        json={"id_token": "fake-id-token"},
+    )
+    assert unauthorized.status_code == 404
+
+    current_line_user["sub"] = "U-owner"
+    target.status = "processing"
+    app.repo.update_task(target)
+    not_completed = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "target_task_id": target.id,
+            "expected_image_count": 1,
+        },
+    )
+    assert not_completed.status_code == 409
+    assert "已完成" in not_completed.get_json()["message"]
 
 
 def test_liff_chunked_upload_repeated_batch_is_idempotent(

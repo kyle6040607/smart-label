@@ -19,8 +19,8 @@
   舊版建立任務 API，與 /liff/create 共用處理流程。
 - POST /liff/tasks
   驗證 LINE ID Token 並取得該使用者的任務清單。
-- POST /liff/tasks/<task_id>/images
-  預計用於對已完成任務追加圖片並重新排隊。
+- POST /liff/tasks/<task_id>/append/context
+  驗證追加圖片的任務並回傳固定 Prompt。
 
 狀態與下載：
 - GET /liff/tasks/<task_id>/status
@@ -292,7 +292,7 @@ def list_tasks():
     tasks = [
         task
         for task in repo.list_tasks_by_line_user_id(line_user_id)
-        if task.status not in {"uploading", "upload_expired"}
+        if task.status not in {"uploading", "upload_expired", "upload_merged"}
     ]
 
     return jsonify(
@@ -304,21 +304,57 @@ def list_tasks():
     )
 
 
+@bp.post("/tasks/<task_id>/append/context")
+def get_append_upload_context(task_id: str):
+    """驗證 LINE owner，並提供追加頁面需要的不可竄改任務資訊。"""
+    payload = request.get_json(silent=True) or {}
+    id_token = str(payload.get("id_token", "")).strip()
+    profile, verification_error = _verify_liff_profile(id_token)
+    if verification_error is not None:
+        return verification_error
+
+    task = get_repo().get_task(task_id)
+    if task is None or task.line_user_id != profile["sub"]:
+        return jsonify({"ok": False, "message": "找不到標註任務"}), 404
+    if task.status != "completed":
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "message": "只有已完成的任務可以新增照片",
+                    "task_status": task.status,
+                }
+            ),
+            409,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "task_id": task.id,
+            "prompt": task.prompt,
+            "image_count": len(task.image_ids),
+            "dataset_version": task.dataset_version,
+        }
+    )
+
+
 @bp.post("/uploads/init")
 def initialize_chunked_upload():
     """建立 LIFF 分批上傳 session；此時 Worker 尚不可領取。"""
     payload = request.get_json(silent=True) or {}
     id_token = str(payload.get("id_token", "")).strip()
     prompt = str(payload.get("prompt", "")).strip()
+    target_task_id = str(payload.get("target_task_id", "")).strip()
 
     try:
         expected_image_count = int(payload.get("expected_image_count", 0))
     except (TypeError, ValueError):
         expected_image_count = 0
 
-    if not prompt:
+    if not target_task_id and not prompt:
         return jsonify({"ok": False, "message": "請輸入標註內容"}), 400
-    if len(prompt) > 200:
+    if not target_task_id and len(prompt) > 200:
         return jsonify({"ok": False, "message": "標註內容不可超過 200 字"}), 400
     if not 1 <= expected_image_count <= _LIFF_UPLOAD_MAX_IMAGES:
         return (
@@ -340,17 +376,52 @@ def initialize_chunked_upload():
     cfg = get_config()
     repo = get_repo()
     _expire_stale_uploads(repo, get_storage(), profile["sub"])
-    web_user_id, web_project_id, display_name = _resolve_liff_owner(
-        repo,
-        profile,
-    )
+    target_task = None
+    if target_task_id:
+        target_task = repo.get_task(target_task_id)
+        if target_task is None or target_task.line_user_id != profile["sub"]:
+            return jsonify({"ok": False, "message": "找不到標註任務"}), 404
+        if target_task.status != "completed":
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "message": "只有已完成的任務可以新增照片",
+                        "task_status": target_task.status,
+                    }
+                ),
+                409,
+            )
+        prompt = target_task.prompt
+        web_user_id = target_task.user_id
+        web_project_id = target_task.project_id
+        linked_user = repo.get_user_by_line_id(profile["sub"])
+        display_name = (
+            linked_user.display_name or linked_user.username
+            if linked_user is not None
+            else profile.get("name", "")
+        )
+    else:
+        web_user_id, web_project_id, display_name = _resolve_liff_owner(
+            repo,
+            profile,
+        )
     expires_at = time.time() + _LIFF_UPLOAD_SESSION_TTL_SECONDS
-    settings_snapshot = _liff_task_settings(cfg, web_project_id)
+    settings_snapshot = (
+        {
+            key: value
+            for key, value in target_task.settings_snapshot.items()
+            if key != "upload"
+        }
+        if target_task is not None
+        else _liff_task_settings(cfg, web_project_id)
+    )
     settings_snapshot["upload"] = {
         "expected_image_count": expected_image_count,
         "completed_batches": {},
         "expires_at": expires_at,
         "finalized_at": 0.0,
+        "target_task_id": target_task_id,
     }
     task = AnnotationTask(
         user_id=web_user_id,
@@ -374,6 +445,8 @@ def initialize_chunked_upload():
                 "display_name": display_name,
                 "batch_max_images": _LIFF_UPLOAD_BATCH_MAX_IMAGES,
                 "batch_max_bytes": _LIFF_UPLOAD_BATCH_MAX_BYTES,
+                "append_mode": bool(target_task_id),
+                "target_task_id": target_task_id,
             }
         ),
         201,
@@ -642,14 +715,27 @@ def finalize_chunked_upload(session_id: str):
                 409,
             )
 
-    finalized_task, transitioned = repo.finalize_liff_upload_task(
-        task.id,
-        profile["sub"],
-    )
+    target_task_id = str(upload.get("target_task_id", ""))
+    uploaded_image_count = len(task.image_ids)
+    if target_task_id:
+        finalized_task, transitioned = repo.finalize_liff_append_upload(
+            task.id,
+            profile["sub"],
+        )
+    else:
+        finalized_task, transitioned = repo.finalize_liff_upload_task(
+            task.id,
+            profile["sub"],
+        )
     if finalized_task is None:
         return jsonify({"ok": False, "message": "找不到上傳工作階段"}), 404
-    if not transitioned and finalized_task.status == "uploading":
-        return jsonify({"ok": False, "message": "圖片尚未全部上傳完成"}), 409
+    if not transitioned and task.status == "uploading":
+        message = (
+            "原標註任務目前無法新增照片，請重新整理任務狀態"
+            if target_task_id
+            else "圖片尚未全部上傳完成"
+        )
+        return jsonify({"ok": False, "message": message}), 409
 
     job_operation_name = ""
     if transitioned:
@@ -657,7 +743,7 @@ def finalize_chunked_upload(session_id: str):
             job_operation_name = trigger_task_worker(get_config())
         except Exception:  # noqa: BLE001 外部 API 失敗不可回滾 pending 任務
             current_app.logger.exception(
-                "LIFF 分批任務已建立，但 Cloud Run Job 觸發失敗：task_id=%s",
+                "LIFF 分批任務已排隊，但 Cloud Run Job 觸發失敗：task_id=%s",
                 finalized_task.id,
             )
 
@@ -665,10 +751,19 @@ def finalize_chunked_upload(session_id: str):
         jsonify(
             {
                 "ok": True,
-                "message": "標註任務建立成功",
+                "message": (
+                    "照片已新增，標註任務重新排隊"
+                    if target_task_id
+                    else "標註任務建立成功"
+                ),
                 "task_id": finalized_task.id,
                 "task_status": finalized_task.status,
                 "image_count": len(finalized_task.image_ids),
+                "added_image_count": (
+                    int(upload.get("merged_image_count", uploaded_image_count))
+                    if target_task_id and not transitioned
+                    else uploaded_image_count
+                ),
                 "job_triggered": bool(job_operation_name),
                 "already_finalized": not transitioned,
                 "status_url": url_for(

@@ -1697,6 +1697,131 @@ class MySQLRepository:
             )
             return task, True
 
+    def finalize_liff_append_upload(
+        self,
+        session_id: str,
+        line_user_id: str,
+    ) -> tuple[AnnotationTask | None, bool]:
+        """把追加 session 與原任務鎖在同一交易內合併並重新排隊。"""
+        now = time.time()
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE id=%s AND line_user_id=%s
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (session_id, line_user_id),
+            )
+            session_row = cursor.fetchone()
+            if session_row is None:
+                return None, False
+
+            session = _row_to_task(session_row)
+            upload = dict(session.settings_snapshot.get("upload") or {})
+            target_task_id = str(upload.get("target_task_id", ""))
+            if not target_task_id:
+                return session, False
+
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE id=%s AND line_user_id=%s
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (target_task_id, line_user_id),
+            )
+            target_row = cursor.fetchone()
+            target = _row_to_task(target_row) if target_row else None
+
+            # finalize 回應遺失時可安全重送。
+            if session.status == "upload_merged":
+                return target, False
+            if session.status != "uploading" or target is None:
+                return target or session, False
+            if target.status != "completed":
+                return target, False
+
+            expected_count = int(upload.get("expected_image_count", 0))
+            if expected_count <= 0 or len(session.image_ids) != expected_count:
+                return target, False
+
+            appended_image_ids = list(session.image_ids)
+            target.image_ids = list(dict.fromkeys([
+                *target.image_ids,
+                *appended_image_ids,
+            ]))
+            target.status = "pending"
+            target.claimed_by = ""
+            target.claim_token = ""
+            target.processing_started_at = 0.0
+            target.heartbeat_at = 0.0
+            target.lease_expires_at = 0.0
+            target.attempt_count = 0
+            target.next_attempt_at = 0.0
+            target.last_error = ""
+            target.error_message = ""
+            target.failure_notified_at = 0.0
+            target.completion_reason = "additional_images_pending"
+            target.updated_at = now
+
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET image_ids=%s,
+                    status='pending',
+                    claimed_by='',
+                    claim_token='',
+                    processing_started_at=0,
+                    heartbeat_at=0,
+                    lease_expires_at=0,
+                    attempt_count=0,
+                    next_attempt_at=0,
+                    last_error='',
+                    error_message='',
+                    failure_notified_at=0,
+                    completion_reason='additional_images_pending',
+                    updated_at=%s
+                WHERE id=%s AND line_user_id=%s AND status='completed'
+                """,
+                (
+                    json.dumps(target.image_ids),
+                    now,
+                    target.id,
+                    line_user_id,
+                ),
+            )
+
+            upload["finalized_at"] = now
+            upload["merged_target_task_id"] = target.id
+            upload["merged_image_count"] = len(appended_image_ids)
+            session.settings_snapshot = {
+                **session.settings_snapshot,
+                "upload": upload,
+            }
+            session.image_ids = []
+            session.status = "upload_merged"
+            session.updated_at = now
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET image_ids='[]', status='upload_merged',
+                    settings_snapshot=%s, updated_at=%s
+                WHERE id=%s AND line_user_id=%s AND status='uploading'
+                """,
+                (
+                    json.dumps(session.settings_snapshot),
+                    now,
+                    session.id,
+                    line_user_id,
+                ),
+            )
+            return target, True
+
     def assign_tasks_to_user(
         self,
         line_user_id: str,

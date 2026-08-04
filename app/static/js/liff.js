@@ -1,8 +1,11 @@
 // 取得 HTML 傳入的 LIFF 設定
 const liffDataElement = document.getElementById("liff-data");
 const LIFF_ID = liffDataElement?.dataset.liffId?.trim() ?? "";
+const APPEND_TARGET_TASK_ID = new URL(window.location.href)
+    .searchParams.get("append_to")?.trim() ?? "";
 
 // 取得頁面元素
+const pageTitleElement = document.getElementById("page-title");
 const statusElement = document.getElementById("status");
 const profileElement =document.getElementById("profile");
 const displayNameElement =document.getElementById("display-name");
@@ -36,10 +39,13 @@ function getCleanRedirectUri() {
      * liffClientId
      * liffRedirectUri
      */
-    return (
-        window.location.origin +
-        window.location.pathname
+    const redirectUrl = new URL(
+        window.location.origin + window.location.pathname
     );
+    if (APPEND_TARGET_TASK_ID) {
+        redirectUrl.searchParams.set("append_to", APPEND_TARGET_TASK_ID);
+    }
+    return redirectUrl.toString();
 }
 
 
@@ -214,9 +220,31 @@ async function initializeLiff() {
 
         profileElement.style.display ="block";
 
+        if (APPEND_TARGET_TASK_ID) {
+            statusElement.textContent = "正在載入原標註任務……";
+            const appendContext = await requestJson(
+                `/liff/tasks/${encodeURIComponent(APPEND_TARGET_TASK_ID)}/append/context`,
+                {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        id_token: liff.getIDToken(),
+                    }),
+                }
+            );
+            promptElement.value = appendContext.prompt;
+            promptElement.readOnly = true;
+            promptCountElement.textContent =
+                `${appendContext.prompt.length} / 200`;
+            pageTitleElement.textContent = "新增照片";
+            submitButtonElement.textContent = "新增照片並重新標註";
+        }
+
         taskFormElement.style.display ="block";
 
-        statusElement.textContent ="歡迎使用標註系統";
+        statusElement.textContent = APPEND_TARGET_TASK_ID
+            ? "請選擇要加入此任務的照片"
+            : "歡迎使用標註系統";
 
     } catch (error) {
         console.error(
@@ -522,6 +550,7 @@ taskFormElement.addEventListener(
                         id_token: lineIdToken,
                         prompt,
                         expected_image_count: files.length,
+                        target_task_id: APPEND_TARGET_TASK_ID,
                     }),
                 }
             );
@@ -578,14 +607,18 @@ taskFormElement.addEventListener(
 
             if (liff.isInClient()) {
                 statusElement.textContent =
-                    `已建立 ${result.image_count} 張圖片的標註任務，正在關閉頁面...`;
+                    APPEND_TARGET_TASK_ID
+                        ? `已新增 ${result.added_image_count} 張圖片，任務正在重新排隊，準備關閉頁面...`
+                        : `已建立 ${result.image_count} 張圖片的標註任務，正在關閉頁面...`;
 
                 window.setTimeout(() => {
                     liff.closeWindow();
                 }, 1200);
             } else {
                 statusElement.textContent =
-                    `已建立 ${result.image_count} 張圖片的標註任務，可以關閉此頁面`;
+                    APPEND_TARGET_TASK_ID
+                        ? `已新增 ${result.added_image_count} 張圖片，任務正在重新排隊，可以關閉此頁面`
+                        : `已建立 ${result.image_count} 張圖片的標註任務，可以關閉此頁面`;
             }
 
         } catch (error) {
@@ -609,7 +642,9 @@ taskFormElement.addEventListener(
                 false;
 
             submitButtonElement.textContent =
-                "建立標註任務";
+                APPEND_TARGET_TASK_ID
+                    ? "新增照片並重新標註"
+                    : "建立標註任務";
         }
     }
 );

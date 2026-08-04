@@ -147,3 +147,54 @@ def test_finish_recovered_cleanup_clears_matching_token():
     assert "claim_token=''" in sql
     assert "claim_token=%s" in sql
     assert params[-1] == "stale-token"
+
+
+def test_finalize_liff_append_locks_session_and_target_in_one_transaction():
+    import json
+
+    target = AnnotationTask(
+        id="target-task",
+        line_user_id="U-owner",
+        image_ids=["old-image"],
+        processed_image_ids=["old-image"],
+        status="completed",
+        attempt_count=2,
+    ).to_dict()
+    session = AnnotationTask(
+        id="append-session",
+        line_user_id="U-owner",
+        image_ids=["new-image"],
+        status="uploading",
+        settings_snapshot={
+            "upload": {
+                "target_task_id": "target-task",
+                "expected_image_count": 1,
+            }
+        },
+    ).to_dict()
+    for row in (session, target):
+        for field in (
+            "image_ids",
+            "processed_image_ids",
+            "settings_snapshot",
+            "no_detection_image_ids",
+            "excluded_results",
+        ):
+            row[field] = json.dumps(row[field])
+
+    cursor = RecordingCursor([session, target])
+    merged, transitioned = _repo_with_cursor(
+        cursor
+    ).finalize_liff_append_upload("append-session", "U-owner")
+
+    assert transitioned is True
+    assert merged is not None
+    assert merged.id == "target-task"
+    assert merged.status == "pending"
+    assert merged.image_ids == ["old-image", "new-image"]
+    assert merged.processed_image_ids == ["old-image"]
+    assert merged.attempt_count == 0
+    assert len(cursor.calls) == 4
+    assert all("FOR UPDATE" in call[0] for call in cursor.calls[:2])
+    assert "status='pending'" in cursor.calls[2][0]
+    assert "status='upload_merged'" in cursor.calls[3][0]

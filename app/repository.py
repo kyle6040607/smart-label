@@ -489,6 +489,73 @@ class Repository:
             self.tasks[task.id] = task
             self._save()
             return task, True
+
+    def finalize_liff_append_upload(
+        self,
+        session_id: str,
+        line_user_id: str,
+    ) -> tuple[AnnotationTask | None, bool]:
+        """把已完成的追加上傳 session 原子合併回原任務並重新排隊。"""
+        with self._lock:
+            session = self.tasks.get(session_id)
+            if session is None or session.line_user_id != line_user_id:
+                return None, False
+
+            upload = dict(session.settings_snapshot.get("upload") or {})
+            target_task_id = str(upload.get("target_task_id", ""))
+            target = self.tasks.get(target_task_id) if target_task_id else None
+
+            # finalize 回應遺失時可安全重送，不會再次追加圖片或觸發 Worker。
+            if session.status == "upload_merged":
+                return target, False
+            if session.status != "uploading" or target is None:
+                return target or session, False
+            if (
+                target.line_user_id != line_user_id
+                or target.status != "completed"
+            ):
+                return target, False
+
+            expected_count = int(upload.get("expected_image_count", 0))
+            if expected_count <= 0 or len(session.image_ids) != expected_count:
+                return target, False
+
+            now = time.time()
+            appended_image_ids = list(session.image_ids)
+            target.image_ids = list(dict.fromkeys([
+                *target.image_ids,
+                *appended_image_ids,
+            ]))
+            target.status = "pending"
+            target.claimed_by = ""
+            target.claim_token = ""
+            target.processing_started_at = 0.0
+            target.heartbeat_at = 0.0
+            target.lease_expires_at = 0.0
+            # 每次追加照片都是新的處理週期，不沿用前一輪的重試次數。
+            target.attempt_count = 0
+            target.next_attempt_at = 0.0
+            target.last_error = ""
+            target.error_message = ""
+            target.failure_notified_at = 0.0
+            target.completion_reason = "additional_images_pending"
+            target.updated_at = now
+
+            upload["finalized_at"] = now
+            upload["merged_target_task_id"] = target.id
+            upload["merged_image_count"] = len(appended_image_ids)
+            session.settings_snapshot = {
+                **session.settings_snapshot,
+                "upload": upload,
+            }
+            session.image_ids = []
+            session.status = "upload_merged"
+            session.updated_at = now
+
+            self.tasks[target.id] = target
+            self.tasks[session.id] = session
+            self._save()
+            return target, True
     # 讓 LIFF 任務在 Web 綁定 LINE 後自動歸戶
     def assign_tasks_to_user(
         self,

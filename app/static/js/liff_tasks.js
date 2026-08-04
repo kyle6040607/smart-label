@@ -47,6 +47,7 @@ function createTaskCard(task) {
     const taskInfoElement = card.querySelector(".task-info");
     const taskErrorElement = card.querySelector(".task-error");
     const downloadElement = card.querySelector(".task-download");
+    const addImagesElement = card.querySelector(".task-add-images");
     const excludedToggle = card.querySelector(".task-excluded-toggle");
     const excludedPanel = card.querySelector(".task-excluded-panel");
     const excludedList = card.querySelector(".task-excluded-list");
@@ -80,6 +81,15 @@ function createTaskCard(task) {
         downloadElement.addEventListener("click", (event) => {
             event.preventDefault();
             openDownloadInExternalBrowser(task.download_url);
+        });
+    }
+
+    if (task.can_add_images) {
+        addImagesElement.hidden = false;
+        addImagesElement.addEventListener("click", () => {
+            const uploadUrl = new URL("/liff/create", window.location.origin);
+            uploadUrl.searchParams.set("append_to", task.task_id);
+            window.location.href = uploadUrl.toString();
         });
     }
 
