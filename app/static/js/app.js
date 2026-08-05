@@ -903,7 +903,9 @@ $("uploadBtn").onclick = async (e) => {
   if (e) e.stopPropagation();
   const fileInputEl = $("fileInput");
   const files = state.stagedFiles.length ? state.stagedFiles : Array.from(fileInputEl.files);
-  if (!files.length) return alert("請先選擇照片或資料集壓縮檔");
+  if (!files.length) {
+    return showModal({ title: "提示", desc: "請先選擇照片或資料集壓縮檔", confirmText: "確定", showCancel: false });
+  }
 
   const uploadBtn = $("uploadBtn");
   const cancelUploadBtn = $("cancelUploadBtn");
@@ -922,6 +924,8 @@ $("uploadBtn").onclick = async (e) => {
 
   let uploadedCount = 0;
   let uploadedBytes = 0;
+  let totalCreatedCount = 0;
+  let accumulatedDuplicates = [];
   const totalFiles = files.length;
   const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
@@ -986,6 +990,7 @@ $("uploadBtn").onclick = async (e) => {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             let createdImages = [];
+            let duplicateFiles = [];
             const text = xhr.responseText.trim();
             if (text.startsWith("{")) {
               const lines = text.split("\n");
@@ -993,8 +998,9 @@ $("uploadBtn").onclick = async (e) => {
                 if (!line.trim()) continue;
                 try {
                   const data = JSON.parse(line.trim());
-                  if (data.event === "done" && Array.isArray(data.created)) {
-                    createdImages = data.created;
+                  if (data.event === "done") {
+                    if (Array.isArray(data.created)) createdImages = data.created;
+                    if (Array.isArray(data.duplicates)) duplicateFiles = data.duplicates;
                   }
                 } catch (e) { }
               }
@@ -1008,7 +1014,7 @@ $("uploadBtn").onclick = async (e) => {
               appendThumbs(createdImages);
               expandGallery();
             }
-            resolve(createdImages);
+            resolve({ created: createdImages, duplicates: duplicateFiles });
           } catch (err) {
             reject(new Error("伺服器回傳格式錯誤"));
           }
@@ -1045,7 +1051,9 @@ $("uploadBtn").onclick = async (e) => {
     for (const f of files) {
       if (state.isAborted) break;
       if (currentBatch.length > 0 && (currentBatchSize + f.size > BATCH_SIZE_LIMIT || currentBatch.length >= BATCH_COUNT_LIMIT)) {
-        await sendBatch(currentBatch);
+        const res = await sendBatch(currentBatch);
+        totalCreatedCount += res.created.length;
+        if (res.duplicates && res.duplicates.length) accumulatedDuplicates.push(...res.duplicates);
         currentBatch = [];
         currentBatchSize = 0;
       }
@@ -1054,7 +1062,33 @@ $("uploadBtn").onclick = async (e) => {
     }
 
     if (currentBatch.length > 0 && !state.isAborted) {
-      await sendBatch(currentBatch);
+      const res = await sendBatch(currentBatch);
+      totalCreatedCount += res.created.length;
+      if (res.duplicates && res.duplicates.length) accumulatedDuplicates.push(...res.duplicates);
+    }
+
+    if (accumulatedDuplicates.length > 0 && !state.isAborted) {
+      const uniqueDupes = Array.from(new Set(accumulatedDuplicates));
+      let fileListDesc = uniqueDupes.slice(0, 10).map((name) => `• ${name}`).join("\n");
+      if (uniqueDupes.length > 10) {
+        fileListDesc += `\n...等共 ${uniqueDupes.length} 張圖片`;
+      }
+
+      if (totalCreatedCount === 0) {
+        await showModal({
+          title: "圖片已存在 (未重複上傳)",
+          desc: `您選擇的圖片在當前專案中已存在，系統已自動跳過：\n\n${fileListDesc}`,
+          confirmText: "我知道了",
+          showCancel: false,
+        });
+      } else {
+        await showModal({
+          title: "上傳完成 (包含重複圖片)",
+          desc: `已成功上傳 ${totalCreatedCount} 張新照片。\n\n以下 ${uniqueDupes.length} 張圖片因在當前專案中已存在而自動跳過：\n\n${fileListDesc}`,
+          confirmText: "我知道了",
+          showCancel: false,
+        });
+      }
     }
   } catch (err) {
     if (state.isAborted) {
@@ -1065,7 +1099,13 @@ $("uploadBtn").onclick = async (e) => {
         fileCountHint.textContent = `已中途取消上傳${countInfo}`;
       }
     } else {
-      alert(`上傳中斷：${err.message}`);
+      await showModal({
+        title: "上傳失敗",
+        desc: `上傳中斷：${err.message}`,
+        isDanger: true,
+        confirmText: "確定",
+        showCancel: false,
+      });
     }
   } finally {
     fileInputEl.value = "";

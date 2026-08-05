@@ -139,11 +139,11 @@ def _extract_images_from_archive(
     return extracted
 
 
-def _collect_known_hashes(repo, storage) -> set[str]:
-    """收齊目前使用者看得到的照片雜湊值，供上傳去重比對。"""
+def _collect_known_hashes(repo, storage, project_id: str | None = None) -> set[str]:
+    """收齊指定專案中目前使用者看得到的照片雜湊值，供上傳去重比對。"""
     hashes = set()
 
-    for img in repo.list_images():
+    for img in repo.list_images(project_id=project_id):
         if not can_access_image(img):
             continue
 
@@ -204,8 +204,8 @@ def upload():
         abort(400, "沒有有效的影像檔或解壓後無支援格式影像")
 
     total_items = len(items_to_process)
-    known_hashes = _collect_known_hashes(repo, storage)
-    project_id = request.form.get("project_id") or get_current_project_id()
+    project_id = request.form.get("project_id") or request.args.get("project_id") or get_current_project_id()
+    known_hashes = _collect_known_hashes(repo, storage, project_id=project_id)
 
     def generate_upload_stream():
         created = []
@@ -299,6 +299,7 @@ def upload():
                 "current": len(created),
                 "total": total_items,
                 "created": created,
+                "duplicates": duplicates,
             }, ensure_ascii=False) + "\n"
 
     if want_stream:

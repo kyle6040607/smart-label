@@ -1212,6 +1212,10 @@ body.layman-mode canvas {
   font-size: 14px;
   color: var(--muted, #a0aec0);
   line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .modal-input-group,
