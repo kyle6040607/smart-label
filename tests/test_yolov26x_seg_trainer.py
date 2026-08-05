@@ -180,3 +180,54 @@ def test_train_yolov26x_seg_timestamp_and_cleanup(tmp_path):
     assert len(recorded_work_dirs) == 1
     work_dir = recorded_work_dirs[0]
     assert not work_dir.exists(), f"暫存工作目錄未被刪除: {work_dir}"
+
+
+def test_trigger_training_epochs_validation(tmp_path):
+    from app import create_app
+    cfg = Config(
+        base_dir=tmp_path,
+        data_dir=tmp_path,
+        upload_dir=tmp_path / "up",
+        mask_dir=tmp_path / "mask",
+        db_file=tmp_path / "store.json",
+    )
+    cfg.ensure_dirs()
+    cfg.db_backend = "json"
+    app = create_app(cfg)
+    app.config["TESTING"] = True
+
+    with app.app_context():
+        user = app.repo.get_user_by_username(cfg.default_admin_user)
+        proj = app.repo.get_or_create_default_project(user.id)
+        # 加上一個帶有 final_label 的 segment 讓訓練可被觸發
+        img_path = tmp_path / "img.png"
+        mask_path = tmp_path / "mask.png"
+        _make_dummy_image_file(img_path)
+        _make_dummy_mask_file(mask_path)
+        img = app.repo.add_image(ImageRecord(owner_id=user.id, project_id=proj.id, filename="img.png", path=str(img_path), width=100, height=100))
+        app.repo.add_segment(Segment(image_id=img.id, mask_path=str(mask_path), human_label="cat"))
+
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess["user_id"] = user.id
+
+            # 測試超出邊界 (epochs = 0)
+            res = client.post(f"/api/projects/{proj.id}/train", json={"epochs": 0})
+            assert res.status_code == 400
+            assert "必須介於 1 至 500 之間" in res.get_json()["error"]
+
+            # 測試非數值 (epochs = "abc")
+            res = client.post(f"/api/projects/{proj.id}/train", json={"epochs": "abc"})
+            assert res.status_code == 400
+            assert "必須為有效的整數" in res.get_json()["error"]
+
+            # 測試 patience 超出邊界 (patience = 101)
+            res = client.post(f"/api/projects/{proj.id}/train", json={"epochs": 10, "patience": 101})
+            assert res.status_code == 400
+            assert "必須介於 0 至 100 之間" in res.get_json()["error"]
+
+            # 測試合法數值 (epochs = 10, patience = 3)
+            with patch("threading.Thread") as mock_thread:
+                res = client.post(f"/api/projects/{proj.id}/train", json={"epochs": 10, "patience": 3})
+                assert res.status_code == 202
+                assert mock_thread.called

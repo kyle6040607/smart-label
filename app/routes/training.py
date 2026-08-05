@@ -37,7 +37,22 @@ def trigger_training(project_id: str):
         }), 400
 
     data = request.get_json(silent=True) or {}
-    epochs = int(data.get("epochs", 5))
+    try:
+        epochs = int(data.get("epochs", 5))
+    except (ValueError, TypeError):
+        return jsonify({"error": "訓練輪數 (epochs) 必須為有效的整數"}), 400
+
+    if epochs < 1 or epochs > 500:
+        return jsonify({"error": "訓練輪數 (epochs) 必須介於 1 至 500 之間"}), 400
+
+    try:
+        patience = int(data.get("patience", 100))
+    except (ValueError, TypeError):
+        return jsonify({"error": "早停忍受輪數 (patience) 必須為有效的整數"}), 400
+
+    if patience < 0 or patience > 100:
+        return jsonify({"error": "早停忍受輪數 (patience) 必須介於 0 至 100 之間"}), 400
+
     imgsz = int(data.get("imgsz", 640))
     device = str(data.get("device", "auto"))
 
@@ -54,12 +69,13 @@ def trigger_training(project_id: str):
     def run_training_in_background():
         try:
             print(f"🚀 [Cloud Run Train] 開始為專案 [{project_id}] (使用者: {user_id}) 執行 YOLO 訓練...", flush=True)
-            print(f"⚙️ 訓練參數: epochs={epochs}, imgsz={imgsz}, device={device}", flush=True)
+            print(f"⚙️ 訓練參數: epochs={epochs}, patience={patience}, imgsz={imgsz}, device={device}", flush=True)
             train_yolov26x_seg(
                 repo=repo,
                 storage=storage,
                 task=task,
                 epochs=epochs,
+                patience=patience,
                 imgsz=imgsz,
                 device=device,
             )

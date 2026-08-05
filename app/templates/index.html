@@ -321,6 +321,16 @@
         <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
           <span>🤖 YOLOv26x-seg 線上訓練</span>
         </h3>
+        <div class="engineer-only" style="margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <label for="trainEpochsInput" style="font-size: 12px; color: var(--muted, #aaa); white-space: nowrap;">訓練輪數 (Epochs):</label>
+            <input id="trainEpochsInput" type="number" min="1" max="500" value="5" placeholder="預設: 5" style="width: 90px; padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); background: rgba(0,0,0,0.2); color: inherit;" />
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <label for="trainPatienceInput" style="font-size: 12px; color: var(--muted, #aaa); white-space: nowrap;" title="當訓練驗證指標連續特定輪數未提升時自動提前終止 (0 表示不啟用)">早停忍受輪數 (Patience):</label>
+            <input id="trainPatienceInput" type="number" min="0" max="100" value="100" placeholder="預設: 100" style="width: 90px; padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); background: rgba(0,0,0,0.2); color: inherit;" />
+          </div>
+        </div>
         <div style="display: flex; gap: 8px; width: 100%;">
           <button id="startTrainingBtn" class="btn-primary" style="flex: 1; padding: 8px 12px; font-weight: 600; background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none; border-radius: 6px; color: #fff; cursor: pointer; transition: all 0.2s;">
             🚀 開始訓練 YOLOv26x-seg

@@ -50,8 +50,7 @@ store.json
 uploads/
 masks/
 _ppt_dump.txt
-models/*.pth
-models/*.pt
+models/
 weights/
 app/ml/GroundingDINO/
 

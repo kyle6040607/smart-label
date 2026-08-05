@@ -2680,7 +2680,7 @@ function initProjectControls() {
           try {
             const parsed = JSON.parse(msg);
             if (parsed.error) msg = parsed.error;
-          } catch (_) {}
+          } catch (_) { }
           await showModal({
             title: "⚠️ 建立專案失敗",
             desc: msg,
@@ -2724,7 +2724,7 @@ function initProjectControls() {
           try {
             const parsed = JSON.parse(msg);
             if (parsed.error) msg = parsed.error;
-          } catch (_) {}
+          } catch (_) { }
           await showModal({
             title: "⚠️ 修改專案名稱失敗",
             desc: msg,
@@ -3542,7 +3542,34 @@ if (trainBtn) {
       alert("請先選擇或建立專案！");
       return;
     }
-    if (!confirm("確定要對此專案已標註的照片發起 YOLOv26x-seg 模型訓練嗎？")) {
+
+    let epochs = 5;
+    let patience = 100;
+
+    // 只有在工程師模式下才允許自訂與讀取輪數/早停參數
+    if (state.mode === "engineer") {
+      const epochsEl = $("trainEpochsInput");
+      epochs = epochsEl ? parseInt(epochsEl.value, 10) : 5;
+      if (isNaN(epochs) || epochs < 1 || epochs > 500) {
+        alert("訓練輪數 (Epochs) 必須為 1 到 500 之間的整數！");
+        if (epochsEl) epochsEl.focus();
+        return;
+      }
+
+      const patienceEl = $("trainPatienceInput");
+      patience = patienceEl ? parseInt(patienceEl.value, 10) : 100;
+      if (isNaN(patience) || patience < 0 || patience > 100) {
+        alert("早停忍受輪數 (Patience) 必須為 0 到 100 之間的整數！");
+        if (patienceEl) patienceEl.focus();
+        return;
+      }
+    }
+
+    const confirmMsg = state.mode === "engineer"
+      ? `確定要發送訓練請求嗎？\n- 訓練輪數 (Epochs): ${epochs}\n- 早停忍受輪數 (Patience): ${patience === 0 ? "不啟用" : patience + " 輪"}`
+      : "確定要對此專案已標註的照片發起 YOLOv26x-seg 模型訓練嗎？";
+
+    if (!confirm(confirmMsg)) {
       return;
     }
 
@@ -3553,7 +3580,7 @@ if (trainBtn) {
       const res = await fetch(`/api/projects/${state.currentProjectId}/train`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ epochs: 5, imgsz: 640 }),
+        body: JSON.stringify({ epochs: epochs, patience: patience, imgsz: 640 }),
       });
 
       const data = await res.json();
