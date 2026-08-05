@@ -15,7 +15,6 @@ const imageInputElement =document.getElementById("image-input");
 const imageCountElement =document.getElementById("image-count");
 const promptElement =document.getElementById("prompt");
 const promptCountElement =document.getElementById("prompt-count");
-const promptGroupElement = document.getElementById("prompt-group");
 const uploadButtonElement = document.getElementById("upload-button");
 const submitButtonElement =document.getElementById("submit-button");
 const uploadProgressContainerElement = document.getElementById(
@@ -870,8 +869,6 @@ uploadButtonElement.addEventListener("click", async () => {
         }
 
         enableUploadedImageRemoval();
-        promptGroupElement.hidden = false;
-        submitButtonElement.hidden = false;
         uploadButtonElement.textContent = "圖片上傳完成";
         imageCountElement.textContent = `已上傳 ${uploadedImageRecords.size} 張圖片`;
         statusElement.textContent = "圖片上傳完成，請確認清單並建立標註任務";
