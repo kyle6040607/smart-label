@@ -40,8 +40,28 @@ function openDownloadInExternalBrowser(downloadUrl) {
 }
 
 
+function getTaskRenderSignature(task) {
+    return JSON.stringify([
+        task.prompt,
+        task.task_status,
+        task.image_count,
+        task.dataset_version,
+        task.exported_count,
+        task.excluded_count,
+        task.no_detection_count,
+        task.attempt_count,
+        task.updated_at,
+        task.error_message ?? "",
+        task.download_url ?? "",
+        Boolean(task.can_add_images),
+    ]);
+}
+
+
 function createTaskCard(task) {
     const card = taskCardTemplate.content.firstElementChild.cloneNode(true);
+    card.dataset.taskId = task.task_id;
+    card.dataset.renderSignature = getTaskRenderSignature(task);
     const promptElement = card.querySelector(".task-prompt");
     const taskStatusElement = card.querySelector(".task-status");
     const taskInfoElement = card.querySelector(".task-info");
@@ -155,8 +175,38 @@ let isLoadingTasks = false;
 
 
 function renderTasks(tasks) {
-    activeTasksElement.replaceChildren();
-    historyTasksElement.replaceChildren();
+    const existingCards = new Map(
+        Array.from(
+            document.querySelectorAll(".task-card[data-task-id]")
+        ).map((card) => [card.dataset.taskId, card])
+    );
+
+    const cardForTask = (task) => {
+        const existingCard = existingCards.get(task.task_id);
+        if (!existingCard) {
+            return createTaskCard(task);
+        }
+
+        const excludedPanel = existingCard.querySelector(
+            ".task-excluded-panel"
+        );
+        const isExcludedPanelOpen =
+            excludedPanel && !excludedPanel.hidden;
+
+        // 展開時保留同一個 DOM，避免輪詢清掉縮圖、分頁與展開狀態。
+        if (isExcludedPanelOpen) {
+            return existingCard;
+        }
+
+        if (
+            existingCard.dataset.renderSignature
+            === getTaskRenderSignature(task)
+        ) {
+            return existingCard;
+        }
+
+        return createTaskCard(task);
+    };
 
     const activeTasks = tasks.filter(
         (task) => ["pending", "retry_wait", "processing"].includes(task.task_status)
@@ -165,13 +215,19 @@ function renderTasks(tasks) {
         (task) => !["pending", "retry_wait", "processing"].includes(task.task_status)
     );
 
+    const activeFragment = document.createDocumentFragment();
+    const historyFragment = document.createDocumentFragment();
+
     for (const task of activeTasks) {
-        activeTasksElement.appendChild(createTaskCard(task));
+        activeFragment.appendChild(cardForTask(task));
     }
 
     for (const task of historyTasks) {
-        historyTasksElement.appendChild(createTaskCard(task));
+        historyFragment.appendChild(cardForTask(task));
     }
+
+    activeTasksElement.replaceChildren(activeFragment);
+    historyTasksElement.replaceChildren(historyFragment);
 
     activeSectionElement.hidden = activeTasks.length === 0;
     historySectionElement.hidden = historyTasks.length === 0;
