@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>建立標註任務</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=3">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=4">
 </head>
 
 <body>
@@ -84,6 +84,33 @@
         </section>
     </main>
     <div
+        id="upload-success-modal"
+        class="success-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-success-title"
+        hidden
+    >
+        <div class="success-modal-card">
+            <div class="success-modal-icon" aria-hidden="true">✓</div>
+            <h2 id="upload-success-title">圖片上傳成功</h2>
+            <p id="upload-success-message"></p>
+            <p>
+                標註任務會在背景繼續執行，您現在可以安全離開此頁面。
+            </p>
+            <button
+                id="upload-success-close"
+                type="button"
+                class="submit-button"
+            >
+                完成並離開
+            </button>
+            <p id="upload-success-close-help" class="close-help" hidden>
+                瀏覽器未允許自動關閉，請手動關閉此分頁。
+            </p>
+        </div>
+    </div>
+    <div
     id="liff-data"
     data-liff-id="{{ liff_id }}"
     data-upload-batch-max-images="{{ upload_batch_max_images }}"
@@ -94,7 +121,7 @@
     <!-- LINE 官方 LIFF SDK -->
     <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <!-- 再載入自己的 JavaScript -->
-    <script src="{{ url_for('static', filename='js/liff.js') }}?v=9"></script>
+    <script src="{{ url_for('static', filename='js/liff.js') }}?v=10"></script>
     
 </body>
 </html>

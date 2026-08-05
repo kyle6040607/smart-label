@@ -23,6 +23,18 @@ const uploadProgressElement = document.getElementById("upload-progress");
 const uploadProgressTextElement = document.getElementById(
     "upload-progress-text"
 );
+const uploadSuccessModalElement = document.getElementById(
+    "upload-success-modal"
+);
+const uploadSuccessMessageElement = document.getElementById(
+    "upload-success-message"
+);
+const uploadSuccessCloseElement = document.getElementById(
+    "upload-success-close"
+);
+const uploadSuccessCloseHelpElement = document.getElementById(
+    "upload-success-close-help"
+);
 const selectedImageFiles = new Map();
 
 
@@ -34,6 +46,39 @@ function getImageFileKey(file) {
         file.lastModified,
     ].join(":");
 }
+
+
+function showUploadSuccess(result) {
+    uploadSuccessMessageElement.textContent = APPEND_TARGET_TASK_ID
+        ? `已成功新增 ${result.added_image_count} 張圖片。`
+        : `已成功上傳 ${result.image_count} 張圖片。`;
+    uploadSuccessCloseHelpElement.hidden = true;
+    uploadSuccessCloseElement.disabled = false;
+    uploadSuccessCloseElement.textContent = "完成並離開";
+    uploadSuccessModalElement.hidden = false;
+    document.body.classList.add("modal-open");
+    uploadSuccessCloseElement.focus();
+}
+
+
+uploadSuccessCloseElement.addEventListener("click", () => {
+    uploadSuccessCloseElement.disabled = true;
+    uploadSuccessCloseElement.textContent = "正在關閉...";
+
+    if (liff.isInClient()) {
+        liff.closeWindow();
+        return;
+    }
+
+    window.setTimeout(() => {
+        if (document.visibilityState === "visible") {
+            uploadSuccessCloseElement.disabled = false;
+            uploadSuccessCloseElement.textContent = "已完成";
+            uploadSuccessCloseHelpElement.hidden = false;
+        }
+    }, 300);
+    window.close();
+});
 
 // URL 與 LINE 登入輔助函式
 function getCleanRedirectUri() {
@@ -791,22 +836,10 @@ taskFormElement.addEventListener(
             );
 
             taskFormElement.style.display = "none";
-
-            if (liff.isInClient()) {
-                statusElement.textContent =
-                    APPEND_TARGET_TASK_ID
-                        ? `已新增 ${result.added_image_count} 張圖片，任務正在重新排隊，準備關閉頁面...`
-                        : `已建立 ${result.image_count} 張圖片的標註任務，正在關閉頁面...`;
-
-                window.setTimeout(() => {
-                    liff.closeWindow();
-                }, 1200);
-            } else {
-                statusElement.textContent =
-                    APPEND_TARGET_TASK_ID
-                        ? `已新增 ${result.added_image_count} 張圖片，任務正在重新排隊，可以關閉此頁面`
-                        : `已建立 ${result.image_count} 張圖片的標註任務，可以關閉此頁面`;
-            }
+            statusElement.textContent = APPEND_TARGET_TASK_ID
+                ? "圖片已新增，任務正在背景重新排隊"
+                : "圖片已上傳，標註任務正在背景執行";
+            showUploadSuccess(result);
 
         } catch (error) {
             console.error(

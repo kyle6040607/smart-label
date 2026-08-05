@@ -191,6 +191,9 @@ def test_liff_upload_page_exposes_progress_and_server_batch_limits(app):
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     assert 'id="upload-progress"' in html
+    assert 'id="upload-success-modal"' in html
+    assert 'id="upload-success-close"' in html
+    assert "完成並離開" in html
     assert 'data-upload-batch-max-images="5"' in html
     assert f'data-upload-batch-max-bytes="{15 * 1024 * 1024}"' in html
 

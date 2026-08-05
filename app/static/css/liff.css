@@ -10,6 +10,10 @@ body {
     color: #222;
 }
 
+body.modal-open {
+    overflow: hidden;
+}
+
 .container {
     width: 100%;
     max-width: 560px;
@@ -110,6 +114,56 @@ p {
     margin-top: 6px;
     font-size: 14px;
     text-align: center;
+}
+
+.success-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(17, 24, 39, 0.55);
+}
+
+.success-modal[hidden] {
+    display: none;
+}
+
+.success-modal-card {
+    width: min(100%, 420px);
+    padding: 28px 24px;
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+    text-align: center;
+}
+
+.success-modal-card h2 {
+    margin: 12px 0 8px;
+}
+
+.success-modal-card p {
+    margin-top: 8px;
+}
+
+.success-modal-icon {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    margin: 0 auto;
+    border-radius: 50%;
+    background: #dcfce7;
+    color: #15803d;
+    font-size: 32px;
+    font-weight: bold;
+}
+
+.close-help {
+    color: #b45309;
+    font-size: 14px;
 }
 
 .submit-button {
