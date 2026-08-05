@@ -125,6 +125,76 @@ def test_liff_chunked_upload_finalizes_one_task_and_triggers_once(
     assert operations == ["smart-label-task-worker"]
 
 
+def test_liff_chunked_upload_accepts_more_than_thirty_images(
+    app,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-many-images",
+            "name": "大量圖片測試",
+            "picture": "",
+        },
+    )
+
+    response = app.test_client().post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "cat",
+            "expected_image_count": 31,
+            "expected_total_bytes": 3100,
+        },
+    )
+
+    assert response.status_code == 201
+    result = response.get_json()
+    assert result["expected_image_count"] == 31
+    assert result["batch_max_images"] == 5
+    assert result["batch_max_bytes"] == 15 * 1024 * 1024
+
+
+def test_liff_chunked_upload_rejects_task_over_total_byte_quota(
+    app,
+    monkeypatch,
+):
+    app.smart_config.liff_upload_max_total_bytes = 100
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-over-quota",
+            "name": "上傳配額測試",
+            "picture": "",
+        },
+    )
+
+    response = app.test_client().post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "cat",
+            "expected_image_count": 1,
+            "expected_total_bytes": 101,
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.get_json()["max_total_bytes"] == 100
+
+
+def test_liff_upload_page_exposes_progress_and_server_batch_limits(app):
+    response = app.test_client().get("/liff/create")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'id="upload-progress"' in html
+    assert 'data-upload-batch-max-images="5"' in html
+    assert f'data-upload-batch-max-bytes="{15 * 1024 * 1024}"' in html
+
+
 def test_liff_append_images_merges_into_completed_task_and_triggers_once(
     app,
     monkeypatch,
@@ -316,16 +386,19 @@ def test_liff_chunked_upload_repeated_batch_is_idempotent(
     ).get_json()
     session_id = init_result["session_id"]
 
+    first_image = make_png_file()
+    image_bytes = len(first_image.getvalue())
     first_response = client.post(
         f"/liff/uploads/{session_id}/batch",
         data={
             "id_token": "fake-id-token",
             "batch_id": "batch-1",
-            "images": (make_png_file(), "cat.png"),
+            "images": (first_image, "cat.png"),
         },
         content_type="multipart/form-data",
     )
     assert first_response.status_code == 201
+    assert first_response.get_json()["uploaded_bytes"] == image_bytes
 
     repeated_response = client.post(
         f"/liff/uploads/{session_id}/batch",
@@ -340,7 +413,50 @@ def test_liff_chunked_upload_repeated_batch_is_idempotent(
     repeated_result = repeated_response.get_json()
     assert repeated_result["duplicate_batch"] is True
     assert repeated_result["uploaded_count"] == 1
+    assert repeated_result["uploaded_bytes"] == image_bytes
     assert len(app.repo.get_task(session_id).image_ids) == 1
+    upload = app.repo.get_task(session_id).settings_snapshot["upload"]
+    assert upload["uploaded_bytes"] == image_bytes
+    assert upload["completed_batch_bytes"] == {"batch-1": image_bytes}
+
+
+def test_liff_chunked_upload_rejects_bytes_beyond_declared_total(
+    app,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {
+            "sub": "U-byte-mismatch",
+            "name": "大小不符測試",
+            "picture": "",
+        },
+    )
+    client = app.test_client()
+    init_result = client.post(
+        "/liff/uploads/init",
+        json={
+            "id_token": "fake-id-token",
+            "prompt": "cat",
+            "expected_image_count": 1,
+            "expected_total_bytes": 1,
+        },
+    ).get_json()
+
+    response = client.post(
+        f"/liff/uploads/{init_result['session_id']}/batch",
+        data={
+            "id_token": "fake-id-token",
+            "batch_id": "batch-1",
+            "images": (make_png_file(), "cat.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 409
+    assert "預期大小" in response.get_json()["message"]
+    assert app.repo.get_task(init_result["session_id"]).image_ids == []
 
 
 def test_liff_chunked_upload_does_not_finalize_incomplete_task(

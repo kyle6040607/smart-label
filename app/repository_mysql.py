@@ -1589,6 +1589,7 @@ class MySQLRepository:
         line_user_id: str,
         batch_id: str,
         image_ids: list[str],
+        batch_bytes: int = 0,
     ) -> tuple[AnnotationTask | None, bool]:
         """原子記錄 LIFF 上傳批次；重送相同 batch_id 不會重複追加。"""
         now = time.time()
@@ -1618,6 +1619,16 @@ class MySQLRepository:
 
             completed_batches[batch_id] = list(image_ids)
             upload["completed_batches"] = completed_batches
+            completed_batch_bytes = dict(
+                upload.get("completed_batch_bytes") or {}
+            )
+            normalized_batch_bytes = max(0, int(batch_bytes))
+            completed_batch_bytes[batch_id] = normalized_batch_bytes
+            upload["completed_batch_bytes"] = completed_batch_bytes
+            upload["uploaded_bytes"] = (
+                int(upload.get("uploaded_bytes", 0))
+                + normalized_batch_bytes
+            )
             task.settings_snapshot = {
                 **task.settings_snapshot,
                 "upload": upload,

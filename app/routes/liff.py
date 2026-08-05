@@ -71,9 +71,6 @@ bp = Blueprint(
 
 _DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 _EXCLUDED_PAGE_SIZE = 20
-_LIFF_UPLOAD_MAX_IMAGES = 30
-_LIFF_UPLOAD_BATCH_MAX_IMAGES = 5
-_LIFF_UPLOAD_BATCH_MAX_BYTES = 15 * 1024 * 1024
 _LIFF_UPLOAD_SESSION_TTL_SECONDS = 24 * 60 * 60
 _LIFF_UPLOAD_BATCH_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -254,7 +251,13 @@ def upload_page():
 
     cfg = get_config()
 
-    return render_template("liff/upload.html", liff_id=cfg.liff_id)
+    return render_template(
+        "liff/upload.html",
+        liff_id=cfg.liff_id,
+        upload_batch_max_images=cfg.liff_upload_batch_max_images,
+        upload_batch_max_bytes=cfg.liff_upload_batch_max_bytes,
+        upload_max_total_bytes=cfg.liff_upload_max_total_bytes,
+    )
 
 
 @bp.get("/tasks")
@@ -351,31 +354,82 @@ def initialize_chunked_upload():
         expected_image_count = int(payload.get("expected_image_count", 0))
     except (TypeError, ValueError):
         expected_image_count = 0
+    try:
+        expected_total_bytes = int(payload.get("expected_total_bytes", 0))
+    except (TypeError, ValueError):
+        expected_total_bytes = -1
 
     if not target_task_id and not prompt:
         return jsonify({"ok": False, "message": "請輸入標註內容"}), 400
     if not target_task_id and len(prompt) > 200:
         return jsonify({"ok": False, "message": "標註內容不可超過 200 字"}), 400
-    if not 1 <= expected_image_count <= _LIFF_UPLOAD_MAX_IMAGES:
+    cfg = get_config()
+    if expected_image_count < 1:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "message": "每個任務至少需選擇 1 張圖片",
+                }
+            ),
+            400,
+        )
+    if (
+        cfg.liff_upload_max_images > 0
+        and expected_image_count > cfg.liff_upload_max_images
+    ):
         return (
             jsonify(
                 {
                     "ok": False,
                     "message": (
-                        f"每個任務需選擇 1～{_LIFF_UPLOAD_MAX_IMAGES} 張圖片"
+                        "每個任務最多選擇 "
+                        f"{cfg.liff_upload_max_images} 張圖片"
                     ),
                 }
             ),
             400,
+        )
+    if expected_total_bytes < 0:
+        return jsonify({"ok": False, "message": "圖片總大小無效"}), 400
+    if (
+        cfg.liff_upload_max_total_bytes > 0
+        and expected_total_bytes > cfg.liff_upload_max_total_bytes
+    ):
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "message": "所選圖片總大小超過單一任務上限",
+                    "max_total_bytes": cfg.liff_upload_max_total_bytes,
+                }
+            ),
+            413,
         )
 
     profile, verification_error = _verify_liff_profile(id_token)
     if verification_error is not None:
         return verification_error
 
-    cfg = get_config()
     repo = get_repo()
     _expire_stale_uploads(repo, get_storage(), profile["sub"])
+    active_upload_count = sum(
+        task.status == "uploading"
+        for task in repo.list_tasks_by_line_user_id(profile["sub"])
+    )
+    if (
+        cfg.liff_upload_max_concurrent_sessions > 0
+        and active_upload_count >= cfg.liff_upload_max_concurrent_sessions
+    ):
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "message": "目前已有圖片正在上傳，請完成後再建立新任務",
+                }
+            ),
+            429,
+        )
     target_task = None
     if target_task_id:
         target_task = repo.get_task(target_task_id)
@@ -418,7 +472,10 @@ def initialize_chunked_upload():
     )
     settings_snapshot["upload"] = {
         "expected_image_count": expected_image_count,
+        "expected_total_bytes": expected_total_bytes,
+        "uploaded_bytes": 0,
         "completed_batches": {},
+        "completed_batch_bytes": {},
         "expires_at": expires_at,
         "finalized_at": 0.0,
         "target_task_id": target_task_id,
@@ -441,10 +498,12 @@ def initialize_chunked_upload():
                 "task_status": task.status,
                 "expected_image_count": expected_image_count,
                 "uploaded_count": 0,
+                "uploaded_bytes": 0,
                 "expires_at": expires_at,
                 "display_name": display_name,
-                "batch_max_images": _LIFF_UPLOAD_BATCH_MAX_IMAGES,
-                "batch_max_bytes": _LIFF_UPLOAD_BATCH_MAX_BYTES,
+                "batch_max_images": cfg.liff_upload_batch_max_images,
+                "batch_max_bytes": cfg.liff_upload_batch_max_bytes,
+                "max_total_bytes": cfg.liff_upload_max_total_bytes,
                 "append_mode": bool(target_task_id),
                 "target_task_id": target_task_id,
             }
@@ -482,6 +541,7 @@ def upload_image_batch(session_id: str):
                 "batch_id": batch_id,
                 "accepted_count": len(completed_batches[batch_id]),
                 "uploaded_count": len(task.image_ids),
+                "uploaded_bytes": int(upload.get("uploaded_bytes", 0)),
                 "expected_image_count": int(
                     upload.get("expected_image_count", 0)
                 ),
@@ -497,13 +557,14 @@ def upload_image_batch(session_id: str):
     ]
     if not images:
         return jsonify({"ok": False, "message": "此批次沒有圖片"}), 400
-    if len(images) > _LIFF_UPLOAD_BATCH_MAX_IMAGES:
+    cfg = get_config()
+    if len(images) > cfg.liff_upload_batch_max_images:
         return (
             jsonify(
                 {
                     "ok": False,
                     "message": (
-                        f"每批最多 {_LIFF_UPLOAD_BATCH_MAX_IMAGES} 張圖片"
+                        f"每批最多 {cfg.liff_upload_batch_max_images} 張圖片"
                     ),
                 }
             ),
@@ -514,7 +575,6 @@ def upload_image_batch(session_id: str):
     if len(task.image_ids) + len(images) > expected_image_count:
         return jsonify({"ok": False, "message": "上傳圖片數量超過預期"}), 409
 
-    cfg = get_config()
     validated_images = []
     total_bytes = 0
 
@@ -548,12 +608,13 @@ def upload_image_batch(session_id: str):
                 ),
                 413,
             )
-        if total_bytes > _LIFF_UPLOAD_BATCH_MAX_BYTES:
+        if total_bytes > cfg.liff_upload_batch_max_bytes:
             return (
                 jsonify(
                     {
                         "ok": False,
-                        "message": "此批次圖片總大小超過 15 MiB",
+                        "message": "此批次圖片總大小超過上傳限制",
+                        "batch_max_bytes": cfg.liff_upload_batch_max_bytes,
                     }
                 ),
                 413,
@@ -588,6 +649,28 @@ def upload_image_batch(session_id: str):
                 height,
             )
         )
+
+    uploaded_bytes = int(upload.get("uploaded_bytes", 0))
+    expected_total_bytes = int(upload.get("expected_total_bytes", 0))
+    if (
+        cfg.liff_upload_max_total_bytes > 0
+        and uploaded_bytes + total_bytes > cfg.liff_upload_max_total_bytes
+    ):
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "message": "此任務累計圖片大小超過上限",
+                    "max_total_bytes": cfg.liff_upload_max_total_bytes,
+                }
+            ),
+            413,
+        )
+    if (
+        expected_total_bytes > 0
+        and uploaded_bytes + total_bytes > expected_total_bytes
+    ):
+        return jsonify({"ok": False, "message": "上傳內容超過預期大小"}), 409
 
     storage = get_storage()
     batch_image_ids = []
@@ -637,6 +720,7 @@ def upload_image_batch(session_id: str):
         profile["sub"],
         batch_id,
         batch_image_ids,
+        total_bytes,
     )
     if updated_task is None:
         return jsonify({"ok": False, "message": "找不到上傳工作階段"}), 404
@@ -651,6 +735,9 @@ def upload_image_batch(session_id: str):
                 "batch_id": batch_id,
                 "accepted_count": len(batch_image_ids),
                 "uploaded_count": len(updated_task.image_ids),
+                "uploaded_bytes": int(
+                    _upload_snapshot(updated_task).get("uploaded_bytes", 0)
+                ),
                 "expected_image_count": expected_image_count,
             }
         ),
@@ -686,6 +773,26 @@ def finalize_chunked_upload(session_id: str):
                     "message": "圖片尚未全部上傳完成",
                     "uploaded_count": len(task.image_ids),
                     "expected_image_count": expected_image_count,
+                }
+            ),
+            409,
+        )
+
+    expected_total_bytes = int(upload.get("expected_total_bytes", 0))
+    uploaded_bytes = int(upload.get("uploaded_bytes", 0))
+    if (
+        task.status == "uploading"
+        and expected_total_bytes > 0
+        and uploaded_bytes != expected_total_bytes
+    ):
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "code": "UPLOAD_INCOMPLETE",
+                    "message": "圖片資料尚未全部上傳完成",
+                    "uploaded_bytes": uploaded_bytes,
+                    "expected_total_bytes": expected_total_bytes,
                 }
             ),
             409,

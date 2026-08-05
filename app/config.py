@@ -86,6 +86,25 @@ class Config:
     )
     liff_yolo_imgsz: int = int(os.getenv("LIFF_YOLO_IMGSZ", "640"))
 
+    # --- LIFF 分批上傳 ---
+    # max_images=0 代表不限制選取張數；每次 HTTP request 仍受批次限制，
+    # 避免觸碰 Cloud Run request 大小上限或一次占用過多記憶體。
+    liff_upload_max_images: int = int(
+        os.getenv("LIFF_UPLOAD_MAX_IMAGES", "0")
+    )
+    liff_upload_batch_max_images: int = int(
+        os.getenv("LIFF_UPLOAD_BATCH_MAX_IMAGES", "5")
+    )
+    liff_upload_batch_max_bytes: int = int(
+        os.getenv("LIFF_UPLOAD_BATCH_MAX_BYTES", str(15 * 1024 * 1024))
+    )
+    liff_upload_max_total_bytes: int = int(
+        os.getenv("LIFF_UPLOAD_MAX_TOTAL_BYTES", str(5 * 1024 * 1024 * 1024))
+    )
+    liff_upload_max_concurrent_sessions: int = int(
+        os.getenv("LIFF_UPLOAD_MAX_CONCURRENT_SESSIONS", "2")
+    )
+
     # --- few-shot 分類器（提案第 6、7 頁）---
     # classifier: "knn" | "softmax"
     classifier_kind: str = os.getenv("CLASSIFIER", "knn")

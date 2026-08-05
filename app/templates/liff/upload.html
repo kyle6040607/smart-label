@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>建立標註任務</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=2">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=3">
 </head>
 
 <body>
@@ -48,6 +48,16 @@
                    <p id="image-count">
                         尚未選擇圖片
                    </p>
+                   <section id="upload-progress-container" hidden>
+                        <progress
+                            id="upload-progress"
+                            value="0"
+                            max="100"
+                        ></progress>
+                        <p id="upload-progress-text">
+                            準備上傳
+                        </p>
+                   </section>
                    <div class="form-group">
                         <label for="prompt">
                             想要標註的物件
@@ -76,12 +86,15 @@
     <div
     id="liff-data"
     data-liff-id="{{ liff_id }}"
+    data-upload-batch-max-images="{{ upload_batch_max_images }}"
+    data-upload-batch-max-bytes="{{ upload_batch_max_bytes }}"
+    data-upload-max-total-bytes="{{ upload_max_total_bytes }}"
     hidden>
     </div>
     <!-- LINE 官方 LIFF SDK -->
     <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <!-- 再載入自己的 JavaScript -->
-    <script src="{{ url_for('static', filename='js/liff.js') }}?v=8"></script>
+    <script src="{{ url_for('static', filename='js/liff.js') }}?v=9"></script>
     
 </body>
 </html>

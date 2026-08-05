@@ -149,6 +149,52 @@ def test_finish_recovered_cleanup_clears_matching_token():
     assert params[-1] == "stale-token"
 
 
+def test_record_liff_upload_batch_persists_uploaded_bytes_atomically():
+    import json
+
+    task = AnnotationTask(
+        id="upload-session",
+        line_user_id="U-owner",
+        status="uploading",
+        settings_snapshot={
+            "upload": {
+                "expected_image_count": 1,
+                "expected_total_bytes": 321,
+                "uploaded_bytes": 0,
+                "completed_batches": {},
+                "completed_batch_bytes": {},
+            }
+        },
+    ).to_dict()
+    for field in (
+        "image_ids",
+        "processed_image_ids",
+        "settings_snapshot",
+        "no_detection_image_ids",
+        "excluded_results",
+    ):
+        task[field] = json.dumps(task[field])
+
+    cursor = RecordingCursor([task])
+    updated, recorded = _repo_with_cursor(cursor).record_liff_upload_batch(
+        "upload-session",
+        "U-owner",
+        "batch-1",
+        ["image-1"],
+        321,
+    )
+
+    assert recorded is True
+    assert updated is not None
+    assert updated.settings_snapshot["upload"]["uploaded_bytes"] == 321
+    assert updated.settings_snapshot["upload"]["completed_batch_bytes"] == {
+        "batch-1": 321,
+    }
+    assert "FOR UPDATE" in cursor.calls[0][0]
+    saved_snapshot = json.loads(cursor.calls[1][1][1])
+    assert saved_snapshot["upload"]["uploaded_bytes"] == 321
+
+
 def test_finalize_liff_append_locks_session_and_target_in_one_transaction():
     import json
 

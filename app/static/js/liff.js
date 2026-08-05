@@ -16,6 +16,13 @@ const imageCountElement =document.getElementById("image-count");
 const promptElement =document.getElementById("prompt");
 const promptCountElement =document.getElementById("prompt-count");
 const submitButtonElement =document.getElementById("submit-button");
+const uploadProgressContainerElement = document.getElementById(
+    "upload-progress-container"
+);
+const uploadProgressElement = document.getElementById("upload-progress");
+const uploadProgressTextElement = document.getElementById(
+    "upload-progress-text"
+);
 const selectedImageFiles = new Map();
 
 
@@ -317,10 +324,20 @@ promptElement.addEventListener(
 );
 
 
-const LIFF_UPLOAD_MAX_IMAGES = 30;
-const LIFF_UPLOAD_BATCH_MAX_IMAGES = 5;
-const LIFF_UPLOAD_BATCH_MAX_BYTES = 15 * 1024 * 1024;
+const LIFF_UPLOAD_BATCH_MAX_IMAGES = Number.parseInt(
+    liffDataElement?.dataset.uploadBatchMaxImages ?? "5",
+    10
+);
+const LIFF_UPLOAD_BATCH_MAX_BYTES = Number.parseInt(
+    liffDataElement?.dataset.uploadBatchMaxBytes ?? `${15 * 1024 * 1024}`,
+    10
+);
+const LIFF_UPLOAD_MAX_TOTAL_BYTES = Number.parseInt(
+    liffDataElement?.dataset.uploadMaxTotalBytes ?? "0",
+    10
+);
 const LIFF_UPLOAD_MAX_RETRIES = 3;
+const LIFF_UPLOAD_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 
 function waitForRetry(milliseconds) {
@@ -366,21 +383,59 @@ async function requestJson(url, options) {
 }
 
 
-function createUploadBatches(files) {
+function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+        return "0 B";
+    }
+
+    const units = ["B", "KiB", "MiB", "GiB"];
+    const unitIndex = Math.min(
+        Math.floor(Math.log(bytes) / Math.log(1024)),
+        units.length - 1
+    );
+    const value = bytes / (1024 ** unitIndex);
+    return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+
+function updateUploadProgress(
+    uploadedBytes,
+    totalBytes,
+    uploadedCount,
+    totalCount,
+    message = "正在上傳"
+) {
+    const normalizedBytes = Math.min(
+        Math.max(uploadedBytes, 0),
+        Math.max(totalBytes, 0)
+    );
+    const percent = totalBytes > 0
+        ? Math.floor((normalizedBytes / totalBytes) * 100)
+        : 0;
+
+    uploadProgressContainerElement.hidden = false;
+    uploadProgressElement.value = percent;
+    uploadProgressTextElement.textContent =
+        `${message} ${percent}%・${uploadedCount} / ${totalCount} 張・`
+        + `${formatBytes(normalizedBytes)} / ${formatBytes(totalBytes)}`;
+}
+
+
+function createUploadBatches(files, batchMaxImages, batchMaxBytes) {
     const batches = [];
     let currentBatch = [];
     let currentBytes = 0;
 
     for (const file of files) {
-        if (file.size > LIFF_UPLOAD_BATCH_MAX_BYTES) {
+        if (file.size > batchMaxBytes) {
             throw new Error(
-                `${file.name} 超過 LIFF 單張 15 MiB 上傳限制`
+                `${file.name} 超過 LIFF 單張 ${formatBytes(batchMaxBytes)} 上傳限制`
             );
         }
 
         const exceedsBatch =
-            currentBatch.length >= LIFF_UPLOAD_BATCH_MAX_IMAGES
-            || currentBytes + file.size > LIFF_UPLOAD_BATCH_MAX_BYTES;
+            currentBatch.length >= batchMaxImages
+            || currentBytes + file.size > batchMaxBytes;
 
         if (currentBatch.length > 0 && exceedsBatch) {
             batches.push(currentBatch);
@@ -400,34 +455,118 @@ function createUploadBatches(files) {
 }
 
 
-async function uploadBatchWithRetry(
+function uploadBatchOnce(
     sessionId,
     batchId,
     files,
-    lineIdToken
+    lineIdToken,
+    onProgress
 ) {
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= LIFF_UPLOAD_MAX_RETRIES; attempt += 1) {
+    return new Promise((resolve, reject) => {
         const formData = new FormData();
         formData.append("id_token", lineIdToken);
         formData.append("batch_id", batchId);
         files.forEach((file) => formData.append("images", file));
 
-        try {
-            return await requestJson(
-                `/liff/uploads/${encodeURIComponent(sessionId)}/batch`,
-                {
-                    method: "POST",
-                    body: formData,
+        const xhr = new XMLHttpRequest();
+        xhr.open(
+            "POST",
+            `/liff/uploads/${encodeURIComponent(sessionId)}/batch`
+        );
+        xhr.timeout = LIFF_UPLOAD_REQUEST_TIMEOUT_MS;
+
+        xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable && event.total > 0) {
+                onProgress(Math.min(event.loaded / event.total, 1));
+            }
+        };
+
+        xhr.onload = () => {
+            let result = null;
+            if (xhr.responseText) {
+                try {
+                    result = JSON.parse(xhr.responseText);
+                } catch {
+                    const error = new Error(
+                        `伺服器拒絕請求（HTTP ${xhr.status}）`
+                    );
+                    error.status = xhr.status;
+                    reject(error);
+                    return;
                 }
+            }
+
+            if (xhr.status < 200 || xhr.status >= 300) {
+                const error = new Error(
+                    result?.message || `請求失敗（HTTP ${xhr.status}）`
+                );
+                error.status = xhr.status;
+                error.code = result?.code || "";
+                reject(error);
+                return;
+            }
+
+            if (!result) {
+                const error = new Error("伺服器沒有回傳資料");
+                error.status = xhr.status;
+                reject(error);
+                return;
+            }
+
+            resolve(result);
+        };
+
+        xhr.onerror = () => {
+            const error = new Error("網路連線中斷");
+            error.status = 0;
+            reject(error);
+        };
+        xhr.ontimeout = () => {
+            const error = new Error("圖片批次上傳逾時");
+            error.status = 408;
+            reject(error);
+        };
+        xhr.onabort = () => {
+            const error = new Error("圖片批次上傳已取消");
+            error.status = 0;
+            reject(error);
+        };
+
+        xhr.send(formData);
+    });
+}
+
+
+async function uploadBatchWithRetry(
+    sessionId,
+    batchId,
+    files,
+    lineIdToken,
+    onProgress,
+    onRetry
+) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= LIFF_UPLOAD_MAX_RETRIES; attempt += 1) {
+        try {
+            return await uploadBatchOnce(
+                sessionId,
+                batchId,
+                files,
+                lineIdToken,
+                onProgress
             );
         } catch (error) {
             lastError = error;
-            const retryable = !error.status || error.status >= 500;
+            const retryable =
+                !error.status
+                || error.status === 408
+                || error.status === 429
+                || error.status >= 500;
             if (!retryable || attempt === LIFF_UPLOAD_MAX_RETRIES) {
                 throw error;
             }
+            onRetry(attempt + 1, LIFF_UPLOAD_MAX_RETRIES);
             await waitForRetry(1000 * (2 ** (attempt - 1)));
         }
     }
@@ -467,14 +606,6 @@ taskFormElement.addEventListener(
 
             return;
         }
-
-        if (files.length > LIFF_UPLOAD_MAX_IMAGES) {
-            statusElement.textContent =
-                `每個任務最多選擇 ${LIFF_UPLOAD_MAX_IMAGES} 張圖片`;
-            imageCountElement.classList.add("error-message");
-            return;
-        }
-
 
         // ------------------------
         // 驗證 Prompt
@@ -538,7 +669,25 @@ taskFormElement.addEventListener(
             statusElement.textContent =
                 "正在建立上傳工作階段...";
 
-            const batches = createUploadBatches(files);
+            const totalBytes = files.reduce(
+                (sum, file) => sum + file.size,
+                0
+            );
+            if (
+                LIFF_UPLOAD_MAX_TOTAL_BYTES > 0
+                && totalBytes > LIFF_UPLOAD_MAX_TOTAL_BYTES
+            ) {
+                throw new Error(
+                    `所選圖片總大小超過 ${formatBytes(LIFF_UPLOAD_MAX_TOTAL_BYTES)}`
+                );
+            }
+
+            const batches = createUploadBatches(
+                files,
+                LIFF_UPLOAD_BATCH_MAX_IMAGES,
+                LIFF_UPLOAD_BATCH_MAX_BYTES
+            );
+            updateUploadProgress(0, totalBytes, 0, files.length, "準備上傳");
             const uploadSession = await requestJson(
                 "/liff/uploads/init",
                 {
@@ -550,14 +699,20 @@ taskFormElement.addEventListener(
                         id_token: lineIdToken,
                         prompt,
                         expected_image_count: files.length,
+                        expected_total_bytes: totalBytes,
                         target_task_id: APPEND_TARGET_TASK_ID,
                     }),
                 }
             );
 
             let uploadedCount = 0;
+            let committedBytes = 0;
             for (let index = 0; index < batches.length; index += 1) {
                 const batch = batches[index];
+                const batchBytes = batch.reduce(
+                    (sum, file) => sum + file.size,
+                    0
+                );
                 statusElement.textContent =
                     `正在上傳 ${uploadedCount} / ${files.length} 張圖片...`;
 
@@ -565,9 +720,33 @@ taskFormElement.addEventListener(
                     uploadSession.session_id,
                     `batch-${index + 1}`,
                     batch,
-                    lineIdToken
+                    lineIdToken,
+                    (batchRatio) => {
+                        updateUploadProgress(
+                            committedBytes + (batchBytes * batchRatio),
+                            totalBytes,
+                            uploadedCount,
+                            files.length
+                        );
+                    },
+                    (nextAttempt, maxAttempts) => {
+                        statusElement.textContent =
+                            `網路不穩，正在重試第 ${nextAttempt} / ${maxAttempts} 次...`;
+                    }
                 );
                 uploadedCount = batchResult.uploaded_count;
+                const serverUploadedBytes = Number(
+                    batchResult.uploaded_bytes
+                );
+                committedBytes = Number.isFinite(serverUploadedBytes)
+                    ? serverUploadedBytes
+                    : committedBytes + batchBytes;
+                updateUploadProgress(
+                    committedBytes,
+                    totalBytes,
+                    uploadedCount,
+                    files.length
+                );
                 statusElement.textContent =
                     `已上傳 ${uploadedCount} / ${files.length} 張圖片`;
             }
@@ -592,6 +771,14 @@ taskFormElement.addEventListener(
                     "任務尚未進入排隊狀態，請稍後再試"
                 );
             }
+
+            updateUploadProgress(
+                totalBytes,
+                totalBytes,
+                files.length,
+                files.length,
+                "上傳完成"
+            );
 
 
             // ------------------------
