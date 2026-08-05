@@ -241,9 +241,9 @@ async function loadTasks(showLoading = true) {
     }
 
     isLoadingTasks = true;
-    refreshButtonElement.disabled = true;
 
     if (showLoading) {
+        refreshButtonElement.disabled = true;
         statusElement.textContent = "正在載入任務......";
     }
 
@@ -290,7 +290,9 @@ async function loadTasks(showLoading = true) {
             error.message || "載入任務時發生錯誤";
     } finally {
         isLoadingTasks = false;
-        refreshButtonElement.disabled = false;
+        if (showLoading) {
+            refreshButtonElement.disabled = false;
+        }
     }
 }
 
