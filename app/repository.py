@@ -68,6 +68,43 @@ class Repository:
             if proj is None:
                 return []
 
+            project_tasks = [
+                task
+                for task in self.tasks.values()
+                if task.project_id == project_id
+            ]
+            task_ids = {task.id for task in project_tasks}
+            paths.extend(
+                path
+                for task in project_tasks
+                for path in (task.dataset_zip_path, task.best_model_path)
+                if path
+            )
+            paths.extend(
+                str(result.get("preview_path", ""))
+                for task in project_tasks
+                for result in task.excluded_results
+                if result.get("preview_path")
+            )
+
+            task_segment_ids = {
+                segment.id
+                for segment in self.segments.values()
+                if segment.annotation_task_id in task_ids
+            }
+            for example_id in [
+                example.id
+                for example in self.examples.values()
+                if example.source_segment_id in task_segment_ids
+            ]:
+                self.examples.pop(example_id, None)
+            for segment_id in task_segment_ids:
+                segment = self.segments.pop(segment_id, None)
+                if segment and segment.mask_path:
+                    paths.append(segment.mask_path)
+            for task_id in task_ids:
+                self.tasks.pop(task_id, None)
+
             # 刪除屬於該專案的照片與遮罩
             image_ids = [img.id for img in self.images.values() if img.project_id == project_id]
             for img_id in image_ids:
@@ -86,7 +123,7 @@ class Repository:
                 self.examples.pop(ex_id, None)
 
             self._save()
-        return [p for p in paths if p]
+        return list(dict.fromkeys(p for p in paths if p))
 
     def get_or_create_default_project(self, owner_id: str) -> Project:
         """為使用者取得第一個專案，若無專案則建立『預設專案』，並將無所屬的圖片與範例綁定至此專案。"""
@@ -212,6 +249,13 @@ class Repository:
             reverse=True,
         )
 
+    def list_tasks_by_user(self, user_id: str = "") -> list[AnnotationTask]:
+        """依 Web 使用者取得任務；空字串沿用管理/維護用途的全量查詢。"""
+        tasks = self.tasks.values()
+        if user_id:
+            tasks = [task for task in tasks if task.user_id == user_id]
+        return sorted(tasks, key=lambda task: task.updated_at, reverse=True)
+
     def prepare_liff_task_deletion(
         self,
         task_id: str,
@@ -311,6 +355,8 @@ class Repository:
                 self.segments.pop(segment_id, None)
             for image_id in exclusive_image_ids:
                 self.images.pop(image_id, None)
+            if task.project_id == task.id:
+                self.projects.pop(task.project_id, None)
             self.tasks.pop(task.id, None)
             self._save()
 
@@ -542,6 +588,7 @@ class Repository:
         batch_id: str,
         image_ids: list[str],
         batch_bytes: int = 0,
+        image_bytes_by_id: dict[str, int] | None = None,
     ) -> tuple[AnnotationTask | None, bool]:
         """原子記錄 LIFF 上傳批次；重送相同 batch_id 不會重複追加。"""
         with self._lock:
@@ -569,6 +616,10 @@ class Repository:
                 int(upload.get("uploaded_bytes", 0))
                 + normalized_batch_bytes
             )
+            stored_image_bytes = dict(upload.get("image_bytes") or {})
+            for image_id, image_bytes in (image_bytes_by_id or {}).items():
+                stored_image_bytes[str(image_id)] = max(0, int(image_bytes))
+            upload["image_bytes"] = stored_image_bytes
             task.settings_snapshot = {
                 **task.settings_snapshot,
                 "upload": upload,
@@ -581,16 +632,18 @@ class Repository:
             self._save()
             return task, True
 
-    def finalize_liff_upload_task(
+    def mark_liff_upload_ready(
         self,
         task_id: str,
         line_user_id: str,
     ) -> tuple[AnnotationTask | None, bool]:
-        """僅在圖片齊全時把 uploading 原子轉為 pending。"""
+        """圖片齊全後只封存上傳，不讓 Worker 提前領取。"""
         with self._lock:
             task = self.tasks.get(task_id)
             if task is None or task.line_user_id != line_user_id:
                 return None, False
+            if task.status == "upload_ready":
+                return task, False
             if task.status != "uploading":
                 return task, False
 
@@ -599,16 +652,130 @@ class Repository:
             if expected_count <= 0 or len(task.image_ids) != expected_count:
                 return task, False
 
-            upload["finalized_at"] = time.time()
+            upload["ready_at"] = time.time()
             task.settings_snapshot = {
                 **task.settings_snapshot,
                 "upload": upload,
             }
-            task.status = "pending"
+            task.status = "upload_ready"
             task.updated_at = time.time()
             self.tasks[task.id] = task
             self._save()
             return task, True
+
+    def remove_liff_upload_image(
+        self,
+        task_id: str,
+        line_user_id: str,
+        image_id: str,
+    ) -> tuple[AnnotationTask | None, str, bool]:
+        """從尚未建立的 upload_ready session 移除一張圖片。"""
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if task is None or task.line_user_id != line_user_id:
+                return None, "", False
+            if task.status != "upload_ready" or image_id not in task.image_ids:
+                return task, "", False
+
+            image = self.images.pop(image_id, None)
+            path = image.path if image is not None else ""
+            segment_ids = {
+                segment.id
+                for segment in self.segments.values()
+                if segment.image_id == image_id
+            }
+            for example_id in [
+                example.id
+                for example in self.examples.values()
+                if example.source_segment_id in segment_ids
+            ]:
+                self.examples.pop(example_id, None)
+            for segment_id in segment_ids:
+                self.segments.pop(segment_id, None)
+
+            upload = dict(task.settings_snapshot.get("upload") or {})
+            image_bytes = dict(upload.get("image_bytes") or {})
+            removed_bytes = max(0, int(image_bytes.pop(image_id, 0)))
+            upload["image_bytes"] = image_bytes
+            upload["uploaded_bytes"] = max(
+                0,
+                int(upload.get("uploaded_bytes", 0)) - removed_bytes,
+            )
+            task.image_ids = [
+                existing_id
+                for existing_id in task.image_ids
+                if existing_id != image_id
+            ]
+            upload["expected_image_count"] = len(task.image_ids)
+            upload["expected_total_bytes"] = int(upload["uploaded_bytes"])
+            task.settings_snapshot = {
+                **task.settings_snapshot,
+                "upload": upload,
+            }
+            task.updated_at = time.time()
+            self.tasks[task.id] = task
+            self._save()
+            return task, path, True
+
+    def create_liff_annotation_task(
+        self,
+        task_id: str,
+        line_user_id: str,
+        prompt: str,
+        project_name: str,
+    ) -> tuple[AnnotationTask | None, bool]:
+        """建立專屬 Project，並把 upload_ready 原子轉為 pending。"""
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if task is None or task.line_user_id != line_user_id:
+                return None, False
+            upload = dict(task.settings_snapshot.get("upload") or {})
+            if upload.get("created_at"):
+                return task, False
+            if task.status != "upload_ready" or not task.image_ids:
+                return task, False
+
+            project_id = task.id
+            project = self.projects.get(project_id)
+            if project is None:
+                project = Project(
+                    id=project_id,
+                    owner_id=task.user_id,
+                    name=project_name,
+                    mode="novice",
+                )
+                self.projects[project.id] = project
+            elif project.owner_id != task.user_id:
+                return task, False
+
+            for image_id in task.image_ids:
+                image = self.images.get(image_id)
+                if image is not None:
+                    image.owner_id = task.user_id
+                    image.project_id = project_id
+
+            now = time.time()
+            upload["created_at"] = now
+            task.prompt = prompt
+            task.project_id = project_id
+            task.settings_snapshot = {
+                **task.settings_snapshot,
+                "project_id": project_id,
+                "upload": upload,
+            }
+            task.status = "pending"
+            task.updated_at = now
+            self.tasks[task.id] = task
+            self._save()
+            return task, True
+
+    def finalize_liff_upload_task(
+        self,
+        task_id: str,
+        line_user_id: str,
+    ) -> tuple[AnnotationTask | None, bool]:
+        """向下相容名稱；現在 finalize 只會進入 upload_ready。"""
+        return self.mark_liff_upload_ready(task_id, line_user_id)
 
     def finalize_liff_append_upload(
         self,
@@ -628,7 +795,7 @@ class Repository:
             # finalize 回應遺失時可安全重送，不會再次追加圖片或觸發 Worker。
             if session.status == "upload_merged":
                 return target, False
-            if session.status != "uploading" or target is None:
+            if session.status != "upload_ready" or target is None:
                 return target or session, False
             if (
                 target.line_user_id != line_user_id
@@ -642,6 +809,11 @@ class Repository:
 
             now = time.time()
             appended_image_ids = list(session.image_ids)
+            for image_id in appended_image_ids:
+                image = self.images.get(image_id)
+                if image is not None:
+                    image.owner_id = target.user_id
+                    image.project_id = target.project_id
             target.image_ids = list(dict.fromkeys([
                 *target.image_ids,
                 *appended_image_ids,
@@ -695,6 +867,10 @@ class Repository:
                     task.updated_at = time.time()
                     assigned_count += 1
                 if task.user_id == user_id:
+                    project = self.projects.get(task.project_id)
+                    if project is not None and not project.owner_id:
+                        project.owner_id = user_id
+                        project.updated_at = time.time()
                     for image_id in task.image_ids:
                         image = self.images.get(image_id)
                         if image is not None and not image.owner_id:

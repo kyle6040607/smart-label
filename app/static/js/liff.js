@@ -15,6 +15,8 @@ const imageInputElement =document.getElementById("image-input");
 const imageCountElement =document.getElementById("image-count");
 const promptElement =document.getElementById("prompt");
 const promptCountElement =document.getElementById("prompt-count");
+const promptGroupElement = document.getElementById("prompt-group");
+const uploadButtonElement = document.getElementById("upload-button");
 const submitButtonElement =document.getElementById("submit-button");
 const uploadProgressContainerElement = document.getElementById(
     "upload-progress-container"
@@ -47,14 +49,12 @@ const uploadedImagesCountElement = document.getElementById(
 const uploadedImagesListElement = document.getElementById(
     "uploaded-images-list"
 );
-const uploadedImagesMoreElement = document.getElementById(
-    "uploaded-images-more"
-);
 const selectedImageFiles = new Map();
-const UPLOADED_THUMBNAIL_PAGE_SIZE = 20;
-let uploadedImageFiles = [];
-let uploadedImageTotalCount = 0;
-let renderedUploadedImageCount = 0;
+const uploadedImageRecords = new Map();
+let uploadSessionId = "";
+let uploadReady = false;
+let uploadInProgress = false;
+let taskCreated = false;
 
 
 function getImageFileKey(file) {
@@ -68,12 +68,6 @@ function getImageFileKey(file) {
 
 
 function showUploadSuccess(result) {
-    uploadedImageFiles = Array.from(selectedImageFiles.values());
-    uploadedImageTotalCount = uploadedImageFiles.length;
-    selectedImageFiles.clear();
-    renderedUploadedImageCount = 0;
-    uploadedImagesListElement.replaceChildren();
-    uploadedImagesSectionElement.hidden = true;
     uploadSuccessMessageElement.textContent = APPEND_TARGET_TASK_ID
         ? `已成功新增 ${result.added_image_count} 張圖片。`
         : `已成功上傳 ${result.image_count} 張圖片。`;
@@ -86,64 +80,19 @@ function showUploadSuccess(result) {
 }
 
 
-function appendUploadedImageThumbnails() {
-    const nextImageFiles = uploadedImageFiles.splice(
-        0,
-        UPLOADED_THUMBNAIL_PAGE_SIZE
+function updateCreateButtonState() {
+    const promptReady = APPEND_TARGET_TASK_ID || Boolean(promptElement.value.trim());
+    submitButtonElement.disabled = !(
+        uploadReady
+        && uploadedImageRecords.size > 0
+        && promptReady
     );
-    const fragment = document.createDocumentFragment();
-
-    for (const file of nextImageFiles) {
-        const item = document.createElement("figure");
-        item.className = "uploaded-image-item";
-
-        const image = document.createElement("img");
-        const objectUrl = URL.createObjectURL(file);
-        image.alt = file.name;
-        image.loading = "lazy";
-        image.decoding = "async";
-        image.addEventListener("load", () => {
-            URL.revokeObjectURL(objectUrl);
-        }, {once: true});
-        image.addEventListener("error", () => {
-            URL.revokeObjectURL(objectUrl);
-        }, {once: true});
-        image.src = objectUrl;
-
-        const caption = document.createElement("figcaption");
-        caption.textContent = file.name;
-
-        item.append(image, caption);
-        fragment.append(item);
-    }
-
-    uploadedImagesListElement.append(fragment);
-    renderedUploadedImageCount += nextImageFiles.length;
-    uploadedImagesCountElement.textContent =
-        `${uploadedImageTotalCount} 張`;
-    uploadedImagesMoreElement.hidden = uploadedImageFiles.length === 0;
+    uploadedImagesCountElement.textContent = `${uploadedImageRecords.size} 張`;
 }
 
 
 uploadSuccessViewListElement.addEventListener("click", () => {
-    uploadSuccessModalElement.hidden = true;
-    uploadSuccessCloseHelpElement.hidden = true;
-    document.body.classList.remove("modal-open");
-    uploadedImagesSectionElement.hidden = false;
-
-    if (renderedUploadedImageCount === 0) {
-        appendUploadedImageThumbnails();
-    }
-
-    uploadedImagesSectionElement.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-    });
-});
-
-
-uploadedImagesMoreElement.addEventListener("click", () => {
-    appendUploadedImageThumbnails();
+    window.location.href = "/liff/tasks";
 });
 
 
@@ -165,6 +114,15 @@ uploadSuccessCloseElement.addEventListener("click", () => {
         }
     }, 300);
     window.close();
+});
+
+
+window.addEventListener("beforeunload", (event) => {
+    if (taskCreated || (!uploadInProgress && !uploadReady)) {
+        return;
+    }
+    event.preventDefault();
+    event.returnValue = "";
 });
 
 // URL 與 LINE 登入輔助函式
@@ -402,6 +360,9 @@ async function initializeLiff() {
 // ========================================
 
 imageInputElement.addEventListener("change", () => {
+    if (uploadInProgress || uploadSessionId) {
+        return;
+    }
     const newFiles = Array.from(imageInputElement.files);
     const allowedTypes = ["image/jpeg", "image/png"];
 
@@ -432,6 +393,7 @@ imageInputElement.addEventListener("change", () => {
     imageCountElement.classList.remove("error-message");
     imageCountElement.textContent =
         `已累加選擇 ${selectedImageFiles.size} 張圖片`;
+    uploadButtonElement.disabled = selectedImageFiles.size === 0;
 
     console.log(
         "目前累加的圖片：",
@@ -452,6 +414,7 @@ promptElement.addEventListener(
 
         promptCountElement.textContent =
             `${promptLength} / 200`;
+        updateCreateButtonState();
     }
 );
 
@@ -512,6 +475,92 @@ async function requestJson(url, options) {
     }
 
     return result;
+}
+
+
+function addUploadedImageRecord(clientId, imageId, file) {
+    if (!file || uploadedImageRecords.has(clientId)) {
+        return;
+    }
+
+    const item = document.createElement("figure");
+    item.className = "uploaded-image-item";
+    item.dataset.clientId = clientId;
+    item.dataset.imageId = imageId;
+
+    const image = document.createElement("img");
+    const objectUrl = URL.createObjectURL(file);
+    image.alt = file.name;
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.addEventListener("load", () => {
+        URL.revokeObjectURL(objectUrl);
+    }, {once: true});
+    image.addEventListener("error", () => {
+        URL.revokeObjectURL(objectUrl);
+    }, {once: true});
+    image.src = objectUrl;
+
+    const caption = document.createElement("figcaption");
+    caption.textContent = file.name;
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "uploaded-image-remove";
+    removeButton.setAttribute("aria-label", `移除 ${file.name}`);
+    removeButton.textContent = "×";
+    removeButton.disabled = !uploadReady;
+    removeButton.addEventListener("click", async () => {
+        if (!uploadReady || !uploadSessionId) {
+            return;
+        }
+        removeButton.disabled = true;
+        item.classList.add("is-removing");
+        try {
+            await requestJson(
+                `/liff/uploads/${encodeURIComponent(uploadSessionId)}/images/${encodeURIComponent(imageId)}`,
+                {
+                    method: "DELETE",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        id_token: liff.getIDToken(),
+                    }),
+                }
+            );
+            uploadedImageRecords.delete(clientId);
+            selectedImageFiles.delete(clientId);
+            item.remove();
+            imageCountElement.textContent = uploadedImageRecords.size > 0
+                ? `已上傳並保留 ${uploadedImageRecords.size} 張圖片`
+                : "已移除全部圖片，請重新整理後重新選擇";
+            updateCreateButtonState();
+        } catch (error) {
+            item.classList.remove("is-removing");
+            removeButton.disabled = false;
+            statusElement.textContent = `移除圖片失敗：${error.message}`;
+        }
+    });
+
+    item.append(image, caption, removeButton);
+    uploadedImagesListElement.append(item);
+    uploadedImageRecords.set(clientId, {
+        clientId,
+        imageId,
+        file,
+        item,
+        removeButton,
+    });
+    uploadedImagesSectionElement.hidden = false;
+    updateCreateButtonState();
+}
+
+
+function enableUploadedImageRemoval() {
+    uploadReady = true;
+    for (const record of uploadedImageRecords.values()) {
+        record.removeButton.disabled = false;
+    }
+    updateCreateButtonState();
 }
 
 
@@ -598,7 +647,10 @@ function uploadBatchOnce(
         const formData = new FormData();
         formData.append("id_token", lineIdToken);
         formData.append("batch_id", batchId);
-        files.forEach((file) => formData.append("images", file));
+        files.forEach((file) => {
+            formData.append("images", file);
+            formData.append("client_ids", getImageFileKey(file));
+        });
 
         const xhr = new XMLHttpRequest();
         xhr.open(
@@ -708,253 +760,217 @@ async function uploadBatchWithRetry(
 
 
 // ========================================
-// 表單送出
+// 暫存圖片上傳
 // ========================================
 
-taskFormElement.addEventListener(
-    "submit",
-    async (event) => {
-        event.preventDefault();
+uploadButtonElement.addEventListener("click", async () => {
+    const files = Array.from(selectedImageFiles.values());
+    if (files.length === 0 || uploadInProgress || uploadSessionId) {
+        return;
+    }
+    if (!liff.isLoggedIn() || isCurrentIdTokenExpired()) {
+        restartLineLogin();
+        return;
+    }
+    const lineIdToken = liff.getIDToken();
+    if (!lineIdToken) {
+        restartLineLogin();
+        return;
+    }
 
-        const files = Array.from(selectedImageFiles.values());
+    uploadInProgress = true;
+    uploadButtonElement.disabled = true;
+    uploadButtonElement.textContent = "上傳中...";
+    imageInputElement.disabled = true;
 
-        const prompt =promptElement.value.trim();
-
-
-        // ------------------------
-        // 驗證圖片
-        // ------------------------
-
-        if (files.length === 0) {
-            statusElement.textContent =
-                "請至少選擇一張圖片";
-
-            imageCountElement.textContent =
-                "請先選擇圖片";
-
-            imageCountElement.classList.add(
-                "error-message"
+    try {
+        const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+        if (
+            LIFF_UPLOAD_MAX_TOTAL_BYTES > 0
+            && totalBytes > LIFF_UPLOAD_MAX_TOTAL_BYTES
+        ) {
+            throw new Error(
+                `所選圖片總大小超過 ${formatBytes(LIFF_UPLOAD_MAX_TOTAL_BYTES)}`
             );
-
-            return;
         }
+        const batches = createUploadBatches(
+            files,
+            LIFF_UPLOAD_BATCH_MAX_IMAGES,
+            LIFF_UPLOAD_BATCH_MAX_BYTES
+        );
+        updateUploadProgress(0, totalBytes, 0, files.length, "準備上傳");
+        statusElement.textContent = "正在建立上傳工作階段...";
+        const uploadSession = await requestJson("/liff/uploads/init", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                id_token: lineIdToken,
+                expected_image_count: files.length,
+                expected_total_bytes: totalBytes,
+                target_task_id: APPEND_TARGET_TASK_ID,
+            }),
+        });
+        uploadSessionId = uploadSession.session_id;
 
-        // ------------------------
-        // 驗證 Prompt
-        // ------------------------
-
-        if (!prompt) {
+        let uploadedCount = 0;
+        let committedBytes = 0;
+        for (let index = 0; index < batches.length; index += 1) {
+            const batch = batches[index];
+            const batchBytes = batch.reduce((sum, file) => sum + file.size, 0);
             statusElement.textContent =
-                "請輸入想要標註的物件";
-
-            promptElement.focus();
-
-            return;
-        }
-
-
-        // ------------------------
-        // 驗證 LINE 登入狀態
-        // ------------------------
-
-        if (!liff.isLoggedIn()) {
-            restartLineLogin();
-            return;
-        }
-
-
-        // ------------------------
-        // 預先檢查 Token 是否過期
-        // ------------------------
-
-        if (isCurrentIdTokenExpired()) {
-            statusElement.textContent =
-                "LINE 登入資料已過期";
-
-            restartLineLogin();
-
-            return;
-        }
-
-
-        /*
-         * 每次按送出時才取得目前的 ID Token。
-         *
-         * 不建立全域 lineIdToken，
-         * 避免出現 lineIdToken is not defined。
-         */
-        const lineIdToken = liff.getIDToken();
-
-        if (!lineIdToken) {
-            restartLineLogin();
-            return;
-        }
-
-
-        try {
-            submitButtonElement.disabled =
-                true;
-
-            submitButtonElement.textContent =
-                "上傳中...";
-
-            statusElement.textContent =
-                "正在建立上傳工作階段...";
-
-            const totalBytes = files.reduce(
-                (sum, file) => sum + file.size,
-                0
-            );
-            if (
-                LIFF_UPLOAD_MAX_TOTAL_BYTES > 0
-                && totalBytes > LIFF_UPLOAD_MAX_TOTAL_BYTES
-            ) {
-                throw new Error(
-                    `所選圖片總大小超過 ${formatBytes(LIFF_UPLOAD_MAX_TOTAL_BYTES)}`
-                );
-            }
-
-            const batches = createUploadBatches(
-                files,
-                LIFF_UPLOAD_BATCH_MAX_IMAGES,
-                LIFF_UPLOAD_BATCH_MAX_BYTES
-            );
-            updateUploadProgress(0, totalBytes, 0, files.length, "準備上傳");
-            const uploadSession = await requestJson(
-                "/liff/uploads/init",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        id_token: lineIdToken,
-                        prompt,
-                        expected_image_count: files.length,
-                        expected_total_bytes: totalBytes,
-                        target_task_id: APPEND_TARGET_TASK_ID,
-                    }),
+                `正在上傳 ${uploadedCount} / ${files.length} 張圖片...`;
+            const batchResult = await uploadBatchWithRetry(
+                uploadSessionId,
+                `batch-${index + 1}`,
+                batch,
+                lineIdToken,
+                (batchRatio) => {
+                    updateUploadProgress(
+                        committedBytes + (batchBytes * batchRatio),
+                        totalBytes,
+                        uploadedCount,
+                        files.length
+                    );
+                },
+                (nextAttempt, maxAttempts) => {
+                    statusElement.textContent =
+                        `網路不穩，正在重試第 ${nextAttempt} / ${maxAttempts} 次...`;
                 }
             );
-
-            let uploadedCount = 0;
-            let committedBytes = 0;
-            for (let index = 0; index < batches.length; index += 1) {
-                const batch = batches[index];
-                const batchBytes = batch.reduce(
-                    (sum, file) => sum + file.size,
-                    0
-                );
-                statusElement.textContent =
-                    `正在上傳 ${uploadedCount} / ${files.length} 張圖片...`;
-
-                const batchResult = await uploadBatchWithRetry(
-                    uploadSession.session_id,
-                    `batch-${index + 1}`,
-                    batch,
-                    lineIdToken,
-                    (batchRatio) => {
-                        updateUploadProgress(
-                            committedBytes + (batchBytes * batchRatio),
-                            totalBytes,
-                            uploadedCount,
-                            files.length
-                        );
-                    },
-                    (nextAttempt, maxAttempts) => {
-                        statusElement.textContent =
-                            `網路不穩，正在重試第 ${nextAttempt} / ${maxAttempts} 次...`;
-                    }
-                );
-                uploadedCount = batchResult.uploaded_count;
-                const serverUploadedBytes = Number(
-                    batchResult.uploaded_bytes
-                );
-                committedBytes = Number.isFinite(serverUploadedBytes)
-                    ? serverUploadedBytes
-                    : committedBytes + batchBytes;
-                updateUploadProgress(
-                    committedBytes,
-                    totalBytes,
-                    uploadedCount,
-                    files.length
-                );
-                statusElement.textContent =
-                    `已上傳 ${uploadedCount} / ${files.length} 張圖片`;
-            }
-
-            statusElement.textContent =
-                "圖片上傳完成，正在建立標註任務...";
-            const result = await requestJson(
-                `/liff/uploads/${encodeURIComponent(uploadSession.session_id)}/finalize`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        id_token: lineIdToken,
-                    }),
-                }
-            );
-
-            if (result.task_status !== "pending") {
-                throw new Error(
-                    "任務尚未進入排隊狀態，請稍後再試"
+            for (const item of batchResult.items || []) {
+                addUploadedImageRecord(
+                    item.client_id,
+                    item.image_id,
+                    selectedImageFiles.get(item.client_id)
                 );
             }
-
+            uploadedCount = batchResult.uploaded_count;
+            const serverUploadedBytes = Number(batchResult.uploaded_bytes);
+            committedBytes = Number.isFinite(serverUploadedBytes)
+                ? serverUploadedBytes
+                : committedBytes + batchBytes;
             updateUploadProgress(
+                committedBytes,
                 totalBytes,
-                totalBytes,
-                files.length,
-                files.length,
-                "上傳完成"
+                uploadedCount,
+                files.length
             );
+        }
 
-
-            // ------------------------
-            // 上傳成功
-            // ------------------------
-
-            console.log(
-                "後端回傳資料：",
-                result
-            );
-
-            taskFormElement.style.display = "none";
-            statusElement.textContent = APPEND_TARGET_TASK_ID
-                ? "圖片已新增，任務正在背景重新排隊"
-                : "圖片已上傳，標註任務正在背景執行";
-            showUploadSuccess(result);
-
-        } catch (error) {
-            console.error(
-                "上傳失敗：",
-                error
-            );
-
-            if (error.status === 401) {
-                statusElement.textContent =
-                    error.message || "LINE 登入資料已失效";
-                restartLineLogin();
-                return;
+        const readyResult = await requestJson(
+            `/liff/uploads/${encodeURIComponent(uploadSessionId)}/finalize`,
+            {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({id_token: lineIdToken}),
             }
+        );
+        if (readyResult.task_status !== "upload_ready") {
+            throw new Error("圖片清單尚未進入確認狀態");
+        }
 
-            statusElement.textContent =
-                `上傳失敗：${error.message}`;
-
-        } finally {
-            submitButtonElement.disabled =
-                false;
-
-            submitButtonElement.textContent =
-                APPEND_TARGET_TASK_ID
-                    ? "新增照片並重新標註"
-                    : "建立標註任務";
+        enableUploadedImageRemoval();
+        promptGroupElement.hidden = false;
+        submitButtonElement.hidden = false;
+        uploadButtonElement.textContent = "圖片上傳完成";
+        imageCountElement.textContent = `已上傳 ${uploadedImageRecords.size} 張圖片`;
+        statusElement.textContent = "圖片上傳完成，請確認清單並建立標註任務";
+        updateUploadProgress(
+            totalBytes,
+            totalBytes,
+            files.length,
+            files.length,
+            "上傳完成"
+        );
+        updateCreateButtonState();
+        uploadedImagesSectionElement.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+        });
+    } catch (error) {
+        console.error("上傳失敗：", error);
+        if (error.status === 401) {
+            statusElement.textContent = error.message || "LINE 登入資料已失效";
+            restartLineLogin();
+            return;
+        }
+        statusElement.textContent = `上傳失敗：${error.message}`;
+        if (!uploadSessionId) {
+            uploadButtonElement.disabled = false;
+            imageInputElement.disabled = false;
+        }
+    } finally {
+        uploadInProgress = false;
+        if (!uploadReady && !uploadSessionId) {
+            uploadButtonElement.textContent = "開始上傳";
         }
     }
-);
+});
+
+
+// ========================================
+// 正式建立標註任務
+// ========================================
+
+taskFormElement.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const prompt = promptElement.value.trim();
+    if (!uploadReady || !uploadSessionId || uploadedImageRecords.size === 0) {
+        statusElement.textContent = "請先完成圖片上傳並至少保留一張圖片";
+        return;
+    }
+    if (!APPEND_TARGET_TASK_ID && !prompt) {
+        statusElement.textContent = "請輸入想要標註的物件";
+        promptElement.focus();
+        return;
+    }
+    if (!liff.isLoggedIn() || isCurrentIdTokenExpired()) {
+        restartLineLogin();
+        return;
+    }
+    const lineIdToken = liff.getIDToken();
+    if (!lineIdToken) {
+        restartLineLogin();
+        return;
+    }
+
+    submitButtonElement.disabled = true;
+    submitButtonElement.textContent = "正在建立任務...";
+    statusElement.textContent = "正在建立標註任務...";
+    try {
+        const result = await requestJson(
+            `/liff/uploads/${encodeURIComponent(uploadSessionId)}/create-task`,
+            {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    id_token: lineIdToken,
+                    prompt,
+                }),
+            }
+        );
+        if (!["pending", "processing"].includes(result.task_status)) {
+            throw new Error("任務尚未進入排隊狀態，請稍後再試");
+        }
+        taskCreated = true;
+        taskFormElement.style.display = "none";
+        statusElement.textContent = APPEND_TARGET_TASK_ID
+            ? "圖片已新增，任務正在背景重新排隊"
+            : "標註任務已建立，正在背景執行";
+        showUploadSuccess(result);
+    } catch (error) {
+        console.error("建立任務失敗：", error);
+        if (error.status === 401) {
+            restartLineLogin();
+            return;
+        }
+        statusElement.textContent = `建立任務失敗：${error.message}`;
+        submitButtonElement.disabled = false;
+        submitButtonElement.textContent = APPEND_TARGET_TASK_ID
+            ? "新增照片並重新標註"
+            : "建立標註任務";
+    }
+});
 
 
 // ========================================

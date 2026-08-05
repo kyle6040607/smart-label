@@ -210,7 +210,7 @@ def test_finalize_liff_append_locks_session_and_target_in_one_transaction():
         id="append-session",
         line_user_id="U-owner",
         image_ids=["new-image"],
-        status="uploading",
+        status="upload_ready",
         settings_snapshot={
             "upload": {
                 "target_task_id": "target-task",
@@ -240,7 +240,49 @@ def test_finalize_liff_append_locks_session_and_target_in_one_transaction():
     assert merged.image_ids == ["old-image", "new-image"]
     assert merged.processed_image_ids == ["old-image"]
     assert merged.attempt_count == 0
-    assert len(cursor.calls) == 4
+    assert len(cursor.calls) == 5
     assert all("FOR UPDATE" in call[0] for call in cursor.calls[:2])
-    assert "status='pending'" in cursor.calls[2][0]
-    assert "status='upload_merged'" in cursor.calls[3][0]
+    assert "UPDATE images" in cursor.calls[2][0]
+    assert "status='pending'" in cursor.calls[3][0]
+    assert "status='upload_merged'" in cursor.calls[4][0]
+
+
+def test_create_liff_task_creates_project_and_publishes_images_atomically():
+    import json
+
+    task = AnnotationTask(
+        id="upload-session",
+        user_id="web-owner",
+        project_id="upload-session",
+        line_user_id="U-owner",
+        image_ids=["image-1"],
+        status="upload_ready",
+        settings_snapshot={"upload": {"expected_image_count": 1}},
+    ).to_dict()
+    for field in (
+        "image_ids",
+        "processed_image_ids",
+        "settings_snapshot",
+        "no_detection_image_ids",
+        "excluded_results",
+    ):
+        task[field] = json.dumps(task[field])
+
+    cursor = RecordingCursor([task])
+    created, transitioned = _repo_with_cursor(
+        cursor
+    ).create_liff_annotation_task(
+        "upload-session",
+        "U-owner",
+        "cat",
+        "cat project",
+    )
+
+    assert transitioned is True
+    assert created is not None
+    assert created.status == "pending"
+    assert created.project_id == created.id
+    assert "FOR UPDATE" in cursor.calls[0][0]
+    assert "INSERT INTO projects" in cursor.calls[2][0]
+    assert "UPDATE images" in cursor.calls[3][0]
+    assert "status='pending'" in cursor.calls[4][0]

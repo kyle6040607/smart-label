@@ -548,6 +548,12 @@ p {
     margin-bottom: 14px;
 }
 
+.uploaded-images-help {
+    margin: -6px 0 12px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
 .uploaded-images-heading .eyebrow {
     margin-bottom: 5px;
 }
@@ -570,12 +576,46 @@ p {
 }
 
 .uploaded-image-item {
+    position: relative;
     min-width: 0;
     margin: 0;
     overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--panel-sub);
+}
+
+.uploaded-image-item.is-removing {
+    opacity: 0.55;
+}
+
+.uploaded-image-remove {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: grid;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid rgb(255 255 255 / 75%);
+    border-radius: 999px;
+    background: rgb(17 24 39 / 78%);
+    color: #fff;
+    font: inherit;
+    font-size: 21px;
+    line-height: 1;
+    cursor: pointer;
+    backdrop-filter: blur(3px);
+}
+
+.uploaded-image-remove:hover {
+    background: #b91c1c;
+}
+
+.uploaded-image-remove:disabled {
+    cursor: wait;
+    opacity: 0.55;
 }
 
 .uploaded-image-item img {

@@ -675,9 +675,59 @@ class MySQLRepository:
             if not cur.fetchone():
                 return []
 
+            cur.execute(
+                "SELECT * FROM annotation_tasks WHERE project_id=%s FOR UPDATE",
+                (project_id,),
+            )
+            task_rows = cur.fetchall()
+            task_ids = [row["id"] for row in task_rows]
+            paths = [
+                path
+                for row in task_rows
+                for path in (row.get("dataset_zip_path", ""), row.get("best_model_path", ""))
+                if path
+            ]
+            for row in task_rows:
+                for result in json.loads(row.get("excluded_results") or "[]"):
+                    if result.get("preview_path"):
+                        paths.append(str(result["preview_path"]))
+
+            if task_ids:
+                placeholders = ",".join(["%s"] * len(task_ids))
+                cur.execute(
+                    f"SELECT id, mask_path FROM segments "
+                    f"WHERE annotation_task_id IN ({placeholders})",
+                    tuple(task_ids),
+                )
+                task_segments = cur.fetchall()
+                task_segment_ids = [row["id"] for row in task_segments]
+                paths.extend(
+                    row["mask_path"]
+                    for row in task_segments
+                    if row.get("mask_path")
+                )
+                if task_segment_ids:
+                    segment_placeholders = ",".join(
+                        ["%s"] * len(task_segment_ids)
+                    )
+                    cur.execute(
+                        f"DELETE FROM examples WHERE source_segment_id "
+                        f"IN ({segment_placeholders})",
+                        tuple(task_segment_ids),
+                    )
+                cur.execute(
+                    f"DELETE FROM segments WHERE annotation_task_id "
+                    f"IN ({placeholders})",
+                    tuple(task_ids),
+                )
+                cur.execute(
+                    f"DELETE FROM annotation_tasks WHERE id IN ({placeholders})",
+                    tuple(task_ids),
+                )
+
             # 查出專案下的原圖與遮罩檔路徑
             cur.execute("SELECT path FROM images WHERE project_id=%s", (project_id,))
-            paths = [r["path"] for r in cur.fetchall() if r.get("path")]
+            paths += [r["path"] for r in cur.fetchall() if r.get("path")]
 
             cur.execute(
                 "SELECT s.mask_path FROM segments s "
@@ -698,7 +748,7 @@ class MySQLRepository:
             cur.execute("DELETE FROM examples WHERE project_id=%s", (project_id,))
             cur.execute("DELETE FROM projects WHERE id=%s", (project_id,))
 
-        return [p for p in paths if p]
+        return list(dict.fromkeys(p for p in paths if p))
 
     def get_or_create_default_project(self, owner_id: str) -> Project:
         user_projects = self.list_projects_by_owner(owner_id)
@@ -1282,6 +1332,8 @@ class MySQLRepository:
                     f"DELETE FROM images WHERE id IN ({placeholders})",
                     tuple(exclusive_image_ids),
                 )
+            if task.project_id == task.id:
+                cursor.execute("DELETE FROM projects WHERE id=%s", (task.project_id,))
             cursor.execute("DELETE FROM annotation_tasks WHERE id=%s", (task.id,))
 
         return {
@@ -1738,6 +1790,7 @@ class MySQLRepository:
         batch_id: str,
         image_ids: list[str],
         batch_bytes: int = 0,
+        image_bytes_by_id: dict[str, int] | None = None,
     ) -> tuple[AnnotationTask | None, bool]:
         """原子記錄 LIFF 上傳批次；重送相同 batch_id 不會重複追加。"""
         now = time.time()
@@ -1777,6 +1830,10 @@ class MySQLRepository:
                 int(upload.get("uploaded_bytes", 0))
                 + normalized_batch_bytes
             )
+            stored_image_bytes = dict(upload.get("image_bytes") or {})
+            for image_id, image_bytes in (image_bytes_by_id or {}).items():
+                stored_image_bytes[str(image_id)] = max(0, int(image_bytes))
+            upload["image_bytes"] = stored_image_bytes
             task.settings_snapshot = {
                 **task.settings_snapshot,
                 "upload": upload,
@@ -1802,29 +1859,28 @@ class MySQLRepository:
             )
             return task, True
 
-    def finalize_liff_upload_task(
+    def mark_liff_upload_ready(
         self,
         task_id: str,
         line_user_id: str,
     ) -> tuple[AnnotationTask | None, bool]:
-        """僅在圖片齊全時把 uploading 原子轉為 pending。"""
+        """圖片齊全後只封存上傳，不讓 Worker 提前領取。"""
         now = time.time()
         with self._tx() as cursor:
             cursor.execute(
                 """
-                SELECT *
-                FROM annotation_tasks
+                SELECT * FROM annotation_tasks
                 WHERE id=%s AND line_user_id=%s
-                LIMIT 1
-                FOR UPDATE
+                LIMIT 1 FOR UPDATE
                 """,
                 (task_id, line_user_id),
             )
             row = cursor.fetchone()
             if row is None:
                 return None, False
-
             task = _row_to_task(row)
+            if task.status == "upload_ready":
+                return task, False
             if task.status != "uploading":
                 return task, False
 
@@ -1832,19 +1888,17 @@ class MySQLRepository:
             expected_count = int(upload.get("expected_image_count", 0))
             if expected_count <= 0 or len(task.image_ids) != expected_count:
                 return task, False
-
-            upload["finalized_at"] = now
+            upload["ready_at"] = now
             task.settings_snapshot = {
                 **task.settings_snapshot,
                 "upload": upload,
             }
-            task.status = "pending"
+            task.status = "upload_ready"
             task.updated_at = now
-
             cursor.execute(
                 """
                 UPDATE annotation_tasks
-                SET status='pending', settings_snapshot=%s, updated_at=%s
+                SET status='upload_ready', settings_snapshot=%s, updated_at=%s
                 WHERE id=%s AND line_user_id=%s AND status='uploading'
                 """,
                 (
@@ -1855,6 +1909,173 @@ class MySQLRepository:
                 ),
             )
             return task, True
+
+    def remove_liff_upload_image(
+        self,
+        task_id: str,
+        line_user_id: str,
+        image_id: str,
+    ) -> tuple[AnnotationTask | None, str, bool]:
+        """從尚未建立的 upload_ready session 移除一張圖片。"""
+        now = time.time()
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT * FROM annotation_tasks
+                WHERE id=%s AND line_user_id=%s
+                LIMIT 1 FOR UPDATE
+                """,
+                (task_id, line_user_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None, "", False
+            task = _row_to_task(row)
+            if task.status != "upload_ready" or image_id not in task.image_ids:
+                return task, "", False
+
+            cursor.execute(
+                "SELECT path FROM images WHERE id=%s FOR UPDATE",
+                (image_id,),
+            )
+            image_row = cursor.fetchone()
+            path = image_row["path"] if image_row and image_row.get("path") else ""
+            cursor.execute(
+                "SELECT id FROM segments WHERE image_id=%s",
+                (image_id,),
+            )
+            segment_ids = [result["id"] for result in cursor.fetchall()]
+            if segment_ids:
+                placeholders = ",".join(["%s"] * len(segment_ids))
+                cursor.execute(
+                    f"DELETE FROM examples WHERE source_segment_id IN ({placeholders})",
+                    tuple(segment_ids),
+                )
+            cursor.execute("DELETE FROM segments WHERE image_id=%s", (image_id,))
+            cursor.execute("DELETE FROM images WHERE id=%s", (image_id,))
+
+            upload = dict(task.settings_snapshot.get("upload") or {})
+            image_bytes = dict(upload.get("image_bytes") or {})
+            removed_bytes = max(0, int(image_bytes.pop(image_id, 0)))
+            upload["image_bytes"] = image_bytes
+            upload["uploaded_bytes"] = max(
+                0,
+                int(upload.get("uploaded_bytes", 0)) - removed_bytes,
+            )
+            task.image_ids = [
+                existing_id
+                for existing_id in task.image_ids
+                if existing_id != image_id
+            ]
+            upload["expected_image_count"] = len(task.image_ids)
+            upload["expected_total_bytes"] = int(upload["uploaded_bytes"])
+            task.settings_snapshot = {
+                **task.settings_snapshot,
+                "upload": upload,
+            }
+            task.updated_at = now
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET image_ids=%s, settings_snapshot=%s, updated_at=%s
+                WHERE id=%s AND line_user_id=%s AND status='upload_ready'
+                """,
+                (
+                    json.dumps(task.image_ids),
+                    json.dumps(task.settings_snapshot),
+                    now,
+                    task.id,
+                    line_user_id,
+                ),
+            )
+            return task, path, True
+
+    def create_liff_annotation_task(
+        self,
+        task_id: str,
+        line_user_id: str,
+        prompt: str,
+        project_name: str,
+    ) -> tuple[AnnotationTask | None, bool]:
+        """建立專屬 Project，並把 upload_ready 原子轉為 pending。"""
+        now = time.time()
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT * FROM annotation_tasks
+                WHERE id=%s AND line_user_id=%s
+                LIMIT 1 FOR UPDATE
+                """,
+                (task_id, line_user_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None, False
+            task = _row_to_task(row)
+            upload = dict(task.settings_snapshot.get("upload") or {})
+            if upload.get("created_at"):
+                return task, False
+            if task.status != "upload_ready" or not task.image_ids:
+                return task, False
+
+            cursor.execute(
+                "SELECT owner_id FROM projects WHERE id=%s FOR UPDATE",
+                (task.id,),
+            )
+            project_row = cursor.fetchone()
+            if project_row is None:
+                cursor.execute(
+                    """
+                    INSERT INTO projects
+                    (id, owner_id, name, mode, created_at, updated_at)
+                    VALUES (%s, %s, %s, 'novice', %s, %s)
+                    """,
+                    (task.id, task.user_id, project_name, now, now),
+                )
+            elif project_row["owner_id"] != task.user_id:
+                return task, False
+
+            placeholders = ",".join(["%s"] * len(task.image_ids))
+            cursor.execute(
+                f"UPDATE images SET owner_id=%s, project_id=%s "
+                f"WHERE id IN ({placeholders})",
+                (task.user_id, task.id, *task.image_ids),
+            )
+            upload["created_at"] = now
+            task.prompt = prompt
+            task.project_id = task.id
+            task.settings_snapshot = {
+                **task.settings_snapshot,
+                "project_id": task.id,
+                "upload": upload,
+            }
+            task.status = "pending"
+            task.updated_at = now
+            cursor.execute(
+                """
+                UPDATE annotation_tasks
+                SET prompt=%s, project_id=%s, status='pending',
+                    settings_snapshot=%s, updated_at=%s
+                WHERE id=%s AND line_user_id=%s AND status='upload_ready'
+                """,
+                (
+                    prompt,
+                    task.id,
+                    json.dumps(task.settings_snapshot),
+                    now,
+                    task.id,
+                    line_user_id,
+                ),
+            )
+            return task, True
+
+    def finalize_liff_upload_task(
+        self,
+        task_id: str,
+        line_user_id: str,
+    ) -> tuple[AnnotationTask | None, bool]:
+        """向下相容名稱；現在 finalize 只會進入 upload_ready。"""
+        return self.mark_liff_upload_ready(task_id, line_user_id)
 
     def finalize_liff_append_upload(
         self,
@@ -1900,7 +2121,7 @@ class MySQLRepository:
             # finalize 回應遺失時可安全重送。
             if session.status == "upload_merged":
                 return target, False
-            if session.status != "uploading" or target is None:
+            if session.status != "upload_ready" or target is None:
                 return target or session, False
             if target.status != "completed":
                 return target, False
@@ -1910,6 +2131,17 @@ class MySQLRepository:
                 return target, False
 
             appended_image_ids = list(session.image_ids)
+            if appended_image_ids:
+                placeholders = ",".join(["%s"] * len(appended_image_ids))
+                cursor.execute(
+                    f"UPDATE images SET owner_id=%s, project_id=%s "
+                    f"WHERE id IN ({placeholders})",
+                    (
+                        target.user_id,
+                        target.project_id,
+                        *appended_image_ids,
+                    ),
+                )
             target.image_ids = list(dict.fromkeys([
                 *target.image_ids,
                 *appended_image_ids,
@@ -1970,7 +2202,7 @@ class MySQLRepository:
                 UPDATE annotation_tasks
                 SET image_ids='[]', status='upload_merged',
                     settings_snapshot=%s, updated_at=%s
-                WHERE id=%s AND line_user_id=%s AND status='uploading'
+                WHERE id=%s AND line_user_id=%s AND status='upload_ready'
                 """,
                 (
                     json.dumps(session.settings_snapshot),
@@ -1991,7 +2223,7 @@ class MySQLRepository:
         with self._tx() as cursor:
             cursor.execute(
                 """
-                SELECT image_ids
+                SELECT image_ids, project_id
                 FROM annotation_tasks
                 WHERE line_user_id = %s
                   AND (user_id = '' OR user_id = %s)
@@ -2000,11 +2232,14 @@ class MySQLRepository:
                 (line_user_id, user_id),
             )
             image_ids: set[str] = set()
+            project_ids: set[str] = set()
             for row in cursor.fetchall():
                 raw_ids = row["image_ids"]
                 if isinstance(raw_ids, str):
                     raw_ids = json.loads(raw_ids)
                 image_ids.update(str(image_id) for image_id in raw_ids)
+                if row.get("project_id"):
+                    project_ids.add(str(row["project_id"]))
 
             assigned_count = cursor.execute(
                 """
@@ -2038,6 +2273,13 @@ class MySQLRepository:
                       AND segment.image_id IN ({placeholders})
                     """,
                     (user_id, *sorted(image_ids)),
+                )
+            if project_ids:
+                placeholders = ", ".join(["%s"] * len(project_ids))
+                cursor.execute(
+                    f"UPDATE projects SET owner_id=%s, updated_at=%s "
+                    f"WHERE owner_id='' AND id IN ({placeholders})",
+                    (user_id, updated_at, *sorted(project_ids)),
                 )
 
         return assigned_count

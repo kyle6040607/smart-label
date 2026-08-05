@@ -96,9 +96,22 @@ def delete_project(project_id: str):
     if proj is None or proj.owner_id != user_id:
         abort(404, "查無此專案")
 
+    liff_task_ids = [
+        task.id
+        for task in repo.list_tasks_by_user(user_id)
+        if task.project_id == project_id and task.line_user_id
+    ]
+
     # 刪除 DB 紀錄並取得所有需清理的磁碟檔案
     paths = repo.delete_project(project_id)
     files_removed = sum(storage.delete(p) for p in paths if p)
+    for task_id in liff_task_ids:
+        for prefix in (
+            f"liff-uploads/{task_id}",
+            f"previews/tasks/{task_id}",
+            f"datasets/{task_id}",
+        ):
+            files_removed += storage.delete_prefix(prefix)
 
     # 若被刪除的是當前活躍專案，自動切換至其他專案或預設專案
     if session.get("active_project_id") == project_id:
