@@ -5,19 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>建立標註任務</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=4">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&text=Seer&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=6">
 </head>
 
 <body>
     
     <main class="container">
-        
+        <header class="app-header">
+            <a class="app-brand" href="{{ url_for('liff.upload_page') }}">
+                <img
+                    class="brand-mark"
+                    src="{{ url_for('static', filename='favicon.png') }}"
+                    alt=""
+                    aria-hidden="true"
+                >
+                <span class="brand-copy">
+                    <span class="brand-name">Seer</span>
+                    <span class="brand-subtitle">智慧影像標註</span>
+                </span>
+            </a>
+            <a class="header-link" href="{{ url_for('liff.tasks_page') }}">
+                任務紀錄
+            </a>
+        </header>
+
         <section class="card">
-            <h1 id="page-title">建立標註任務</h1>
+            <div class="page-heading">
+                <span class="eyebrow">建立任務</span>
+                <h1 id="page-title">開始自動標註</h1>
+                <p class="page-description">
+                    上傳圖片並描述要辨識的物件，系統會在背景完成標註。
+                </p>
+            </div>
 
             <!-- <p>正在確認 LINE 使用者資訊</p> -->
 
-            <div id="profile" style="display:none; margin-top: 20px;">
+            <div id="profile" style="display:none;">
                 <img
                 id="profile-image"
                 alt="LINE 使用者頭像"
@@ -30,13 +56,14 @@
             <div id="status" class="status">
                 登入中......
             </div>
-            <form id="task-form" style="display: none; margin-top: 24px;">
-                <h2>選擇圖片</h2>
-                <p>
-                    支援JPG、JPEG、PNG，可以一次選擇多張圖片。
-                </p>
+            <form id="task-form" style="display: none; margin-top: 22px;">
+                <div class="section-heading">
+                    <h2>選擇圖片</h2>
+                    <p>支援 JPG、JPEG、PNG，可一次選擇多張圖片。</p>
+                </div>
                    <label for="image-input" class="upload-button">
-                        選擇圖片
+                        <span class="upload-button-title">選擇要標註的圖片</span>
+                        <span class="upload-button-help">點一下開啟圖片選擇器</span>
                    </label> 
                    <input 
                         id="image-input"
@@ -67,7 +94,7 @@
                             name="prompt"
                             rows="4"
                             maxlength="200"
-                            placeholder="例如: 請標註圖片中的貓咪"
+                            placeholder="例如：請標註圖片中的貓咪"
                         ></textarea>
                         <p id="prompt-count">
                             0 / 200
