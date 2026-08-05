@@ -43,12 +43,16 @@ def create_project():
     name = (data.get("name") or "").strip() or "新專案"
     mode = data.get("mode") if data.get("mode") in ("novice", "engineer") else "novice"
 
+    repo = get_repo()
+    existing_projects = repo.list_projects_by_owner(user_id)
+    if any(p.name.strip().lower() == name.lower() for p in existing_projects):
+        return jsonify({"error": "專案名稱已存在，請使用其他名稱"}), 400
+
     proj = Project(
         owner_id=user_id,
         name=name,
         mode=mode,
     )
-    repo = get_repo()
     repo.add_project(proj)
 
     session["active_project_id"] = proj.id
@@ -79,6 +83,9 @@ def update_project(project_id: str):
     if "name" in data:
         name = (data["name"] or "").strip()
         if name:
+            existing_projects = repo.list_projects_by_owner(user_id)
+            if any(p.name.strip().lower() == name.lower() and p.id != project_id for p in existing_projects):
+                return jsonify({"error": "專案名稱已存在，請使用其他名稱"}), 400
             proj.name = name
     if "mode" in data and data["mode"] in ("novice", "engineer"):
         proj.mode = data["mode"]

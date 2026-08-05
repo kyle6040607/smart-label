@@ -143,6 +143,9 @@ def test_train_yolov26x_seg_timestamp_and_cleanup(tmp_path):
         def __init__(self, model_path):
             pass
 
+        def add_callback(self, event, func):
+            pass
+
         def train(self, **kwargs):
             project_dir = Path(kwargs["project"])
             recorded_work_dirs.append(project_dir.parent)
