@@ -260,6 +260,8 @@ class Repository:
         self,
         task_id: str,
         line_user_id: str,
+        *,
+        allow_upload_session: bool = False,
     ) -> tuple[AnnotationTask | None, str, list[str]]:
         """鎖定終態 LIFF 任務，並回傳刪除前需清理的檔案。
 
@@ -270,7 +272,10 @@ class Repository:
             task = self.tasks.get(task_id)
             if task is None or task.line_user_id != line_user_id:
                 return None, "not_found", []
-            if task.status not in {"completed", "failed", "deleting"}:
+            allowed_statuses = {"completed", "failed", "deleting"}
+            if allow_upload_session:
+                allowed_statuses.update({"uploading", "upload_ready"})
+            if task.status not in allowed_statuses:
                 return task, "not_deletable", []
             if task.claim_token:
                 return task, "not_deletable", []
@@ -306,6 +311,8 @@ class Repository:
                 for result in task.excluded_results
             )
 
+            if task.status in {"uploading", "upload_ready"}:
+                task.completion_reason = "upload_cancelled"
             task.status = "deleting"
             task.updated_at = time.time()
             self.tasks[task.id] = task

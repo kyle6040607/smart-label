@@ -195,6 +195,48 @@ def test_record_liff_upload_batch_persists_uploaded_bytes_atomically():
     assert saved_snapshot["upload"]["uploaded_bytes"] == 321
 
 
+def test_prepare_liff_upload_cancellation_requires_explicit_opt_in():
+    import json
+
+    task = AnnotationTask(
+        id="upload-session",
+        line_user_id="U-owner",
+        status="upload_ready",
+    ).to_dict()
+    for field in (
+        "image_ids",
+        "processed_image_ids",
+        "settings_snapshot",
+        "no_detection_image_ids",
+        "excluded_results",
+    ):
+        task[field] = json.dumps(task[field])
+
+    default_cursor = RecordingCursor([dict(task)])
+    _, default_state, _ = _repo_with_cursor(
+        default_cursor
+    ).prepare_liff_task_deletion("upload-session", "U-owner")
+    assert default_state == "not_deletable"
+    assert len(default_cursor.calls) == 1
+
+    cancellation_cursor = RecordingCursor([dict(task)])
+    prepared, cancellation_state, _ = _repo_with_cursor(
+        cancellation_cursor
+    ).prepare_liff_task_deletion(
+        "upload-session",
+        "U-owner",
+        allow_upload_session=True,
+    )
+    assert cancellation_state == "ready"
+    assert prepared is not None
+    assert prepared.status == "deleting"
+    assert prepared.completion_reason == "upload_cancelled"
+    update_sql, update_params = cancellation_cursor.calls[-1]
+    assert "status='deleting'" in update_sql
+    assert "completion_reason=%s" in update_sql
+    assert update_params[0] == "upload_cancelled"
+
+
 def test_finalize_liff_append_locks_session_and_target_in_one_transaction():
     import json
 

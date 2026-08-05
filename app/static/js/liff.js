@@ -477,6 +477,44 @@ async function requestJson(url, options) {
 }
 
 
+async function initializeUploadSession(payload, lineIdToken) {
+    const options = {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+    };
+
+    try {
+        return await requestJson("/liff/uploads/init", options);
+    } catch (error) {
+        if (
+            error.status !== 429
+            || error.code !== "LIFF_UPLOAD_SESSION_LIMIT"
+        ) {
+            throw error;
+        }
+
+        const shouldCleanup = window.confirm(
+            "目前有先前未完成的圖片上傳。\n\n"
+            + "要清除舊的暫存圖片，並繼續這次上傳嗎？\n"
+            + "已完成的標註任務不會受到影響。"
+        );
+        if (!shouldCleanup) {
+            throw error;
+        }
+
+        statusElement.textContent = "正在清除先前未完成的上傳...";
+        await requestJson("/liff/uploads/incomplete", {
+            method: "DELETE",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id_token: lineIdToken}),
+        });
+        statusElement.textContent = "清理完成，正在建立新的上傳工作階段...";
+        return requestJson("/liff/uploads/init", options);
+    }
+}
+
+
 function addUploadedImageRecord(clientId, imageId, file) {
     if (!file || uploadedImageRecords.has(clientId)) {
         return;
@@ -799,16 +837,15 @@ uploadButtonElement.addEventListener("click", async () => {
         );
         updateUploadProgress(0, totalBytes, 0, files.length, "準備上傳");
         statusElement.textContent = "正在建立上傳工作階段...";
-        const uploadSession = await requestJson("/liff/uploads/init", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
+        const uploadSession = await initializeUploadSession(
+            {
                 id_token: lineIdToken,
                 expected_image_count: files.length,
                 expected_total_bytes: totalBytes,
                 target_task_id: APPEND_TARGET_TASK_ID,
-            }),
-        });
+            },
+            lineIdToken
+        );
         uploadSessionId = uploadSession.session_id;
 
         let uploadedCount = 0;

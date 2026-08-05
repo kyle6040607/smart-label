@@ -1196,6 +1196,8 @@ class MySQLRepository:
         self,
         task_id: str,
         line_user_id: str,
+        *,
+        allow_upload_session: bool = False,
     ) -> tuple[AnnotationTask | None, str, list[str]]:
         """鎖定終態 LIFF 任務，並收集交易外需刪除的檔案。"""
         with self._tx() as cursor:
@@ -1214,7 +1216,10 @@ class MySQLRepository:
                 return None, "not_found", []
 
             task = _row_to_task(row)
-            if task.status not in {"completed", "failed", "deleting"}:
+            allowed_statuses = {"completed", "failed", "deleting"}
+            if allow_upload_session:
+                allowed_statuses.update({"uploading", "upload_ready"})
+            if task.status not in allowed_statuses:
                 return task, "not_deletable", []
             if task.claim_token:
                 return task, "not_deletable", []
@@ -1262,9 +1267,15 @@ class MySQLRepository:
             )
 
             now = time.time()
+            if task.status in {"uploading", "upload_ready"}:
+                task.completion_reason = "upload_cancelled"
             cursor.execute(
-                "UPDATE annotation_tasks SET status='deleting', updated_at=%s WHERE id=%s",
-                (now, task.id),
+                """
+                UPDATE annotation_tasks
+                SET status='deleting', completion_reason=%s, updated_at=%s
+                WHERE id=%s
+                """,
+                (task.completion_reason, now, task.id),
             )
             task.status = "deleting"
             task.updated_at = now

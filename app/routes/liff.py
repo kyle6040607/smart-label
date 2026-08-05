@@ -180,6 +180,48 @@ def _expire_stale_uploads(repo, storage, line_user_id: str) -> int:
     return expired_count
 
 
+def _cancel_incomplete_uploads(repo, storage, line_user_id: str) -> dict:
+    """刪除使用者確認放棄的 LIFF 暫存上傳，不影響正式任務。"""
+    candidates = [
+        task
+        for task in repo.list_tasks_by_line_user_id(line_user_id)
+        if (
+            task.status in {"uploading", "upload_ready"}
+            or (
+                task.status == "deleting"
+                and task.completion_reason == "upload_cancelled"
+            )
+        )
+    ]
+    result = {
+        "deleted_session_count": 0,
+        "deleted_image_count": 0,
+    }
+
+    for candidate in candidates:
+        task, deletion_state, paths = repo.prepare_liff_task_deletion(
+            candidate.id,
+            line_user_id,
+            allow_upload_session=True,
+        )
+        if deletion_state == "not_found":
+            continue
+        if deletion_state != "ready" or task is None:
+            raise RuntimeError(f"無法取消上傳工作階段：{candidate.id}")
+
+        for path in paths:
+            storage.delete(path)
+        storage.delete_prefix(f"liff-uploads/{task.id}")
+
+        deleted = repo.finalize_liff_task_deletion(task.id, line_user_id)
+        if deleted is None:
+            raise RuntimeError(f"無法完成上傳工作階段刪除：{task.id}")
+        result["deleted_session_count"] += 1
+        result["deleted_image_count"] += int(deleted["deleted_images"])
+
+    return result
+
+
 def _verify_liff_profile(id_token: str):
     """驗證 LIFF ID Token 並取得可信任的 LINE Profile，只採用 LINE 驗證結果裡的 sub"""
     if not id_token:
@@ -511,7 +553,31 @@ def initialize_chunked_upload():
         return verification_error
 
     repo = get_repo()
-    _expire_stale_uploads(repo, get_storage(), profile["sub"])
+    storage = get_storage()
+    _expire_stale_uploads(repo, storage, profile["sub"])
+    has_cancelled_cleanup = any(
+        task.status == "deleting"
+        and task.completion_reason == "upload_cancelled"
+        for task in repo.list_tasks_by_line_user_id(profile["sub"])
+    )
+    if has_cancelled_cleanup:
+        try:
+            _cancel_incomplete_uploads(repo, storage, profile["sub"])
+        except Exception:  # noqa: BLE001 已確認取消的清理必須完成後才能再上傳
+            current_app.logger.exception(
+                "重試 LIFF 暫存上傳清理失敗：line_user_id=%s",
+                profile["sub"],
+            )
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "code": "LIFF_UPLOAD_CLEANUP_FAILED",
+                        "message": "未完成上傳清理失敗，請稍後再試",
+                    }
+                ),
+                503,
+            )
     active_upload_count = sum(
         task.status in {"uploading", "upload_ready"}
         for task in repo.list_tasks_by_line_user_id(profile["sub"])
@@ -524,7 +590,9 @@ def initialize_chunked_upload():
             jsonify(
                 {
                     "ok": False,
-                    "message": "目前已有圖片正在上傳，請完成後再建立新任務",
+                    "code": "LIFF_UPLOAD_SESSION_LIMIT",
+                    "message": "目前已有未完成的圖片上傳",
+                    "active_session_count": active_upload_count,
                 }
             ),
             429,
@@ -615,6 +683,40 @@ def initialize_chunked_upload():
         ),
         201,
     )
+
+
+@bp.delete("/uploads/incomplete")
+def cancel_incomplete_uploads():
+    """由 LINE 使用者明確確認後，清除自己的未完成暫存上傳。"""
+    payload = request.get_json(silent=True) or {}
+    id_token = str(payload.get("id_token", "")).strip()
+    profile, verification_error = _verify_liff_profile(id_token)
+    if verification_error is not None:
+        return verification_error
+
+    try:
+        result = _cancel_incomplete_uploads(
+            get_repo(),
+            get_storage(),
+            profile["sub"],
+        )
+    except Exception:  # noqa: BLE001 保留 deleting 狀態供再次清理
+        current_app.logger.exception(
+            "取消 LIFF 暫存上傳失敗：line_user_id=%s",
+            profile["sub"],
+        )
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "code": "LIFF_UPLOAD_CLEANUP_FAILED",
+                    "message": "未完成上傳清理失敗，請稍後再試",
+                }
+            ),
+            503,
+        )
+
+    return jsonify({"ok": True, **result})
 
 
 @bp.post("/uploads/<session_id>/batch")
@@ -811,6 +913,8 @@ def upload_image_batch(session_id: str):
     batch_image_ids = []
     batch_items = []
     image_bytes_by_id = {}
+    created_image_ids = []
+    created_image_paths = []
     for (
         image_id,
         client_id,
@@ -859,6 +963,8 @@ def upload_image_batch(session_id: str):
             image.mimetype or "application/octet-stream",
         )
         repo.add_image(image_record)
+        created_image_ids.append(image_record.id)
+        created_image_paths.append(image_record.path)
         batch_image_ids.append(image_record.id)
         batch_items.append(
             {
@@ -878,8 +984,14 @@ def upload_image_batch(session_id: str):
         image_bytes_by_id,
     )
     if updated_task is None:
+        for path in created_image_paths:
+            storage.delete(path)
+        repo.delete_images_batch(created_image_ids)
         return jsonify({"ok": False, "message": "找不到上傳工作階段"}), 404
     if not recorded and updated_task.status != "uploading":
+        for path in created_image_paths:
+            storage.delete(path)
+        repo.delete_images_batch(created_image_ids)
         return jsonify({"ok": False, "message": "上傳工作階段已結束"}), 409
 
     return (

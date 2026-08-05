@@ -829,6 +829,104 @@ def test_liff_chunked_upload_cleans_expired_session(
     assert not image_path.exists()
 
 
+def test_liff_upload_session_limit_can_cleanup_and_retry(
+    app,
+    monkeypatch,
+):
+    app.smart_config.liff_upload_max_concurrent_sessions = 2
+
+    def verify_id_token(id_token, *args, **kwargs):
+        del args, kwargs
+        line_user_id = (
+            "U-upload-owner"
+            if id_token == "owner-token"
+            else "U-other-upload-owner"
+        )
+        return {
+            "sub": line_user_id,
+            "name": "上傳清理測試",
+            "picture": "",
+        }
+
+    monkeypatch.setattr(line_login, "verify_id_token", verify_id_token)
+    client = app.test_client()
+
+    other_response = client.post(
+        "/liff/uploads/init",
+        json={"id_token": "other-token", "expected_image_count": 1},
+    )
+    assert other_response.status_code == 201
+    other_session_id = other_response.get_json()["session_id"]
+
+    session_ids = []
+    image_ids = []
+    image_paths = []
+    for index in range(2):
+        init_response = client.post(
+            "/liff/uploads/init",
+            json={"id_token": "owner-token", "expected_image_count": 1},
+        )
+        assert init_response.status_code == 201
+        session_id = init_response.get_json()["session_id"]
+        session_ids.append(session_id)
+
+        batch_response = client.post(
+            f"/liff/uploads/{session_id}/batch",
+            data={
+                "id_token": "owner-token",
+                "batch_id": f"batch-{index}",
+                "images": (make_png_file(), f"image-{index}.png"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert batch_response.status_code == 201
+        image_id = app.repo.get_task(session_id).image_ids[0]
+        image_ids.append(image_id)
+        image_paths.append(Path(app.repo.get_image(image_id).path))
+
+    ready_response = client.post(
+        f"/liff/uploads/{session_ids[0]}/finalize",
+        json={"id_token": "owner-token"},
+    )
+    assert ready_response.status_code == 200
+
+    completed_task = AnnotationTask(
+        line_user_id="U-upload-owner",
+        prompt="保留任務",
+        status="completed",
+    )
+    app.repo.add_task(completed_task)
+
+    limited_response = client.post(
+        "/liff/uploads/init",
+        json={"id_token": "owner-token", "expected_image_count": 1},
+    )
+    assert limited_response.status_code == 429
+    assert limited_response.get_json()["code"] == "LIFF_UPLOAD_SESSION_LIMIT"
+    assert limited_response.get_json()["active_session_count"] == 2
+
+    cleanup_response = client.delete(
+        "/liff/uploads/incomplete",
+        json={"id_token": "owner-token"},
+    )
+    assert cleanup_response.status_code == 200
+    cleanup_result = cleanup_response.get_json()
+    assert cleanup_result["deleted_session_count"] == 2
+    assert cleanup_result["deleted_image_count"] == 2
+
+    assert all(app.repo.get_task(session_id) is None for session_id in session_ids)
+    assert all(app.repo.get_image(image_id) is None for image_id in image_ids)
+    assert all(not image_path.exists() for image_path in image_paths)
+    assert app.repo.get_task(completed_task.id) is not None
+    assert app.repo.get_task(other_session_id) is not None
+
+    retry_response = client.post(
+        "/liff/uploads/init",
+        json={"id_token": "owner-token", "expected_image_count": 1},
+    )
+    assert retry_response.status_code == 201
+
+
 def test_liff_upload_creates_annotation_task(
     app,
     monkeypatch,
