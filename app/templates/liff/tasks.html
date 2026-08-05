@@ -20,7 +20,7 @@
     >
     <link
         rel="stylesheet"
-        href="{{ url_for('static', filename='css/liff.css') }}?v=6"
+        href="{{ url_for('static', filename='css/liff.css') }}?v=8"
     >
 </head>
 
@@ -141,6 +141,14 @@
                 >
                     查看未通過圖片
                 </button>
+
+                <button
+                    class="submit-button task-delete"
+                    type="button"
+                    hidden
+                >
+                    刪除任務
+                </button>
             </div>
 
             <div class="task-excluded-panel" hidden>
@@ -167,7 +175,7 @@
         src="https://static.line-scdn.net/liff/edge/2/sdk.js"
     ></script>
     <script
-        src="{{ url_for('static', filename='js/liff_tasks.js') }}?v=6"
+        src="{{ url_for('static', filename='js/liff_tasks.js') }}?v=7"
     ></script>
 </body>
 </html>

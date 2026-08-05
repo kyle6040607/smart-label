@@ -211,6 +211,115 @@ class Repository:
             key=lambda task: task.updated_at,
             reverse=True,
         )
+
+    def prepare_liff_task_deletion(
+        self,
+        task_id: str,
+        line_user_id: str,
+    ) -> tuple[AnnotationTask | None, str, list[str]]:
+        """鎖定終態 LIFF 任務，並回傳刪除前需清理的檔案。
+
+        檔案清理刻意放在 Repository lock 之外；若清理失敗，任務會
+        保留為 deleting，下一次 DELETE 可以安全重試。
+        """
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if task is None or task.line_user_id != line_user_id:
+                return None, "not_found", []
+            if task.status not in {"completed", "failed", "deleting"}:
+                return task, "not_deletable", []
+            if task.claim_token:
+                return task, "not_deletable", []
+
+            other_image_ids = {
+                image_id
+                for other in self.tasks.values()
+                if other.id != task.id
+                for image_id in other.image_ids
+            }
+            exclusive_image_ids = set(task.image_ids) - other_image_ids
+            segments = [
+                segment
+                for segment in self.segments.values()
+                if (
+                    segment.annotation_task_id == task.id
+                    or segment.image_id in exclusive_image_ids
+                )
+            ]
+            paths = [
+                self.images[image_id].path
+                for image_id in exclusive_image_ids
+                if image_id in self.images and self.images[image_id].path
+            ]
+            paths.extend(
+                segment.mask_path for segment in segments if segment.mask_path
+            )
+            paths.extend(
+                [task.dataset_zip_path, task.best_model_path]
+            )
+            paths.extend(
+                str(result.get("preview_path", ""))
+                for result in task.excluded_results
+            )
+
+            task.status = "deleting"
+            task.updated_at = time.time()
+            self.tasks[task.id] = task
+            self._save()
+
+            return task, "ready", list(dict.fromkeys(filter(None, paths)))
+
+    def finalize_liff_task_deletion(
+        self,
+        task_id: str,
+        line_user_id: str,
+    ) -> dict[str, int] | None:
+        """在檔案清理成功後，原子刪除任務及其專屬資料。"""
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if (
+                task is None
+                or task.line_user_id != line_user_id
+                or task.status != "deleting"
+            ):
+                return None
+
+            other_image_ids = {
+                image_id
+                for other in self.tasks.values()
+                if other.id != task.id
+                for image_id in other.image_ids
+            }
+            exclusive_image_ids = set(task.image_ids) - other_image_ids
+            segment_ids = {
+                segment.id
+                for segment in self.segments.values()
+                if (
+                    segment.annotation_task_id == task.id
+                    or segment.image_id in exclusive_image_ids
+                )
+            }
+            example_ids = {
+                example.id
+                for example in self.examples.values()
+                if example.source_segment_id in segment_ids
+            }
+
+            for example_id in example_ids:
+                self.examples.pop(example_id, None)
+            for segment_id in segment_ids:
+                self.segments.pop(segment_id, None)
+            for image_id in exclusive_image_ids:
+                self.images.pop(image_id, None)
+            self.tasks.pop(task.id, None)
+            self._save()
+
+            return {
+                "deleted_images": len(exclusive_image_ids),
+                "deleted_segments": len(segment_ids),
+                "deleted_examples": len(example_ids),
+            }
+
     def claim_next_pending_task(
         self,
         worker_id: str = "local-worker",

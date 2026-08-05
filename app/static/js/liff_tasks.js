@@ -16,6 +16,7 @@ const TASK_STATUS_LABELS = {
     retry_wait: "等待重試",
     completed: "已完成",
     failed: "失敗",
+    deleting: "刪除中",
 };
 
 
@@ -54,6 +55,7 @@ function getTaskRenderSignature(task) {
         task.error_message ?? "",
         task.download_url ?? "",
         Boolean(task.can_add_images),
+        Boolean(task.can_delete),
     ]);
 }
 
@@ -72,6 +74,7 @@ function createTaskCard(task) {
     const excludedPanel = card.querySelector(".task-excluded-panel");
     const excludedList = card.querySelector(".task-excluded-list");
     const excludedMore = card.querySelector(".task-excluded-more");
+    const deleteElement = card.querySelector(".task-delete");
 
     promptElement.textContent = task.prompt;
     taskStatusElement.textContent =
@@ -110,6 +113,47 @@ function createTaskCard(task) {
             const uploadUrl = new URL("/liff/create", window.location.origin);
             uploadUrl.searchParams.set("append_to", task.task_id);
             window.location.href = uploadUrl.toString();
+        });
+    }
+
+    if (task.can_delete) {
+        deleteElement.hidden = false;
+        deleteElement.textContent = task.task_status === "deleting"
+            ? "重試刪除"
+            : "刪除任務";
+        deleteElement.addEventListener("click", async () => {
+            const confirmed = window.confirm(
+                "確定要永久刪除此標註任務嗎？圖片、標註、低信心縮圖與 ZIP 將一併刪除，且無法復原。"
+            );
+            if (!confirmed) {
+                return;
+            }
+
+            const originalText = deleteElement.textContent;
+            deleteElement.disabled = true;
+            deleteElement.textContent = "刪除中...";
+            try {
+                const response = await fetch(`/liff/tasks/${task.task_id}`, {
+                    method: "DELETE",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        id_token: liff.getIDToken(),
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.message || "無法刪除標註任務");
+                }
+                card.remove();
+                await loadTasks(false);
+            } catch (error) {
+                window.alert(error.message || "刪除任務時發生錯誤");
+            } finally {
+                if (deleteElement.isConnected) {
+                    deleteElement.disabled = false;
+                    deleteElement.textContent = originalText;
+                }
+            }
         });
     }
 
@@ -209,10 +253,10 @@ function renderTasks(tasks) {
     };
 
     const activeTasks = tasks.filter(
-        (task) => ["pending", "retry_wait", "processing"].includes(task.task_status)
+        (task) => ["pending", "retry_wait", "processing", "deleting"].includes(task.task_status)
     );
     const historyTasks = tasks.filter(
-        (task) => !["pending", "retry_wait", "processing"].includes(task.task_status)
+        (task) => !["pending", "retry_wait", "processing", "deleting"].includes(task.task_status)
     );
 
     const activeFragment = document.createDocumentFragment();

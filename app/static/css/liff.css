@@ -523,6 +523,83 @@ p {
     font-weight: 700;
 }
 
+.success-modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.success-modal-actions .submit-button {
+    flex: 1 1 0;
+    margin-top: 0;
+}
+
+.uploaded-images-section {
+    margin-top: 22px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+}
+
+.uploaded-images-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+
+.uploaded-images-heading .eyebrow {
+    margin-bottom: 5px;
+}
+
+.uploaded-images-count {
+    flex: 0 0 auto;
+    padding: 4px 9px;
+    border: 1px solid #bfdbfe;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent-hover);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.uploaded-images-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.uploaded-image-item {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-sub);
+}
+
+.uploaded-image-item img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    background: #ece7dc;
+    object-fit: cover;
+}
+
+.uploaded-image-item figcaption {
+    overflow: hidden;
+    padding: 7px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#uploaded-images-more {
+    margin-top: 12px;
+}
+
 .close-help {
     color: var(--warning) !important;
     font-size: 13px !important;
@@ -641,6 +718,12 @@ p {
     color: #b91c1c;
 }
 
+.task-status-deleting {
+    border-color: #fed7aa;
+    background: #fff7ed;
+    color: #c2410c;
+}
+
 .task-info {
     margin-top: 10px;
     color: var(--muted);
@@ -682,10 +765,22 @@ p {
     color: var(--accent);
 }
 
+.task-actions .task-delete {
+    border-color: #fecaca;
+    background: var(--panel);
+    color: #b91c1c;
+}
+
 .task-actions .task-add-images:hover,
 .task-actions .task-excluded-toggle:hover {
     border-color: var(--accent);
     background: var(--accent-soft);
+    box-shadow: none;
+}
+
+.task-actions .task-delete:hover {
+    border-color: var(--danger);
+    background: var(--danger-soft);
     box-shadow: none;
 }
 
@@ -801,6 +896,10 @@ p {
         display: inline-flex;
         margin-top: 8px;
     }
+
+    .uploaded-images-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 @media (max-width: 380px) {
@@ -814,6 +913,10 @@ p {
 
     .task-excluded-list {
         grid-template-columns: 1fr;
+    }
+
+    .success-modal-actions {
+        flex-direction: column-reverse;
     }
 }
 

@@ -19,6 +19,8 @@
   舊版建立任務 API，與 /liff/create 共用處理流程。
 - POST /liff/tasks
   驗證 LINE ID Token 並取得該使用者的任務清單。
+- DELETE /liff/tasks/<task_id>
+  驗證 LINE owner，清除終態任務及其專屬資料。
 - POST /liff/tasks/<task_id>/append/context
   驗證追加圖片的任務並回傳固定 Prompt。
 
@@ -226,6 +228,7 @@ def _task_summary(task: AnnotationTask) -> dict:
         "zip_available": bool(task.dataset_zip_path and task.dataset_version > 0),
         "completion_reason": task.completion_reason,
         "can_add_images": task.status == "completed",
+        "can_delete": task.status in {"completed", "failed", "deleting"},
         "created_at": task.created_at,
         "updated_at": task.updated_at,
     }
@@ -303,6 +306,85 @@ def list_tasks():
             "ok": True,
             "task_count": len(tasks),
             "tasks": [_task_summary(task) for task in tasks],
+        }
+    )
+
+
+@bp.delete("/tasks/<task_id>")
+def delete_task(task_id: str):
+    """刪除目前 LINE 使用者擁有的終態任務及其專屬資料。"""
+    payload = request.get_json(silent=True) or {}
+    id_token = str(payload.get("id_token", "")).strip()
+    profile, verification_error = _verify_liff_profile(id_token)
+    if verification_error is not None:
+        return verification_error
+
+    repo = get_repo()
+    task, deletion_state, paths = repo.prepare_liff_task_deletion(
+        task_id,
+        profile["sub"],
+    )
+    if deletion_state == "not_found":
+        return jsonify({"ok": False, "message": "找不到標註任務"}), 404
+    if deletion_state == "not_deletable":
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "code": "TASK_NOT_DELETABLE",
+                    "message": "任務執行中，請等待完成後再刪除",
+                    "task_status": task.status if task else "",
+                }
+            ),
+            409,
+        )
+
+    storage = get_storage()
+    try:
+        for path in paths:
+            storage.delete(path)
+        for prefix in (
+            f"liff-uploads/{task_id}",
+            f"previews/tasks/{task_id}",
+            f"datasets/{task_id}",
+        ):
+            storage.delete_prefix(prefix)
+    except Exception:  # noqa: BLE001 保留 deleting 狀態供使用者重試
+        current_app.logger.exception(
+            "LIFF 任務檔案清理失敗，等待重試：task_id=%s",
+            task_id,
+        )
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "code": "TASK_DELETE_STORAGE_FAILED",
+                    "message": "檔案清理暫時失敗，請稍後重試刪除",
+                    "task_status": "deleting",
+                }
+            ),
+            503,
+        )
+
+    deleted = repo.finalize_liff_task_deletion(task_id, profile["sub"])
+    if deleted is None:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "code": "TASK_DELETE_CONFLICT",
+                    "message": "任務狀態已變更，請重新整理後再試",
+                }
+            ),
+            409,
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "message": "標註任務已刪除",
+            "task_id": task_id,
+            **deleted,
         }
     )
 
@@ -1116,6 +1198,8 @@ def task_status(task_id: str):
         result["message"] = "正在執行圖片標註"
     elif task.status == "retry_wait":
         result["message"] = "處理失敗，系統將自動重試"
+    elif task.status == "deleting":
+        result["message"] = "任務正在刪除；若長時間未完成，請重試刪除"
     else:
         result["message"] = "任務正在排隊等待處理"
 

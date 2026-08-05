@@ -32,10 +32,29 @@ const uploadSuccessMessageElement = document.getElementById(
 const uploadSuccessCloseElement = document.getElementById(
     "upload-success-close"
 );
+const uploadSuccessViewListElement = document.getElementById(
+    "upload-success-view-list"
+);
 const uploadSuccessCloseHelpElement = document.getElementById(
     "upload-success-close-help"
 );
+const uploadedImagesSectionElement = document.getElementById(
+    "uploaded-images-section"
+);
+const uploadedImagesCountElement = document.getElementById(
+    "uploaded-images-count"
+);
+const uploadedImagesListElement = document.getElementById(
+    "uploaded-images-list"
+);
+const uploadedImagesMoreElement = document.getElementById(
+    "uploaded-images-more"
+);
 const selectedImageFiles = new Map();
+const UPLOADED_THUMBNAIL_PAGE_SIZE = 20;
+let uploadedImageFiles = [];
+let uploadedImageTotalCount = 0;
+let renderedUploadedImageCount = 0;
 
 
 function getImageFileKey(file) {
@@ -49,16 +68,83 @@ function getImageFileKey(file) {
 
 
 function showUploadSuccess(result) {
+    uploadedImageFiles = Array.from(selectedImageFiles.values());
+    uploadedImageTotalCount = uploadedImageFiles.length;
+    selectedImageFiles.clear();
+    renderedUploadedImageCount = 0;
+    uploadedImagesListElement.replaceChildren();
+    uploadedImagesSectionElement.hidden = true;
     uploadSuccessMessageElement.textContent = APPEND_TARGET_TASK_ID
         ? `已成功新增 ${result.added_image_count} 張圖片。`
         : `已成功上傳 ${result.image_count} 張圖片。`;
     uploadSuccessCloseHelpElement.hidden = true;
     uploadSuccessCloseElement.disabled = false;
-    uploadSuccessCloseElement.textContent = "完成並離開";
+    uploadSuccessCloseElement.textContent = "離開頁面";
     uploadSuccessModalElement.hidden = false;
     document.body.classList.add("modal-open");
-    uploadSuccessCloseElement.focus();
+    uploadSuccessViewListElement.focus();
 }
+
+
+function appendUploadedImageThumbnails() {
+    const nextImageFiles = uploadedImageFiles.splice(
+        0,
+        UPLOADED_THUMBNAIL_PAGE_SIZE
+    );
+    const fragment = document.createDocumentFragment();
+
+    for (const file of nextImageFiles) {
+        const item = document.createElement("figure");
+        item.className = "uploaded-image-item";
+
+        const image = document.createElement("img");
+        const objectUrl = URL.createObjectURL(file);
+        image.alt = file.name;
+        image.loading = "lazy";
+        image.decoding = "async";
+        image.addEventListener("load", () => {
+            URL.revokeObjectURL(objectUrl);
+        }, {once: true});
+        image.addEventListener("error", () => {
+            URL.revokeObjectURL(objectUrl);
+        }, {once: true});
+        image.src = objectUrl;
+
+        const caption = document.createElement("figcaption");
+        caption.textContent = file.name;
+
+        item.append(image, caption);
+        fragment.append(item);
+    }
+
+    uploadedImagesListElement.append(fragment);
+    renderedUploadedImageCount += nextImageFiles.length;
+    uploadedImagesCountElement.textContent =
+        `${uploadedImageTotalCount} 張`;
+    uploadedImagesMoreElement.hidden = uploadedImageFiles.length === 0;
+}
+
+
+uploadSuccessViewListElement.addEventListener("click", () => {
+    uploadSuccessModalElement.hidden = true;
+    uploadSuccessCloseHelpElement.hidden = true;
+    document.body.classList.remove("modal-open");
+    uploadedImagesSectionElement.hidden = false;
+
+    if (renderedUploadedImageCount === 0) {
+        appendUploadedImageThumbnails();
+    }
+
+    uploadedImagesSectionElement.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+    });
+});
+
+
+uploadedImagesMoreElement.addEventListener("click", () => {
+    appendUploadedImageThumbnails();
+});
 
 
 uploadSuccessCloseElement.addEventListener("click", () => {
@@ -73,8 +159,9 @@ uploadSuccessCloseElement.addEventListener("click", () => {
     window.setTimeout(() => {
         if (document.visibilityState === "visible") {
             uploadSuccessCloseElement.disabled = false;
-            uploadSuccessCloseElement.textContent = "已完成";
+            uploadSuccessCloseElement.textContent = "離開頁面";
             uploadSuccessCloseHelpElement.hidden = false;
+            uploadSuccessViewListElement.focus();
         }
     }, 300);
     window.close();

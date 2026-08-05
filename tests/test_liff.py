@@ -6,7 +6,7 @@ from PIL import Image
 
 from app import create_app
 from app.config import Config
-from app.models import AnnotationTask, ImageRecord, User
+from app.models import AnnotationTask, ImageRecord, LabelExample, Segment, User
 from app.services import line_login
 
 
@@ -192,8 +192,11 @@ def test_liff_upload_page_exposes_progress_and_server_batch_limits(app):
     html = response.get_data(as_text=True)
     assert 'id="upload-progress"' in html
     assert 'id="upload-success-modal"' in html
+    assert 'id="upload-success-view-list"' in html
     assert 'id="upload-success-close"' in html
-    assert "完成並離開" in html
+    assert 'id="uploaded-images-section"' in html
+    assert "查看上傳清單" in html
+    assert "離開頁面" in html
     assert 'data-upload-batch-max-images="5"' in html
     assert f'data-upload-batch-max-bytes="{15 * 1024 * 1024}"' in html
 
@@ -1008,6 +1011,214 @@ def test_liff_task_list_only_returns_verified_user_tasks(
     assert "download_url" in task_result
     assert "line_user_id" not in task_result
     assert "download_token" not in task_result
+
+
+def test_liff_delete_task_removes_exclusive_data_and_preserves_shared_data(
+    app,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {"sub": "U-delete-owner", "name": "刪除測試"},
+    )
+    shared_image_path = app.storage.save_bytes(
+        "images/shared.png",
+        b"shared-image",
+    )
+    exclusive_image_path = app.storage.save_bytes(
+        "images/exclusive.png",
+        b"exclusive-image",
+    )
+    own_shared_mask = app.storage.save_bytes(
+        "masks/own-shared.png",
+        b"own-shared-mask",
+    )
+    other_shared_mask = app.storage.save_bytes(
+        "masks/other-shared.png",
+        b"other-shared-mask",
+    )
+    exclusive_mask = app.storage.save_bytes(
+        "masks/exclusive.png",
+        b"exclusive-mask",
+    )
+    preview_path = app.storage.save_bytes(
+        "previews/tasks/delete-task/attempts/attempt-1/preview.jpg",
+        b"preview",
+    )
+    dataset_path = app.storage.save_bytes(
+        "datasets/delete-task/attempts/attempt-1/dataset.zip",
+        b"dataset",
+    )
+    staging_path = app.storage.save_bytes(
+        "liff-uploads/delete-task/staging.tmp",
+        b"staging",
+    )
+
+    app.repo.add_image(
+        ImageRecord(id="shared-image", path=shared_image_path)
+    )
+    app.repo.add_image(
+        ImageRecord(id="exclusive-image", path=exclusive_image_path)
+    )
+    app.repo.add_segment(
+        Segment(
+            id="own-shared-segment",
+            image_id="shared-image",
+            mask_path=own_shared_mask,
+            annotation_task_id="delete-task",
+        )
+    )
+    app.repo.add_segment(
+        Segment(
+            id="other-shared-segment",
+            image_id="shared-image",
+            mask_path=other_shared_mask,
+            annotation_task_id="keep-task",
+        )
+    )
+    app.repo.add_segment(
+        Segment(
+            id="exclusive-segment",
+            image_id="exclusive-image",
+            mask_path=exclusive_mask,
+        )
+    )
+    app.repo.add_example(
+        LabelExample(
+            id="delete-example",
+            source_segment_id="exclusive-segment",
+        )
+    )
+    app.repo.add_task(
+        AnnotationTask(
+            id="keep-task",
+            line_user_id="U-other-owner",
+            image_ids=["shared-image"],
+            status="completed",
+        )
+    )
+    app.repo.add_task(
+        AnnotationTask(
+            id="delete-task",
+            line_user_id="U-delete-owner",
+            image_ids=["shared-image", "exclusive-image"],
+            status="completed",
+            dataset_version=1,
+            dataset_zip_path=dataset_path,
+            excluded_results=[{"preview_path": preview_path}],
+        )
+    )
+
+    response = app.test_client().delete(
+        "/liff/tasks/delete-task",
+        json={"id_token": "owner-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["deleted_images"] == 1
+    assert response.get_json()["deleted_segments"] == 2
+    assert response.get_json()["deleted_examples"] == 1
+    assert app.repo.get_task("delete-task") is None
+    assert app.repo.get_task("keep-task") is not None
+    assert app.repo.get_image("exclusive-image") is None
+    assert app.repo.get_image("shared-image") is not None
+    assert app.repo.get_segment("own-shared-segment") is None
+    assert app.repo.get_segment("exclusive-segment") is None
+    assert app.repo.get_segment("other-shared-segment") is not None
+    assert app.repo.list_examples() == []
+    for deleted_path in (
+        exclusive_image_path,
+        own_shared_mask,
+        exclusive_mask,
+        preview_path,
+        dataset_path,
+        staging_path,
+    ):
+        assert not app.storage.exists(deleted_path)
+    assert app.storage.exists(shared_image_path)
+    assert app.storage.exists(other_shared_mask)
+
+
+def test_liff_delete_task_hides_other_users_tasks_and_rejects_active_task(
+    app,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda token, *args: {
+            "sub": "U-owner" if token == "owner-token" else "U-other"
+        },
+    )
+    task = app.repo.add_task(
+        AnnotationTask(
+            id="active-task",
+            line_user_id="U-owner",
+            status="processing",
+            claim_token="active-claim",
+        )
+    )
+    client = app.test_client()
+
+    denied = client.delete(
+        f"/liff/tasks/{task.id}",
+        json={"id_token": "other-token"},
+    )
+    assert denied.status_code == 404
+
+    active = client.delete(
+        f"/liff/tasks/{task.id}",
+        json={"id_token": "owner-token"},
+    )
+    assert active.status_code == 409
+    assert active.get_json()["code"] == "TASK_NOT_DELETABLE"
+    assert app.repo.get_task(task.id).status == "processing"
+
+
+def test_liff_delete_task_can_retry_after_storage_failure(
+    app,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        line_login,
+        "verify_id_token",
+        lambda *args: {"sub": "U-delete-owner"},
+    )
+    image_path = app.storage.save_bytes("images/retry-delete.png", b"image")
+    app.repo.add_image(ImageRecord(id="retry-image", path=image_path))
+    task = app.repo.add_task(
+        AnnotationTask(
+            id="retry-delete-task",
+            line_user_id="U-delete-owner",
+            image_ids=["retry-image"],
+            status="failed",
+        )
+    )
+    original_delete = app.storage.delete
+    monkeypatch.setattr(
+        app.storage,
+        "delete",
+        lambda *_: (_ for _ in ()).throw(OSError("temporary failure")),
+    )
+
+    failed = app.test_client().delete(
+        f"/liff/tasks/{task.id}",
+        json={"id_token": "owner-token"},
+    )
+    assert failed.status_code == 503
+    assert app.repo.get_task(task.id).status == "deleting"
+    assert app.repo.get_image("retry-image") is not None
+
+    monkeypatch.setattr(app.storage, "delete", original_delete)
+    retried = app.test_client().delete(
+        f"/liff/tasks/{task.id}",
+        json={"id_token": "owner-token"},
+    )
+    assert retried.status_code == 200
+    assert app.repo.get_task(task.id) is None
+    assert app.repo.get_image("retry-image") is None
+    assert not app.storage.exists(image_path)
 
 
 def test_liff_excluded_results_require_owner_and_return_thumbnail(

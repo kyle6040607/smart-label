@@ -1142,6 +1142,154 @@ class MySQLRepository:
             for row in rows
         ]
 
+    def prepare_liff_task_deletion(
+        self,
+        task_id: str,
+        line_user_id: str,
+    ) -> tuple[AnnotationTask | None, str, list[str]]:
+        """鎖定終態 LIFF 任務，並收集交易外需刪除的檔案。"""
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE id=%s AND line_user_id=%s
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (task_id, line_user_id),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None, "not_found", []
+
+            task = _row_to_task(row)
+            if task.status not in {"completed", "failed", "deleting"}:
+                return task, "not_deletable", []
+            if task.claim_token:
+                return task, "not_deletable", []
+
+            cursor.execute(
+                "SELECT image_ids FROM annotation_tasks WHERE id<>%s",
+                (task.id,),
+            )
+            other_image_ids = {
+                image_id
+                for other_row in cursor.fetchall()
+                for image_id in json.loads(other_row["image_ids"])
+            }
+            exclusive_image_ids = set(task.image_ids) - other_image_ids
+            paths: list[str] = []
+
+            if exclusive_image_ids:
+                placeholders = ",".join(["%s"] * len(exclusive_image_ids))
+                cursor.execute(
+                    f"SELECT path FROM images WHERE id IN ({placeholders})",
+                    tuple(exclusive_image_ids),
+                )
+                paths.extend(
+                    result["path"]
+                    for result in cursor.fetchall()
+                    if result.get("path")
+                )
+
+            segment_query = "SELECT mask_path FROM segments WHERE annotation_task_id=%s"
+            segment_params: list[str] = [task.id]
+            if exclusive_image_ids:
+                placeholders = ",".join(["%s"] * len(exclusive_image_ids))
+                segment_query += f" OR image_id IN ({placeholders})"
+                segment_params.extend(exclusive_image_ids)
+            cursor.execute(segment_query, tuple(segment_params))
+            paths.extend(
+                result["mask_path"]
+                for result in cursor.fetchall()
+                if result.get("mask_path")
+            )
+            paths.extend([task.dataset_zip_path, task.best_model_path])
+            paths.extend(
+                str(result.get("preview_path", ""))
+                for result in task.excluded_results
+            )
+
+            now = time.time()
+            cursor.execute(
+                "UPDATE annotation_tasks SET status='deleting', updated_at=%s WHERE id=%s",
+                (now, task.id),
+            )
+            task.status = "deleting"
+            task.updated_at = now
+
+        return task, "ready", list(dict.fromkeys(filter(None, paths)))
+
+    def finalize_liff_task_deletion(
+        self,
+        task_id: str,
+        line_user_id: str,
+    ) -> dict[str, int] | None:
+        """在檔案清理成功後，用同一個 transaction 刪除專屬資料。"""
+        with self._tx() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM annotation_tasks
+                WHERE id=%s AND line_user_id=%s
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (task_id, line_user_id),
+            )
+            row = cursor.fetchone()
+            if row is None or row["status"] != "deleting":
+                return None
+            task = _row_to_task(row)
+
+            cursor.execute(
+                "SELECT image_ids FROM annotation_tasks WHERE id<>%s",
+                (task.id,),
+            )
+            other_image_ids = {
+                image_id
+                for other_row in cursor.fetchall()
+                for image_id in json.loads(other_row["image_ids"])
+            }
+            exclusive_image_ids = set(task.image_ids) - other_image_ids
+
+            segment_query = "SELECT id FROM segments WHERE annotation_task_id=%s"
+            segment_params: list[str] = [task.id]
+            if exclusive_image_ids:
+                placeholders = ",".join(["%s"] * len(exclusive_image_ids))
+                segment_query += f" OR image_id IN ({placeholders})"
+                segment_params.extend(exclusive_image_ids)
+            cursor.execute(segment_query, tuple(segment_params))
+            segment_ids = [result["id"] for result in cursor.fetchall()]
+
+            deleted_examples = 0
+            deleted_segments = 0
+            deleted_images = 0
+            if segment_ids:
+                placeholders = ",".join(["%s"] * len(segment_ids))
+                deleted_examples = cursor.execute(
+                    f"DELETE FROM examples WHERE source_segment_id IN ({placeholders})",
+                    tuple(segment_ids),
+                )
+                deleted_segments = cursor.execute(
+                    f"DELETE FROM segments WHERE id IN ({placeholders})",
+                    tuple(segment_ids),
+                )
+            if exclusive_image_ids:
+                placeholders = ",".join(["%s"] * len(exclusive_image_ids))
+                deleted_images = cursor.execute(
+                    f"DELETE FROM images WHERE id IN ({placeholders})",
+                    tuple(exclusive_image_ids),
+                )
+            cursor.execute("DELETE FROM annotation_tasks WHERE id=%s", (task.id,))
+
+        return {
+            "deleted_images": int(deleted_images),
+            "deleted_segments": int(deleted_segments),
+            "deleted_examples": int(deleted_examples),
+        }
+
     def list_tasks_by_user(self, user_id: str = "") -> list[AnnotationTask]:
         """依使用者 ID 取得訓練與標註任務清單。"""
         with self._tx() as cursor:
