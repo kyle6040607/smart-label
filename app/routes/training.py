@@ -14,6 +14,38 @@ from app.routes import (
 from app.ml.yolov26x_seg import train_yolov26x_seg
 
 bp = Blueprint("training", __name__, url_prefix="/api/projects")
+_YOLO_TRAINING_TASK_TYPE = "yolo_training"
+_LEGACY_TRAINING_PROMPT_MARKER = "] YOLOv26x-seg 訓練"
+
+
+def _is_yolo_training_task(task: AnnotationTask) -> bool:
+    """辨識真正的模型訓練任務，並相容尚未寫入 task_type 的舊資料。"""
+    task_type = str(task.settings_snapshot.get("task_type", "")).strip()
+    if task_type:
+        return task_type == _YOLO_TRAINING_TASK_TYPE
+    return (
+        task.prompt.startswith("[project:")
+        and _LEGACY_TRAINING_PROMPT_MARKER in task.prompt
+    )
+
+
+def _list_project_training_tasks(repo, user_id: str, project_id: str):
+    """只列出指定使用者、專案的 YOLO 訓練任務。"""
+    def matches(task: AnnotationTask) -> bool:
+        effective_project_id = getattr(
+            task,
+            "effective_project_id",
+            getattr(task, "project_id", ""),
+        )
+        return (
+            task.user_id == user_id
+            and effective_project_id == project_id
+            and _is_yolo_training_task(task)
+        )
+
+    if hasattr(repo, "tasks"):
+        return [task for task in repo.tasks.values() if matches(task)]
+    return [task for task in repo.list_tasks_by_user(user_id) if matches(task)]
 
 
 @bp.post("/<project_id>/train")
@@ -46,6 +78,7 @@ def trigger_training(project_id: str):
         project_id=project_id,
         prompt=f"[project:{project_id}] YOLOv26x-seg 訓練 ({proj.name})",
         status="pending",
+        settings_snapshot={"task_type": _YOLO_TRAINING_TASK_TYPE},
     )
     repo.add_task(task)
     storage = get_storage()
@@ -97,19 +130,7 @@ def get_training_status(project_id: str):
     if proj is None or proj.owner_id != user_id:
         abort(404, "查無此專案")
 
-    # 尋找該專案最新一筆任務
-    def _matches_project(t: AnnotationTask) -> bool:
-        pid = getattr(t, "effective_project_id", getattr(t, "project_id", ""))
-        return t.user_id == user_id and (pid == project_id or f"[project:{project_id}]" in t.prompt)
-
-    tasks = [
-        t for t in repo.tasks.values()
-        if _matches_project(t)
-    ] if hasattr(repo, "tasks") else []
-
-    if not tasks and hasattr(repo, "list_tasks_by_user"):
-        all_user_tasks = repo.list_tasks_by_user(user_id)
-        tasks = [t for t in all_user_tasks if _matches_project(t)]
+    tasks = _list_project_training_tasks(repo, user_id, project_id)
 
     if not tasks:
         return jsonify({
@@ -142,14 +163,7 @@ def stop_training(project_id: str):
     if proj is None or proj.owner_id != user_id:
         abort(404, "查無此專案")
 
-    def _matches_project(t: AnnotationTask) -> bool:
-        pid = getattr(t, "effective_project_id", getattr(t, "project_id", ""))
-        return t.user_id == user_id and (pid == project_id or f"[project:{project_id}]" in t.prompt)
-
-    tasks = [t for t in repo.tasks.values() if _matches_project(t)] if hasattr(repo, "tasks") else []
-    if not tasks and hasattr(repo, "list_tasks_by_user"):
-        all_user_tasks = repo.list_tasks_by_user(user_id)
-        tasks = [t for t in all_user_tasks if _matches_project(t)]
+    tasks = _list_project_training_tasks(repo, user_id, project_id)
 
     running_tasks = [t for t in tasks if t.status in ("pending", "processing", "running")]
     if not running_tasks:
@@ -190,14 +204,7 @@ def download_training_model(project_id: str):
     if proj is None or proj.owner_id != user_id:
         abort(404, "查無此專案")
 
-    tasks = [
-        t for t in repo.tasks.values()
-        if t.user_id == user_id and getattr(t, "project_id", "") == project_id
-    ] if hasattr(repo, "tasks") else []
-
-    if not tasks and hasattr(repo, "list_tasks_by_user"):
-        all_user_tasks = repo.list_tasks_by_user(user_id)
-        tasks = [t for t in all_user_tasks if getattr(t, "project_id", "") == project_id]
+    tasks = _list_project_training_tasks(repo, user_id, project_id)
 
     completed_tasks = [t for t in tasks if t.status == "completed" and t.best_model_path]
     if not completed_tasks:
