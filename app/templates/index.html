@@ -135,6 +135,8 @@
             <div style="display: flex; gap: 8px; margin-left: auto;">
               <button id="toggleImgBatchModeBtn" class="btn-secondary"
                 style="padding: 4px 10px; font-size: 12px;">批次管理</button>
+              <button id="batchConfirmHighConfBtn" class="btn-primary"
+                style="padding: 4px 10px; font-size: 12px; display: none; background: linear-gradient(135deg, #10b981, #059669); color: white;">⚡ 一鍵採納高信心遮罩</button>
               <button id="batchDelImgsBtn" class="btn-danger" style="padding: 4px 10px; font-size: 12px; display: none;"
                 disabled>確認刪除</button>
               <button id="cancelImgBatchBtn" class="btn-secondary"
@@ -494,6 +496,50 @@
         <button id="confirmExportBtn" type="button" class="btn-primary" style="background: var(--accent); color: white; display: flex; align-items: center; gap: 6px;">
           <span>📦 開始打包並下載 ZIP</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. 專用批次處理進度 Modal (Batch Progress Modal) -->
+  <div id="batchProgressModal" class="modal-overlay" style="z-index: 10000;">
+    <div class="modal-card progress-modal-card">
+      <div style="font-size: 32px; margin-bottom: 8px;" id="batchProgressIcon">⏳</div>
+      <h3 id="batchProgressTitle" class="progress-modal-title">正在進行批次處理…</h3>
+      <p id="batchProgressDesc" class="progress-modal-desc">請稍候，伺服器正在計算並更新資料，請勿關閉網頁。</p>
+      
+      <div class="task-progress-bar-wrap" style="height: 10px; border-radius: 5px; margin: 16px 0;">
+        <div id="batchProgressBarInner" class="task-progress-bar-inner" style="height: 100%; border-radius: 5px; width: 0%;"></div>
+      </div>
+      
+      <div style="font-size: 13px; color: var(--muted); font-weight: 600;" id="batchProgressCountText">0 / 0 (0%)</div>
+    </div>
+  </div>
+
+  <!-- 7. Google Drive 風格懸浮 Task Dock -->
+  <div id="globalTaskDock" class="global-task-dock collapsed" style="display: none;">
+    <div id="globalTaskDockHeader" class="global-task-dock-header">
+      <div class="global-task-dock-title">
+        <span id="globalTaskBadgeIcon">⚡</span>
+        <span id="globalTaskBadgeText">背景任務執行中</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button id="toggleTaskDockBtn" type="button" class="toast-close" title="展開/縮小" style="font-size: 12px;">▲</button>
+      </div>
+    </div>
+    <div id="globalTaskDockBody" class="global-task-dock-body">
+      <div style="font-size: 12.5px; font-weight: 600; color: var(--text);" id="globalTaskPromptName">Prompt: -</div>
+      <div style="font-size: 11.5px; color: var(--muted); margin-top: 2px;" id="globalTaskProjectName">專案: -</div>
+      
+      <div class="task-progress-bar-wrap">
+        <div id="globalTaskProgressBarInner" class="task-progress-bar-inner"></div>
+      </div>
+      
+      <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; margin-top: 4px;">
+        <span id="globalTaskStatusText" style="color: var(--muted); font-weight: 500;">0 / 0 張 (0%)</span>
+        <div style="display: flex; gap: 6px;">
+          <button id="switchTaskProjectBtn" type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 11px; display: none;">切換至此專案</button>
+          <button id="cancelGlobalTaskBtn" type="button" class="btn-danger" style="padding: 2px 8px; font-size: 11px;">取消任務</button>
+        </div>
       </div>
     </div>
   </div>
