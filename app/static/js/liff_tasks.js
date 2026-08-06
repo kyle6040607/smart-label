@@ -16,6 +16,7 @@ const TASK_STATUS_LABELS = {
     retry_wait: "等待重試",
     completed: "已完成",
     failed: "失敗",
+    deleting: "刪除中",
 };
 
 
@@ -40,17 +41,40 @@ function openDownloadInExternalBrowser(downloadUrl) {
 }
 
 
+function getTaskRenderSignature(task) {
+    return JSON.stringify([
+        task.prompt,
+        task.task_status,
+        task.image_count,
+        task.dataset_version,
+        task.exported_count,
+        task.excluded_count,
+        task.no_detection_count,
+        task.attempt_count,
+        task.updated_at,
+        task.error_message ?? "",
+        task.download_url ?? "",
+        Boolean(task.can_add_images),
+        Boolean(task.can_delete),
+    ]);
+}
+
+
 function createTaskCard(task) {
     const card = taskCardTemplate.content.firstElementChild.cloneNode(true);
+    card.dataset.taskId = task.task_id;
+    card.dataset.renderSignature = getTaskRenderSignature(task);
     const promptElement = card.querySelector(".task-prompt");
     const taskStatusElement = card.querySelector(".task-status");
     const taskInfoElement = card.querySelector(".task-info");
     const taskErrorElement = card.querySelector(".task-error");
     const downloadElement = card.querySelector(".task-download");
+    const addImagesElement = card.querySelector(".task-add-images");
     const excludedToggle = card.querySelector(".task-excluded-toggle");
     const excludedPanel = card.querySelector(".task-excluded-panel");
     const excludedList = card.querySelector(".task-excluded-list");
     const excludedMore = card.querySelector(".task-excluded-more");
+    const deleteElement = card.querySelector(".task-delete");
 
     promptElement.textContent = task.prompt;
     taskStatusElement.textContent =
@@ -80,6 +104,56 @@ function createTaskCard(task) {
         downloadElement.addEventListener("click", (event) => {
             event.preventDefault();
             openDownloadInExternalBrowser(task.download_url);
+        });
+    }
+
+    if (task.can_add_images) {
+        addImagesElement.hidden = false;
+        addImagesElement.addEventListener("click", () => {
+            const uploadUrl = new URL("/liff/create", window.location.origin);
+            uploadUrl.searchParams.set("append_to", task.task_id);
+            window.location.href = uploadUrl.toString();
+        });
+    }
+
+    if (task.can_delete) {
+        deleteElement.hidden = false;
+        deleteElement.textContent = task.task_status === "deleting"
+            ? "重試刪除"
+            : "刪除任務";
+        deleteElement.addEventListener("click", async () => {
+            const confirmed = window.confirm(
+                "確定要永久刪除此標註任務嗎？圖片、標註、低信心縮圖與 ZIP 將一併刪除，且無法復原。"
+            );
+            if (!confirmed) {
+                return;
+            }
+
+            const originalText = deleteElement.textContent;
+            deleteElement.disabled = true;
+            deleteElement.textContent = "刪除中...";
+            try {
+                const response = await fetch(`/liff/tasks/${task.task_id}`, {
+                    method: "DELETE",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        id_token: liff.getIDToken(),
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.message || "無法刪除標註任務");
+                }
+                card.remove();
+                await loadTasks(false);
+            } catch (error) {
+                window.alert(error.message || "刪除任務時發生錯誤");
+            } finally {
+                if (deleteElement.isConnected) {
+                    deleteElement.disabled = false;
+                    deleteElement.textContent = originalText;
+                }
+            }
         });
     }
 
@@ -145,23 +219,59 @@ let isLoadingTasks = false;
 
 
 function renderTasks(tasks) {
-    activeTasksElement.replaceChildren();
-    historyTasksElement.replaceChildren();
+    const existingCards = new Map(
+        Array.from(
+            document.querySelectorAll(".task-card[data-task-id]")
+        ).map((card) => [card.dataset.taskId, card])
+    );
+
+    const cardForTask = (task) => {
+        const existingCard = existingCards.get(task.task_id);
+        if (!existingCard) {
+            return createTaskCard(task);
+        }
+
+        const excludedPanel = existingCard.querySelector(
+            ".task-excluded-panel"
+        );
+        const isExcludedPanelOpen =
+            excludedPanel && !excludedPanel.hidden;
+
+        // 展開時保留同一個 DOM，避免輪詢清掉縮圖、分頁與展開狀態。
+        if (isExcludedPanelOpen) {
+            return existingCard;
+        }
+
+        if (
+            existingCard.dataset.renderSignature
+            === getTaskRenderSignature(task)
+        ) {
+            return existingCard;
+        }
+
+        return createTaskCard(task);
+    };
 
     const activeTasks = tasks.filter(
-        (task) => ["pending", "retry_wait", "processing"].includes(task.task_status)
+        (task) => ["pending", "retry_wait", "processing", "deleting"].includes(task.task_status)
     );
     const historyTasks = tasks.filter(
-        (task) => !["pending", "retry_wait", "processing"].includes(task.task_status)
+        (task) => !["pending", "retry_wait", "processing", "deleting"].includes(task.task_status)
     );
 
+    const activeFragment = document.createDocumentFragment();
+    const historyFragment = document.createDocumentFragment();
+
     for (const task of activeTasks) {
-        activeTasksElement.appendChild(createTaskCard(task));
+        activeFragment.appendChild(cardForTask(task));
     }
 
     for (const task of historyTasks) {
-        historyTasksElement.appendChild(createTaskCard(task));
+        historyFragment.appendChild(cardForTask(task));
     }
+
+    activeTasksElement.replaceChildren(activeFragment);
+    historyTasksElement.replaceChildren(historyFragment);
 
     activeSectionElement.hidden = activeTasks.length === 0;
     historySectionElement.hidden = historyTasks.length === 0;
@@ -175,9 +285,9 @@ async function loadTasks(showLoading = true) {
     }
 
     isLoadingTasks = true;
-    refreshButtonElement.disabled = true;
 
     if (showLoading) {
+        refreshButtonElement.disabled = true;
         statusElement.textContent = "正在載入任務......";
     }
 
@@ -224,7 +334,9 @@ async function loadTasks(showLoading = true) {
             error.message || "載入任務時發生錯誤";
     } finally {
         isLoadingTasks = false;
-        refreshButtonElement.disabled = false;
+        if (showLoading) {
+            refreshButtonElement.disabled = false;
+        }
     }
 }
 

@@ -147,3 +147,184 @@ def test_finish_recovered_cleanup_clears_matching_token():
     assert "claim_token=''" in sql
     assert "claim_token=%s" in sql
     assert params[-1] == "stale-token"
+
+
+def test_record_liff_upload_batch_persists_uploaded_bytes_atomically():
+    import json
+
+    task = AnnotationTask(
+        id="upload-session",
+        line_user_id="U-owner",
+        status="uploading",
+        settings_snapshot={
+            "upload": {
+                "expected_image_count": 1,
+                "expected_total_bytes": 321,
+                "uploaded_bytes": 0,
+                "completed_batches": {},
+                "completed_batch_bytes": {},
+            }
+        },
+    ).to_dict()
+    for field in (
+        "image_ids",
+        "processed_image_ids",
+        "settings_snapshot",
+        "no_detection_image_ids",
+        "excluded_results",
+    ):
+        task[field] = json.dumps(task[field])
+
+    cursor = RecordingCursor([task])
+    updated, recorded = _repo_with_cursor(cursor).record_liff_upload_batch(
+        "upload-session",
+        "U-owner",
+        "batch-1",
+        ["image-1"],
+        321,
+    )
+
+    assert recorded is True
+    assert updated is not None
+    assert updated.settings_snapshot["upload"]["uploaded_bytes"] == 321
+    assert updated.settings_snapshot["upload"]["completed_batch_bytes"] == {
+        "batch-1": 321,
+    }
+    assert "FOR UPDATE" in cursor.calls[0][0]
+    saved_snapshot = json.loads(cursor.calls[1][1][1])
+    assert saved_snapshot["upload"]["uploaded_bytes"] == 321
+
+
+def test_prepare_liff_upload_cancellation_requires_explicit_opt_in():
+    import json
+
+    task = AnnotationTask(
+        id="upload-session",
+        line_user_id="U-owner",
+        status="upload_ready",
+    ).to_dict()
+    for field in (
+        "image_ids",
+        "processed_image_ids",
+        "settings_snapshot",
+        "no_detection_image_ids",
+        "excluded_results",
+    ):
+        task[field] = json.dumps(task[field])
+
+    default_cursor = RecordingCursor([dict(task)])
+    _, default_state, _ = _repo_with_cursor(
+        default_cursor
+    ).prepare_liff_task_deletion("upload-session", "U-owner")
+    assert default_state == "not_deletable"
+    assert len(default_cursor.calls) == 1
+
+    cancellation_cursor = RecordingCursor([dict(task)])
+    prepared, cancellation_state, _ = _repo_with_cursor(
+        cancellation_cursor
+    ).prepare_liff_task_deletion(
+        "upload-session",
+        "U-owner",
+        allow_upload_session=True,
+    )
+    assert cancellation_state == "ready"
+    assert prepared is not None
+    assert prepared.status == "deleting"
+    assert prepared.completion_reason == "upload_cancelled"
+    update_sql, update_params = cancellation_cursor.calls[-1]
+    assert "status='deleting'" in update_sql
+    assert "completion_reason=%s" in update_sql
+    assert update_params[0] == "upload_cancelled"
+
+
+def test_finalize_liff_append_locks_session_and_target_in_one_transaction():
+    import json
+
+    target = AnnotationTask(
+        id="target-task",
+        line_user_id="U-owner",
+        image_ids=["old-image"],
+        processed_image_ids=["old-image"],
+        status="completed",
+        attempt_count=2,
+    ).to_dict()
+    session = AnnotationTask(
+        id="append-session",
+        line_user_id="U-owner",
+        image_ids=["new-image"],
+        status="upload_ready",
+        settings_snapshot={
+            "upload": {
+                "target_task_id": "target-task",
+                "expected_image_count": 1,
+            }
+        },
+    ).to_dict()
+    for row in (session, target):
+        for field in (
+            "image_ids",
+            "processed_image_ids",
+            "settings_snapshot",
+            "no_detection_image_ids",
+            "excluded_results",
+        ):
+            row[field] = json.dumps(row[field])
+
+    cursor = RecordingCursor([session, target])
+    merged, transitioned = _repo_with_cursor(
+        cursor
+    ).finalize_liff_append_upload("append-session", "U-owner")
+
+    assert transitioned is True
+    assert merged is not None
+    assert merged.id == "target-task"
+    assert merged.status == "pending"
+    assert merged.image_ids == ["old-image", "new-image"]
+    assert merged.processed_image_ids == ["old-image"]
+    assert merged.attempt_count == 0
+    assert len(cursor.calls) == 5
+    assert all("FOR UPDATE" in call[0] for call in cursor.calls[:2])
+    assert "UPDATE images" in cursor.calls[2][0]
+    assert "status='pending'" in cursor.calls[3][0]
+    assert "status='upload_merged'" in cursor.calls[4][0]
+
+
+def test_create_liff_task_creates_project_and_publishes_images_atomically():
+    import json
+
+    task = AnnotationTask(
+        id="upload-session",
+        user_id="web-owner",
+        project_id="upload-session",
+        line_user_id="U-owner",
+        image_ids=["image-1"],
+        status="upload_ready",
+        settings_snapshot={"upload": {"expected_image_count": 1}},
+    ).to_dict()
+    for field in (
+        "image_ids",
+        "processed_image_ids",
+        "settings_snapshot",
+        "no_detection_image_ids",
+        "excluded_results",
+    ):
+        task[field] = json.dumps(task[field])
+
+    cursor = RecordingCursor([task])
+    created, transitioned = _repo_with_cursor(
+        cursor
+    ).create_liff_annotation_task(
+        "upload-session",
+        "U-owner",
+        "cat",
+        "cat project",
+    )
+
+    assert transitioned is True
+    assert created is not None
+    assert created.status == "pending"
+    assert created.project_id == created.id
+    assert "FOR UPDATE" in cursor.calls[0][0]
+    assert "INSERT INTO projects" in cursor.calls[2][0]
+    assert "UPDATE images" in cursor.calls[3][0]
+    assert "status='pending'" in cursor.calls[4][0]

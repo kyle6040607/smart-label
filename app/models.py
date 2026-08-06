@@ -69,7 +69,8 @@ class AnnotationTask:
     # 最後一次成功發送 LINE 通知的版本；負值表示已通知「無 ZIP」。
     notified_dataset_version: int = 0
 
-    # pending / retry_wait / processing / completed / failed
+    # uploading / upload_ready / pending / retry_wait / processing /
+    # completed / failed / deleting
     status: str = "pending"
 
     # Worker lease / retry。claim_token 是 fencing token，避免逾時 Worker

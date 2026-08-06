@@ -12,29 +12,61 @@
         type="image/png"
         href="{{ url_for('static', filename='favicon.png') }}"
     >
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&text=Seer&display=swap"
+        rel="stylesheet"
+    >
     <link
         rel="stylesheet"
-        href="{{ url_for('static', filename='css/liff.css') }}?v=2"
+        href="{{ url_for('static', filename='css/liff.css') }}?v=8"
     >
 </head>
 
 <body>
     <main class="container">
+        <header class="app-header">
+            <a class="app-brand" href="{{ url_for('liff.upload_page') }}">
+                <img
+                    class="brand-mark"
+                    src="{{ url_for('static', filename='favicon.png') }}"
+                    alt=""
+                    aria-hidden="true"
+                >
+                <span class="brand-copy">
+                    <span class="brand-name">Seer</span>
+                    <span class="brand-subtitle">智慧影像標註</span>
+                </span>
+            </a>
+            <a class="header-link" href="{{ url_for('liff.upload_page') }}">
+                建立任務
+            </a>
+        </header>
+
         <section class="card">
-            <h1>我的標註任務</h1>
+            <div class="task-overview">
+                <div class="page-heading">
+                    <span class="eyebrow">任務中心</span>
+                    <h1>我的標註任務</h1>
+                    <p class="page-description">
+                        查看處理進度、下載標註結果或追加新的圖片。
+                    </p>
+                </div>
+
+                <button
+                    id="refresh-button"
+                    class="submit-button button-secondary"
+                    type="button"
+                    hidden
+                >
+                    重新整理
+                </button>
+            </div>
 
             <div id="status" class="status">
                 登入中......
             </div>
-
-            <button
-                id="refresh-button"
-                class="submit-button"
-                type="button"
-                hidden
-            >
-                重新整理
-            </button>
         </section>
 
         <section
@@ -42,7 +74,9 @@
             class="card task-section"
             hidden
         >
-            <h2>進行中的任務</h2>
+            <div class="task-section-heading">
+                <h2>進行中的任務</h2>
+            </div>
             <div id="active-tasks"></div>
         </section>
 
@@ -51,7 +85,9 @@
             class="card task-section"
             hidden
         >
-            <h2>歷史紀錄</h2>
+            <div class="task-section-heading">
+                <h2>歷史紀錄</h2>
+            </div>
             <div id="history-tasks"></div>
         </section>
 
@@ -60,7 +96,14 @@
             class="card task-section"
             hidden
         >
-            <p>目前還沒有標註任務。</p>
+            <div class="empty-state">
+                <div class="empty-state-icon" aria-hidden="true">＋</div>
+                <h2>還沒有標註任務</h2>
+                <p>上傳圖片後，任務進度會顯示在這裡。</p>
+                <a class="submit-button" href="{{ url_for('liff.upload_page') }}">
+                    建立第一個任務
+                </a>
+            </div>
         </section>
     </main>
 
@@ -98,6 +141,14 @@
                 >
                     查看未通過圖片
                 </button>
+
+                <button
+                    class="submit-button task-delete"
+                    type="button"
+                    hidden
+                >
+                    刪除任務
+                </button>
             </div>
 
             <div class="task-excluded-panel" hidden>
@@ -124,7 +175,7 @@
         src="https://static.line-scdn.net/liff/edge/2/sdk.js"
     ></script>
     <script
-        src="{{ url_for('static', filename='js/liff_tasks.js') }}?v=3"
+        src="{{ url_for('static', filename='js/liff_tasks.js') }}?v=7"
     ></script>
 </body>
 </html>

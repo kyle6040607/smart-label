@@ -3,7 +3,7 @@ import pytest
 from PIL import Image
 from app import create_app
 from app.config import Config
-from app.models import ImageRecord, Project
+from app.models import AnnotationTask, ImageRecord, Project
 
 
 @pytest.fixture
@@ -141,6 +141,56 @@ def test_rename_and_delete_project(client):
     assert res_get.status_code == 404
 
 
+def test_delete_liff_project_also_removes_line_task_and_artifacts(client):
+    from flask import current_app
+
+    created = client.post("/api/projects", json={"name": "LINE 任務專案"})
+    project_id = created.get_json()["id"]
+    repo = current_app.repo
+    storage = current_app.storage
+    image_path = storage.save_bytes(
+        f"liff-uploads/{project_id}/image.png",
+        b"image",
+    )
+    dataset_path = storage.save_bytes(
+        f"datasets/{project_id}/attempts/a1/dataset.zip",
+        b"dataset",
+    )
+    preview_path = storage.save_bytes(
+        f"previews/tasks/{project_id}/attempts/a1/preview.jpg",
+        b"preview",
+    )
+    repo.add_image(
+        ImageRecord(
+            id="line-project-image",
+            project_id=project_id,
+            path=image_path,
+        )
+    )
+    repo.add_task(
+        AnnotationTask(
+            id=project_id,
+            user_id=repo.get_project(project_id).owner_id,
+            project_id=project_id,
+            line_user_id="U-project-delete",
+            image_ids=["line-project-image"],
+            status="completed",
+            dataset_zip_path=dataset_path,
+            excluded_results=[{"preview_path": preview_path}],
+        )
+    )
+
+    response = client.delete(f"/api/projects/{project_id}")
+
+    assert response.status_code == 200
+    assert repo.get_project(project_id) is None
+    assert repo.get_task(project_id) is None
+    assert repo.get_image("line-project-image") is None
+    assert not storage.exists(image_path)
+    assert not storage.exists(dataset_path)
+    assert not storage.exists(preview_path)
+
+
 def test_duplicate_project_name_prevention(client):
     # 1. 建立第一個專案 "Project One"
     res1 = client.post("/api/projects", json={"name": "Project One"})
@@ -169,4 +219,3 @@ def test_duplicate_project_name_prevention(client):
     res_rename_ok = client.put(f"/api/projects/{proj_two_id}", json={"name": "Project Two Updated"})
     assert res_rename_ok.status_code == 200
     assert res_rename_ok.get_json()["name"] == "Project Two Updated"
-

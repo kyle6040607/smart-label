@@ -5,19 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>建立標註任務</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=2">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600&text=Seer&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/liff.css') }}?v=8">
 </head>
 
 <body>
     
     <main class="container">
-        
+        <header class="app-header">
+            <a class="app-brand" href="{{ url_for('liff.upload_page') }}">
+                <img
+                    class="brand-mark"
+                    src="{{ url_for('static', filename='favicon.png') }}"
+                    alt=""
+                    aria-hidden="true"
+                >
+                <span class="brand-copy">
+                    <span class="brand-name">Seer</span>
+                    <span class="brand-subtitle">智慧影像標註</span>
+                </span>
+            </a>
+            <a class="header-link" href="{{ url_for('liff.tasks_page') }}">
+                任務紀錄
+            </a>
+        </header>
+
         <section class="card">
-            <h1>建立標註任務</h1>
+            <div class="page-heading">
+                <span class="eyebrow">建立任務</span>
+                <h1 id="page-title">開始自動標註</h1>
+                <p class="page-description">
+                    上傳圖片並描述要辨識的物件，系統會在背景完成標註。
+                </p>
+            </div>
 
             <!-- <p>正在確認 LINE 使用者資訊</p> -->
 
-            <div id="profile" style="display:none; margin-top: 20px;">
+            <div id="profile" style="display:none;">
                 <img
                 id="profile-image"
                 alt="LINE 使用者頭像"
@@ -30,13 +56,14 @@
             <div id="status" class="status">
                 登入中......
             </div>
-            <form id="task-form" style="display: none; margin-top: 24px;">
-                <h2>選擇圖片</h2>
-                <p>
-                    支援JPG、JPEG、PNG，可以一次選擇多張圖片。
-                </p>
+            <form id="task-form" style="display: none; margin-top: 22px;">
+                <div class="section-heading">
+                    <h2>選擇圖片</h2>
+                    <p>支援 JPG、JPEG、PNG，可一次選擇多張圖片。</p>
+                </div>
                    <label for="image-input" class="upload-button">
-                        選擇圖片
+                        <span class="upload-button-title">選擇要標註的圖片</span>
+                        <span class="upload-button-help">點一下開啟圖片選擇器</span>
                    </label> 
                    <input 
                         id="image-input"
@@ -48,7 +75,45 @@
                    <p id="image-count">
                         尚未選擇圖片
                    </p>
-                   <div class="form-group">
+                   <button
+                        id="upload-button"
+                        type="button"
+                        class="submit-button button-secondary"
+                        disabled
+                   >
+                        開始上傳
+                   </button>
+                   <section id="upload-progress-container" hidden>
+                        <progress
+                            id="upload-progress"
+                            value="0"
+                            max="100"
+                        ></progress>
+                        <p id="upload-progress-text">
+                            準備上傳
+                        </p>
+                   </section>
+
+                   <section
+                        id="uploaded-images-section"
+                        class="uploaded-images-section"
+                        aria-labelledby="uploaded-images-title"
+                        hidden
+                   >
+                        <div class="uploaded-images-heading">
+                            <div>
+                                <span class="eyebrow">上傳確認</span>
+                                <h2 id="uploaded-images-title">已上傳圖片</h2>
+                            </div>
+                            <span id="uploaded-images-count" class="uploaded-images-count"></span>
+                        </div>
+                        <p class="uploaded-images-help">
+                            請確認圖片內容；不需要的圖片可按右上角 × 移除。
+                        </p>
+                        <div id="uploaded-images-list" class="uploaded-images-list"></div>
+                   </section>
+
+                   <div id="prompt-group" class="form-group">
                         <label for="prompt">
                             想要標註的物件
                         </label>
@@ -57,7 +122,7 @@
                             name="prompt"
                             rows="4"
                             maxlength="200"
-                            placeholder="例如: 請標註圖片中的貓咪"
+                            placeholder="例如：請標註圖片中的貓咪"
                         ></textarea>
                         <p id="prompt-count">
                             0 / 200
@@ -67,21 +132,61 @@
                         id="submit-button"
                         type="submit"
                         class="submit-button"
+                        disabled
                     >
                         建立標註任務
                     </button>
-            </form>    
+            </form>
         </section>
     </main>
     <div
+        id="upload-success-modal"
+        class="success-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-success-title"
+        hidden
+    >
+        <div class="success-modal-card">
+            <div class="success-modal-icon" aria-hidden="true">✓</div>
+            <h2 id="upload-success-title">圖片上傳成功</h2>
+            <p id="upload-success-message"></p>
+            <p>
+                標註任務會在背景繼續執行，您可以查看任務紀錄或安全離開。
+            </p>
+            <div class="success-modal-actions">
+                <button
+                    id="upload-success-view-list"
+                    type="button"
+                    class="submit-button button-secondary"
+                >
+                    查看任務紀錄
+                </button>
+                <button
+                    id="upload-success-close"
+                    type="button"
+                    class="submit-button"
+                >
+                    離開頁面
+                </button>
+            </div>
+            <p id="upload-success-close-help" class="close-help" hidden>
+                瀏覽器未允許自動關閉，請手動關閉此分頁。
+            </p>
+        </div>
+    </div>
+    <div
     id="liff-data"
     data-liff-id="{{ liff_id }}"
+    data-upload-batch-max-images="{{ upload_batch_max_images }}"
+    data-upload-batch-max-bytes="{{ upload_batch_max_bytes }}"
+    data-upload-max-total-bytes="{{ upload_max_total_bytes }}"
     hidden>
     </div>
     <!-- LINE 官方 LIFF SDK -->
     <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <!-- 再載入自己的 JavaScript -->
-    <script src="{{ url_for('static', filename='js/liff.js') }}?v=6"></script>
+    <script src="{{ url_for('static', filename='js/liff.js') }}?v=13"></script>
     
 </body>
 </html>
