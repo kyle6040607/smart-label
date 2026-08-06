@@ -243,7 +243,7 @@ class Config:
         default_factory=lambda: ("png", "jpg", "jpeg", "bmp", "webp", "tiff", "tif", "avif", "heic")
     )
     allowed_archive_ext: tuple[str, ...] = field(
-        default_factory=lambda: ("zip", "7z", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz")
+        default_factory=lambda: ("zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz")
     )
 
     def ensure_dirs(self) -> None:

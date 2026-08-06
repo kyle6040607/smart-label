@@ -156,4 +156,11 @@ def create_app(
         response.headers["Retry-After"] = "5"
         return response
 
+    @app.errorhandler(413)
+    def request_entity_too_large(error):
+        return jsonify({
+            "error": "request_entity_too_large",
+            "message": "上傳檔案過大，已超過伺服器單次請求容量限制 (MAX_CONTENT_LENGTH)",
+        }), 413
+
     return app

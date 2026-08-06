@@ -854,7 +854,6 @@ function initDropZone() {
         state.currentXhr = null;
       }
       await loadThumbs();
-      expandGallery();
     };
   }
 
@@ -918,6 +917,7 @@ $("uploadBtn").onclick = async (e) => {
   }
   state.isUploading = true;
   state.isAborted = false;
+  collapseGallery();
 
   const BATCH_SIZE_LIMIT = 50 * 1024 * 1024; // 50 MB
   const BATCH_COUNT_LIMIT = 50;
@@ -973,9 +973,10 @@ $("uploadBtn").onclick = async (e) => {
               if (fileCountHint) {
                 fileCountHint.textContent = `正在解壓與處理照片… ${data.current.toLocaleString()} / ${data.total.toLocaleString()} 張 (${pct}%)`;
               }
-              if (data.latest_image) {
+              if (data.latest_images && Array.isArray(data.latest_images)) {
+                appendThumbs(data.latest_images);
+              } else if (data.latest_image) {
                 appendThumbs([data.latest_image]);
-                expandGallery();
               }
             }
           } catch (err) { }
@@ -1012,7 +1013,6 @@ $("uploadBtn").onclick = async (e) => {
 
             if (Array.isArray(createdImages) && createdImages.length > 0) {
               appendThumbs(createdImages);
-              expandGallery();
             }
             resolve({ created: createdImages, duplicates: duplicateFiles });
           } catch (err) {
@@ -1112,6 +1112,7 @@ $("uploadBtn").onclick = async (e) => {
     state.stagedFiles = [];
     state.isUploading = false;
     state.currentXhr = null;
+    updateImgFilterOptions();
     uploadBtn.disabled = false;
     if (cancelUploadBtn) {
       cancelUploadBtn.style.display = "none";
@@ -1119,7 +1120,6 @@ $("uploadBtn").onclick = async (e) => {
     }
     if (state.isAborted) {
       await loadThumbs();
-      expandGallery();
       setTimeout(() => {
         if (!state.isUploading) updateFileCountHint();
       }, 3000);
@@ -1323,6 +1323,14 @@ function updateGalleryToggleUI(isExpanded) {
   if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${countStr})` : `折疊照片庫 (${countStr})`;
 }
 
+function collapseGallery() {
+  const wrapper = $("thumbsWrapper");
+  if (wrapper && !wrapper.classList.contains("collapsed")) {
+    wrapper.classList.add("collapsed");
+  }
+  updateGalleryToggleUI(false);
+}
+
 function expandGallery() {
   const wrapper = $("thumbsWrapper");
   if (wrapper && wrapper.classList.contains("collapsed")) {
@@ -1363,23 +1371,33 @@ function appendThumbs(newImages) {
   newImages.forEach((im) => {
     if (!state.allImages.some((item) => item.id === im.id)) {
       state.allImages.unshift(im);
-      state.renderedImageCount += 1;
     }
   });
 
-  updateImgFilterOptions();
+  if (!state.isUploading) {
+    updateImgFilterOptions();
+  }
 
   const box = $("thumbs");
   if (!box) return;
 
-  const fragment = document.createDocumentFragment();
-  newImages.forEach((im) => {
-    if (box.querySelector(`.thumb-chk[data-id="${im.id}"]`)) return;
-    const wrap = createThumbElement(im);
-    fragment.appendChild(wrap);
-  });
+  // 限制 DOM 中只保留分頁上限的縮圖節點 (GALLERY_PAGE_SIZE)，
+  // 避免大批次上傳 (如 1,500 張) 時將所有圖片標籤一次塞滿 DOM 破壞 Lazy Loading 與引發大量 HTTP 請求。
+  const currentCards = box.querySelectorAll(".thumb-card");
+  const maxAllowedNewDOM = Math.max(0, GALLERY_PAGE_SIZE - currentCards.length);
 
-  box.insertBefore(fragment, box.firstChild);
+  if (maxAllowedNewDOM > 0) {
+    const toRender = newImages.slice(0, maxAllowedNewDOM);
+    const fragment = document.createDocumentFragment();
+    toRender.forEach((im) => {
+      if (box.querySelector(`.thumb-chk[data-id="${im.id}"]`)) return;
+      const wrap = createThumbElement(im);
+      fragment.appendChild(wrap);
+    });
+    box.insertBefore(fragment, box.firstChild);
+  }
+
+  state.renderedImageCount = box.querySelectorAll(".thumb-card").length;
 
   if (!state.imgBatchMode) {
     const selectAll = $("selectAllImgs");

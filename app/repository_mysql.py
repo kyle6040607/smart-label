@@ -771,7 +771,6 @@ class MySQLRepository:
 
         return default_proj
 
-    # ---------- 影像 ----------
     def add_image(self, img: ImageRecord) -> ImageRecord:
         with self._tx() as cur:
             cur.execute(
@@ -784,6 +783,24 @@ class MySQLRepository:
                 ),
             )
         return img
+
+    def add_images(self, images: list[ImageRecord]) -> list[ImageRecord]:
+        if not images:
+            return []
+        with self._tx() as cur:
+            cur.executemany(
+                "INSERT INTO images "
+                "(id, owner_id, project_id, filename, path, width, height, file_hash, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                [
+                    (
+                        img.id, img.owner_id, img.project_id, img.filename, img.path,
+                        img.width, img.height, img.file_hash, img.created_at,
+                    )
+                    for img in images
+                ],
+            )
+        return images
 
     def set_image_hash(self, image_id: str, file_hash: str) -> None:
         """補寫舊資料缺少的 file_hash；只在欄位仍為空時寫入。"""

@@ -160,6 +160,15 @@ class Repository:
             self._save()
         return img
 
+    def add_images(self, images: list[ImageRecord]) -> list[ImageRecord]:
+        if not images:
+            return []
+        with self._lock:
+            for img in images:
+                self.images[img.id] = img
+            self._save()
+        return images
+
     def set_image_hash(self, image_id: str, file_hash: str) -> None:
         """補寫舊資料缺少的 file_hash；只在欄位仍為空時寫入。"""
         with self._lock:
