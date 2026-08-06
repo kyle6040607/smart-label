@@ -189,6 +189,7 @@ def train_yolov26x_seg(
     task: AnnotationTask,
     *,
     epochs: int = 5,
+    patience: int = 100,
     imgsz: int = 640,
     device: str = "auto",
     base_model_path: str = "models/yolo26x-seg.pt",
@@ -263,6 +264,7 @@ def train_yolov26x_seg(
         results = model.train(
             data=str(yaml_path),
             epochs=epochs,
+            patience=patience,
             imgsz=imgsz,
             device=target_device,
             amp=(target_device != "cpu"),
