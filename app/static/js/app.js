@@ -20,7 +20,7 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 // 圖片載入器：限制同時下載數，並針對 Cloud Run 暫時性錯誤退避重試。
-const IMAGE_FETCH_CONCURRENCY = 4;
+const IMAGE_FETCH_CONCURRENCY = 12;
 const IMAGE_MAX_RETRIES = 3;
 const RETRYABLE_IMAGE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const imageFetchQueue = [];
@@ -947,13 +947,19 @@ $("uploadBtn").onclick = async (e) => {
           const currentBatchUploaded = e.loaded;
           const totalProgressBytes = uploadedBytes + currentBatchUploaded;
           const pct = Math.min(100, Math.round((totalProgressBytes / totalBytes) * 100));
-          const mbUploaded = (totalProgressBytes / (1024 * 1024)).toFixed(1);
-          const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
 
-          if (e.loaded >= e.total) {
-            fileCountHint.textContent = `檔案傳送完成 (100%) · 伺服器準備解壓照片…`;
+          if (totalFiles === 1) {
+            const mbUploaded = (totalProgressBytes / (1024 * 1024)).toFixed(1);
+            const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
+            if (e.loaded >= e.total) {
+              fileCountHint.textContent = `檔案傳送完成 (100%) · 伺服器準備解壓照片…`;
+            } else {
+              fileCountHint.textContent = `正在傳送檔案… ${pct}% (${mbUploaded} / ${mbTotal} MB)`;
+            }
           } else {
-            fileCountHint.textContent = `正在傳送檔案… ${pct}% (${mbUploaded} / ${mbTotal} MB)`;
+            const batchEstimated = Math.round((e.loaded / e.total) * batch.length);
+            const currentEstimated = Math.min(totalFiles, uploadedCount + batchEstimated);
+            fileCountHint.textContent = `正在處理照片… ${currentEstimated.toLocaleString()} / ${totalFiles.toLocaleString()} 張 (${pct}%)`;
           }
         }
       };
@@ -967,11 +973,19 @@ $("uploadBtn").onclick = async (e) => {
           try {
             const data = JSON.parse(line.trim());
             if (data.event === "progress") {
-              state.lastProcessedCount = data.created_count || data.current;
-              state.lastTotalCount = data.total;
-              const pct = Math.round((data.current / data.total) * 100);
+              const isSingleZip = totalFiles === 1 && data.total > 1;
+              const globalTotal = isSingleZip ? data.total : totalFiles;
+              const globalCurrent = isSingleZip ? data.current : Math.min(totalFiles, uploadedCount + data.current);
+              const pct = Math.min(100, Math.round((globalCurrent / globalTotal) * 100));
+
+              state.lastProcessedCount = isSingleZip
+                ? (data.created_count || data.current)
+                : Math.min(totalFiles, uploadedCount + (data.created_count || data.current));
+              state.lastTotalCount = globalTotal;
+
               if (fileCountHint) {
-                fileCountHint.textContent = `正在解壓與處理照片… ${data.current.toLocaleString()} / ${data.total.toLocaleString()} 張 (${pct}%)`;
+                const actionText = isSingleZip ? "正在解壓與處理照片…" : "正在處理照片…";
+                fileCountHint.textContent = `${actionText} ${globalCurrent.toLocaleString()} / ${globalTotal.toLocaleString()} 張 (${pct}%)`;
               }
               if (data.latest_images && Array.isArray(data.latest_images)) {
                 appendThumbs(data.latest_images);
@@ -1148,7 +1162,6 @@ async function loadThumbnailElement(el, im, { force = false } = {}) {
     });
     el.dataset.loadState = "loaded";
     el.alt = im.filename;
-    releaseObjectUrl(`thumb:${im.id}`);
   } catch (error) {
     if (el.dataset.imageId !== im.id) return;
     releaseObjectUrl(`thumb:${im.id}`);

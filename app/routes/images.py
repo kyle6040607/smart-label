@@ -430,8 +430,9 @@ def image_file(image_id: str):
         abort(404)
     return send_file(
         io.BytesIO(data),
-        mimetype=mimetypes.guess_type(rec.filename)[0],
+        mimetype=mimetypes.guess_type(rec.filename)[0] or "image/png",
         download_name=rec.filename,
+        max_age=86400,
     )
 
 
