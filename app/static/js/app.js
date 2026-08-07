@@ -2239,7 +2239,7 @@ async function refreshSidebar() {
       if (state.currentImage && s.image_id === state.currentImage.id) redraw(state.lastSegments);
     };
     const inputEl = li.querySelector("input[data-seg]");
-    const submitReview = async () => {
+    const submitReview = () => {
       let label = inputEl.value.trim();
       if (!label && pred) {
         label = pred; // 輸入框留白時，直接採納 AI 預測標籤！
@@ -2249,56 +2249,39 @@ async function refreshSidebar() {
         return;
       }
 
-      // 樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
-      li.style.opacity = "0.3";
-      li.style.pointerEvents = "none";
+      // 0 毫秒極速滑出動畫並從 DOM 移除
+      animateAndRemoveQueueItem(li);
+      showToast(`已標記：「${label}」`, "info", 1200);
 
-      try {
-        const res = await fetch(`/api/segments/${s.id}/review`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label }),
-        });
-        if (!res.ok) throw new Error("審核失敗");
-        pushUndoAction({
-          type: "REVIEW_SEGMENT",
-          segId: s.id,
-          prevLabel: s.final_label || "",
-          predictedLabel: s.predicted_label || "",
-          newLabel: label,
-          imageId: s.image_id
-        });
-        await refreshAfterSegChange();
-        showToast(`標籤審核完成：「${label}」`, "success");
-      } catch (err) {
-        console.error(err);
-        li.style.opacity = "1";
-        li.style.pointerEvents = "auto";
-        showToast("審核失敗，請重試", "error");
-      }
+      // 將審核推入背景佇列消化
+      pendingReviewTasks.push({
+        type: "review",
+        segId: s.id,
+        imageId: s.image_id,
+        prevLabel: s.final_label || "",
+        predictedLabel: s.predicted_label || "",
+        label: label
+      });
+      processPendingReviewQueue();
     };
+
     li.querySelector(".confirm").onclick = submitReview;
-    inputEl.onkeydown = async (e) => {
+    inputEl.onkeydown = (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        await submitReview();
+        submitReview();
       }
     };
-    li.querySelector(".seg-del").onclick = async () => {
-      try {
-        const res = await fetch(`/api/segments/${s.id}`, { method: "DELETE" });
-        if (!res.ok) {
-          return showToast("刪除失敗：" + (await res.text()), "error");
-        }
-        releaseSegmentResources(s.id);
-        state.autoSegCompleted = false;
-        updateAutoSegBtn();
-        await refreshAfterSegChange();
-        showToast("已刪除遮罩片段", "info");
-      } catch (error) {
-        console.error(error);
-        showToast("刪除時發生錯誤", "error");
-      }
+
+    li.querySelector(".seg-del").onclick = () => {
+      animateAndRemoveQueueItem(li);
+      showToast("已刪除遮罩片段", "info", 1200);
+
+      pendingReviewTasks.push({
+        type: "delete",
+        segId: s.id
+      });
+      processPendingReviewQueue();
     };
     ul.appendChild(li);
   });
@@ -2308,6 +2291,80 @@ async function refreshSidebar() {
     $("selectAllSegs").checked = false;
     updateSegBatchBtnState();
   }
+}
+
+// ---------- 審核佇列背景非同步佇列與防抖同步 (Async Review Queue & Debounced Sync) ----------
+const pendingReviewTasks = [];
+let isProcessingReviewQueue = false;
+let reviewSyncTimer = null;
+
+function triggerDebouncedQueueSync() {
+  if (reviewSyncTimer) clearTimeout(reviewSyncTimer);
+  // 在使用者停止連續審核/刪除 600ms 後，靜默背景同步統計數據與可能自動過審的佇列
+  reviewSyncTimer = setTimeout(async () => {
+    try {
+      await refreshSidebar();
+    } catch (e) {}
+  }, 600);
+}
+
+async function processPendingReviewQueue() {
+  if (isProcessingReviewQueue || pendingReviewTasks.length === 0) return;
+  isProcessingReviewQueue = true;
+
+  while (pendingReviewTasks.length > 0) {
+    const task = pendingReviewTasks.shift();
+    try {
+      if (task.type === "review") {
+        const res = await fetch(`/api/segments/${task.segId}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: task.label }),
+        });
+        if (res.ok) {
+          pushUndoAction({
+            type: "REVIEW_SEGMENT",
+            segId: task.segId,
+            prevLabel: task.prevLabel || "",
+            predictedLabel: task.predictedLabel || "",
+            newLabel: task.label,
+            imageId: task.imageId
+          });
+        } else {
+          showToast(`「${task.label}」審核失敗`, "error");
+        }
+      } else if (task.type === "delete") {
+        const res = await fetch(`/api/segments/${task.segId}`, { method: "DELETE" });
+        if (res.ok) {
+          releaseSegmentResources(task.segId);
+          state.autoSegCompleted = false;
+          updateAutoSegBtn();
+        } else {
+          showToast("刪除遮罩失敗", "error");
+        }
+      }
+    } catch (err) {
+      console.error("背景審核任務失敗:", err);
+    }
+  }
+
+  isProcessingReviewQueue = false;
+  triggerDebouncedQueueSync();
+}
+
+function animateAndRemoveQueueItem(liElement, callback) {
+  if (!liElement) return;
+  liElement.classList.add("queue-item-slide-out");
+  setTimeout(() => {
+    if (liElement.parentNode) {
+      liElement.parentNode.removeChild(liElement);
+    }
+    const ul = $("reviewQueue");
+    if (ul && ul.children.length === 0) {
+      ul.innerHTML = "<li class='hint' style='padding: 12px; text-align: center; color: var(--muted);'>🎉 無待審核片段（全數過審完成）</li>";
+    }
+    if (callback) callback();
+  }, 250);
 }
 
 // ---------- 匯出資料集（專案的最終產出：圖 + 遮罩 + 標籤）----------
@@ -3839,6 +3896,7 @@ if (trainBtn) {
       alert("🎉 訓練任務已成功發起！正在背景執行訓練...");
       const stopBtn = $("stopTrainingBtn");
       if (stopBtn) stopBtn.style.display = "inline-block";
+      if (typeof wakeTaskDockPolling === "function") wakeTaskDockPolling();
       checkTrainingStatus(state.currentProjectId);
     } catch (err) {
       console.error("觸發訓練失敗:", err);
@@ -3946,11 +4004,29 @@ function updateTaskDockBadge(runningCount) {
 function setPollInterval(ms) {
   if (currentPollMs === ms && taskDockPollTimer) return;
   currentPollMs = ms;
-  if (taskDockPollTimer) clearInterval(taskDockPollTimer);
+  stopPollInterval();
   taskDockPollTimer = setInterval(pollGlobalTasks, ms);
 }
 
+function stopPollInterval() {
+  if (taskDockPollTimer) {
+    clearInterval(taskDockPollTimer);
+    taskDockPollTimer = null;
+  }
+}
+
+function wakeTaskDockPolling() {
+  if (document.hidden) return;
+  pollGlobalTasks();
+  setPollInterval(2500);
+}
+
 async function pollGlobalTasks() {
+  if (document.hidden) {
+    stopPollInterval();
+    return;
+  }
+
   try {
     const res = await fetch("/api/segments/tasks");
     if (!res.ok) return;
@@ -4010,7 +4086,7 @@ async function pollGlobalTasks() {
                 const cancelRes = await fetch(`/api/segments/tasks/${task.id}/cancel`, { method: "POST" });
                 if (cancelRes.ok) {
                   showToast("已發送取消任務訊號", "info");
-                  pollGlobalTasks();
+                  wakeTaskDockPolling();
                 }
               } catch (err) { }
             }
@@ -4031,16 +4107,24 @@ async function pollGlobalTasks() {
         loadThumbs();
       }
       dock.style.display = "none";
-      // 無任務進行時，降頻為 8 秒輪詢，減少 HTTP 請求與伺服器日誌
-      setPollInterval(8000);
+      // 完全無任務時，徹底停止定時器進入休眠 (Sleep)，伺服器 0 廢請求與廢日誌！
+      stopPollInterval();
     }
   } catch (err) { }
 }
 
 function startTaskDockPolling() {
   initTaskDockUI();
+  // 綁定 Page Visibility API：切換分頁時暫停輪詢，切回時自動檢查與喚醒
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopPollInterval();
+    } else {
+      wakeTaskDockPolling();
+    }
+  });
+  // 初次加載時只查詢一次，無任務則進入休眠
   pollGlobalTasks();
-  setPollInterval(2500);
 }
 
 // ---------- 一鍵採納高信心遮罩與 Modal 進度條 ----------
