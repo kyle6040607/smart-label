@@ -280,6 +280,7 @@ button.on {
   max-height: 380px;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px;
@@ -293,6 +294,7 @@ button.on {
   max-height: 420px;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px;
@@ -312,28 +314,33 @@ button.on {
   overflow: hidden;
 }
 
-/* 4x4 / 5x4 網格排版 */
+/* 4x4 網格排版 (固定比例與尺寸，避免切換批次模式時縮圖大小跳動) */
 .thumbs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-top: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .thumb {
   position: relative;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .thumb img {
   width: 100%;
+  height: auto;
   aspect-ratio: 1 / 1;
   object-fit: cover;
   border-radius: 6px;
   cursor: pointer;
   border: 2px solid transparent;
   display: block;
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 .thumb img:hover { transform: scale(1.03); }
 .thumb img.active { border-color: var(--accent); box-shadow: 0 0 8px var(--accent); }
@@ -666,22 +673,34 @@ canvas {
   background: rgb(79 156 255 / 10%);
 }
 
-/* 批次管理控制條 (置頂浮動) */
+/* 批次管理控制條 (置頂浮動，z-index 高於縮圖勾選框) */
 .batch-control-bar {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 100;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: var(--panel-sub);
-  backdrop-filter: blur(8px);
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 34px;
+  box-sizing: border-box;
+  background: rgba(26, 34, 48, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 10px;
   margin-top: 0;
   margin-bottom: 8px;
   box-shadow: 0 2px 6px var(--shadow);
+}
+
+[data-theme="light"] .batch-control-bar {
+  background: rgba(243, 239, 230, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-color: rgba(228, 222, 203, 0.9);
 }
 
 /* 批次管理危險按鈕 */
@@ -699,13 +718,13 @@ button.btn-danger:disabled {
   cursor: not-allowed;
 }
 
-/* 縮圖勾選框 */
+/* 縮圖勾選框 (z-index 降為 5，低於置頂控制條 z-index: 100) */
 .thumb-chk {
   display: none;
   position: absolute;
   top: 4px;
   left: 4px;
-  z-index: 10;
+  z-index: 5;
   width: 18px;
   height: 18px;
   cursor: pointer;
@@ -1944,7 +1963,9 @@ kbd {
 }
 
 .global-task-dock-body {
-  padding: 12px 14px;
+  padding: 8px 14px;
+  max-height: 280px;
+  overflow-y: auto;
 }
 
 .global-task-dock.collapsed .global-task-dock-body {

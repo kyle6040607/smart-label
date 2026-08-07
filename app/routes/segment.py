@@ -253,9 +253,8 @@ batch_task_manager = BatchTaskManager()
 
 @bp.get("/segments/tasks")
 def list_batch_tasks():
-    from app.routes import get_current_project_id
-    project_id = request.args.get("project_id") or get_current_project_id()
-    tasks = batch_task_manager.list_tasks(project_id=project_id)
+    project_id = request.args.get("project_id")
+    tasks = batch_task_manager.list_tasks(project_id=project_id if project_id else None)
     return jsonify({"tasks": tasks})
 
 
@@ -292,9 +291,9 @@ def batch_segment_text():
     if not prompt:
         return jsonify({"error": "請提供 prompt"}), 400
 
-    # 🔒 嚴格存取控制 (Access Control Check)：只處理當前使用者有權限存取的圖片
+    # 🔒 嚴格存取控制 (Access Control Check)：只處理當前專案與使用者有權限存取的圖片
     if not image_ids:
-        owned_images = [img for img in repo.list_images() if can_access_image(img)]
+        owned_images = [img for img in repo.list_images(project_id=current_project_id) if can_access_image(img)]
     else:
         owned_images = []
         for img_id in image_ids:
@@ -409,9 +408,14 @@ def batch_segment_text():
 
 
 @bp.post("/segments/batch_confirm_high_confidence")
-def batch_confirm_high_confidence():
-    """一鍵採納大於等於指定信心門檻的待審核遮罩。
-    body: {"confidence_threshold": float (optional)}
+@bp.post("/segments/batch_action_by_threshold")
+def batch_action_by_threshold():
+    """依指定門檻與條件運算子 (>= 或 <=) 批次採納或刪除待審核遮罩。
+    body: {
+        "confidence_threshold": float,
+        "operator": ">=" | "<=" | "gte" | "lte",
+        "action": "confirm" | "delete"
+    }
     """
     repo, pipeline = get_repo(), get_pipeline()
     from app.routes import get_current_project_id
@@ -427,42 +431,68 @@ def batch_confirm_high_confidence():
     else:
         threshold = float(pipeline.config.confidence_threshold)
 
+    operator = str(data.get("operator", ">=")).lower()
+    if operator in ("lte", "<="):
+        is_match = lambda c: c <= threshold
+        op_str = "<="
+    else:
+        is_match = lambda c: c >= threshold
+        op_str = ">="
+
+    action = str(data.get("action", "confirm")).lower()
+
     images = [img for img in repo.list_images(project_id=current_project_id) if can_access_image(img)]
 
     q = queue.Queue()
 
-    def run_confirm():
+    def run_batch_action():
         all_target_segs = []
         for img in images:
             segs = repo.list_segments(img.id)
             for seg in segs:
                 if getattr(seg, "needs_review", False) or not getattr(seg, "reviewed", False):
                     conf = getattr(seg, "confidence", 0.0) or getattr(seg, "detection_confidence", 0.0)
-                    if conf >= threshold and (seg.predicted_label or seg.final_label):
-                        all_target_segs.append(seg)
+                    if is_match(conf):
+                        if action == "delete" or (seg.predicted_label or seg.final_label):
+                            all_target_segs.append(seg)
 
         total = len(all_target_segs)
-        q.put({"event": "start", "total": total, "threshold": threshold})
+        q.put({"event": "start", "total": total, "threshold": threshold, "operator": op_str, "action": action})
 
-        confirmed_cnt = 0
-        for idx, seg in enumerate(all_target_segs, start=1):
-            target_label = seg.predicted_label or seg.final_label
-            if target_label:
-                try:
-                    pipeline.add_example_from_segment(seg, target_label)
-                    confirmed_cnt += 1
-                except Exception as e:
-                    print(f"⚠️ 採納片段 {seg.id} 時發生錯誤: {e}", flush=True)
-
-            if idx % 5 == 0 or idx == total:
+        processed_cnt = 0
+        if action == "delete":
+            target_ids = [s.id for s in all_target_segs]
+            for idx in range(0, total, 10):
+                batch_ids = target_ids[idx:idx+10]
+                deleted_paths = repo.delete_segments_batch(batch_ids)
+                for path in deleted_paths:
+                    get_storage().delete(path)
+                processed_cnt += len(batch_ids)
                 q.put({
                     "event": "progress",
-                    "current": idx,
+                    "current": min(idx + 10, total),
                     "total": total,
-                    "confirmed_count": confirmed_cnt,
+                    "confirmed_count": processed_cnt,
                 })
+        else:
+            for idx, seg in enumerate(all_target_segs, start=1):
+                target_label = seg.predicted_label or seg.final_label
+                if target_label:
+                    try:
+                        pipeline.add_example_from_segment(seg, target_label)
+                        processed_cnt += 1
+                    except Exception as e:
+                        print(f"⚠️ 採納片段 {seg.id} 時發生錯誤: {e}", flush=True)
 
-        if confirmed_cnt > 0 and images:
+                if idx % 5 == 0 or idx == total:
+                    q.put({
+                        "event": "progress",
+                        "current": idx,
+                        "total": total,
+                        "confirmed_count": processed_cnt,
+                    })
+
+        if processed_cnt > 0 and images:
             first_img = images[0]
             try:
                 pipeline.refit(first_img.owner_id, first_img.project_id)
@@ -470,9 +500,9 @@ def batch_confirm_high_confidence():
             except Exception as e:
                 print(f"⚠️ 重新訓練/分類失敗: {e}", flush=True)
 
-        q.put({"event": "done", "total": total, "confirmed_count": confirmed_cnt, "threshold": threshold})
+        q.put({"event": "done", "total": total, "confirmed_count": processed_cnt, "threshold": threshold, "action": action})
 
-    t = threading.Thread(target=run_confirm)
+    t = threading.Thread(target=run_batch_action)
     t.start()
 
     def generate():
@@ -484,7 +514,7 @@ def batch_confirm_high_confidence():
                     break
             except queue.Empty:
                 if not t.is_alive():
-                    yield json.dumps({"event": "error", "message": "批次採納過程異常中斷"}) + "\n"
+                    yield json.dumps({"event": "error", "message": "批次處理過程異常中斷"}) + "\n"
                     break
 
     return Response(generate(), status=200, mimetype="application/x-ndjson")

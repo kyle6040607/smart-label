@@ -2414,8 +2414,6 @@ function toggleImgBatchUI(isBatch) {
   if (!state.selectedImageIds) state.selectedImageIds = new Set();
   state.selectedImageIds.clear();
   $("toggleImgBatchModeBtn").style.display = isBatch ? "none" : "block";
-  const confirmHighBtn = $("batchConfirmHighConfBtn");
-  if (confirmHighBtn) confirmHighBtn.style.display = isBatch ? "block" : "none";
   $("batchDelImgsBtn").style.display = isBatch ? "block" : "none";
   $("cancelImgBatchBtn").style.display = isBatch ? "block" : "none";
   $("selectAllImgsLabel").style.display = isBatch ? "flex" : "none";
@@ -2425,15 +2423,13 @@ function toggleImgBatchUI(isBatch) {
 
 $("toggleImgBatchModeBtn").onclick = () => toggleImgBatchUI(true);
 $("cancelImgBatchBtn").onclick = () => toggleImgBatchUI(false);
-const batchConfirmBtn = $("batchConfirmHighConfBtn");
-if (batchConfirmBtn) {
-  batchConfirmBtn.onclick = handleBatchConfirmHighConfidence;
-}
 
 // 待審遮罩批次管理切換
 function toggleSegBatchUI(isBatch) {
   state.segBatchMode = isBatch;
   $("toggleSegBatchModeBtn").style.display = isBatch ? "none" : "block";
+  const confWrap = $("batchConfirmConfWrap");
+  if (confWrap) confWrap.style.display = isBatch ? "flex" : "none";
   $("batchDelSegsBtn").style.display = isBatch ? "block" : "none";
   $("cancelSegBatchBtn").style.display = isBatch ? "block" : "none";
   $("selectAllSegsLabel").style.display = isBatch ? "flex" : "none";
@@ -2442,6 +2438,10 @@ function toggleSegBatchUI(isBatch) {
 
 $("toggleSegBatchModeBtn").onclick = () => toggleSegBatchUI(true);
 $("cancelSegBatchBtn").onclick = () => toggleSegBatchUI(false);
+const batchConfirmBtn = $("batchConfirmHighConfBtn");
+if (batchConfirmBtn) {
+  batchConfirmBtn.onclick = handleBatchConfirmHighConfidence;
+}
 
 // 照片篩選器變更事件
 const filterSelectEl = $("imgFilterSelect");
@@ -2609,10 +2609,17 @@ function clearCanvasAndCurrentState() {
   state.autoSegCompleted = false;
   state.lastSegments = [];
   state.points = [];
+  setSegmentationLoading(false);
+  if (typeof hideProgressModal === "function") hideProgressModal();
   $("autoSegBtn").disabled = true;
   $("drawBtn").disabled = true;
-  $("textPromptInput").disabled = true;
+  $("textPromptInput").disabled = false;
   $("textSegBtn").disabled = true;
+  const batchBtn = $("batchTextSegBtn");
+  if (batchBtn) {
+    batchBtn.disabled = false;
+    batchBtn.textContent = "⚡ 批次多圖標註";
+  }
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
@@ -3477,6 +3484,7 @@ if (batchTextBtn) {
       return;
     }
 
+    const taskProjectId = state.currentProjectId;
     batchTextBtn.disabled = true;
     batchTextBtn.textContent = "⚡ 標註處理中...";
     setSegmentationLoading(true, `正在對 ${targetText} 進行批次標註 (${prompt})...`, true);
@@ -3536,9 +3544,11 @@ if (batchTextBtn) {
           try {
             const msg = JSON.parse(line);
             if (msg.event === "progress") {
-              const pct = Math.round((msg.current / msg.total) * 100);
-              updateProgressBar(pct);
-              setSegmentationLoading(true, `[${msg.current}/${msg.total}] 正在分析 ${msg.filename} (Prompt: '${prompt}')...`, true);
+              if (state.currentProjectId === taskProjectId) {
+                const pct = Math.round((msg.current / msg.total) * 100);
+                updateProgressBar(pct);
+                setSegmentationLoading(true, `[${msg.current}/${msg.total}] 正在分析 ${msg.filename} (Prompt: '${prompt}')...`, true);
+              }
             } else if (msg.event === "image_done") {
               successCnt++;
             } else if (msg.event === "image_error") {
@@ -3549,30 +3559,42 @@ if (batchTextBtn) {
               const totalNum = msg.total_images !== undefined ? msg.total_images : (successNum + failCnt);
               const failedNum = totalNum - successNum;
 
-              if (successNum === totalNum && totalNum > 0) {
-                alert(`🎉 批次標註全數成功！共成功標註 ${successNum} 張圖片！`);
-              } else if (successNum === 0) {
-                alert(`❌ 批次標註全數失敗！共 ${totalNum} 張圖片皆無法處理（請檢查模型或圖片）。`);
+              if (state.currentProjectId === taskProjectId) {
+                if (successNum === totalNum && totalNum > 0) {
+                  alert(`🎉 批次標註全數成功！共成功標註 ${successNum} 張圖片！`);
+                } else if (successNum === 0) {
+                  alert(`❌ 批次標註全數失敗！共 ${totalNum} 張圖片皆無法處理（請檢查模型或圖片）。`);
+                } else {
+                  alert(`⚠️ 批次標註部分完成！成功：${successNum} 張，失敗：${failedNum} 張。`);
+                }
               } else {
-                alert(`⚠️ 批次標註部分完成！成功：${successNum} 張，失敗：${failedNum} 張。`);
+                showToast(`背景標註任務「${prompt}」已完成（成功：${successNum} 張）`, "success");
               }
             } else if (msg.event === "error") {
-              alert("批次標註發生錯誤：" + msg.message);
+              if (state.currentProjectId === taskProjectId) {
+                alert("批次標註發生錯誤：" + msg.message);
+              }
             }
           } catch (e) {
             console.error("解析進度失敗", e);
           }
         }
       }
-      await refreshSidebar();
-      if (state.currentImage && state.currentImage.id) {
-        await selectImageById(state.currentImage.id);
+      if (state.currentProjectId === taskProjectId) {
+        await refreshSidebar();
+        if (state.currentImage && state.currentImage.id) {
+          await selectImageById(state.currentImage.id);
+        }
       }
     } catch (err) {
       console.error("批次標註異常:", err);
-      alert("批次標註通訊失敗：" + err.message);
+      if (state.currentProjectId === taskProjectId) {
+        alert("批次標註通訊失敗：" + err.message);
+      }
     } finally {
-      setSegmentationLoading(false);
+      if (state.currentProjectId === taskProjectId) {
+        setSegmentationLoading(false);
+      }
       batchTextBtn.disabled = false;
       batchTextBtn.textContent = "⚡ 批次多圖標註";
     }
@@ -3808,8 +3830,9 @@ if (stopTrainBtn) {
 }
 
 // ---------- Google Drive 風格懸浮 Task Dock 管理 ----------
-let currentActiveTask = null;
 let taskDockPollTimer = null;
+let currentRunningTaskIds = new Set();
+let currentPollMs = 2500;
 
 function expandTaskDock() {
   const dock = $("globalTaskDock");
@@ -3833,8 +3856,6 @@ function collapseTaskDock() {
 function initTaskDockUI() {
   const dockHeader = $("globalTaskDockHeader");
   const toggleBtn = $("toggleTaskDockBtn");
-  const cancelBtn = $("cancelGlobalTaskBtn");
-  const switchBtn = $("switchTaskProjectBtn");
 
   if (dockHeader) {
     dockHeader.onclick = (e) => {
@@ -3857,78 +3878,108 @@ function initTaskDockUI() {
       }
     };
   }
+}
 
-  if (cancelBtn) {
-    cancelBtn.onclick = async (e) => {
-      e.stopPropagation();
-      if (!currentActiveTask) return;
-      if (confirm(`確定要取消標註任務「${currentActiveTask.prompt}」嗎？`)) {
-        try {
-          const res = await fetch(`/api/segments/tasks/${currentActiveTask.id}/cancel`, { method: "POST" });
-          if (res.ok) {
-            showToast("已發送取消任務訊號", "info");
-            pollGlobalTasks();
-          }
-        } catch (err) { }
-      }
-    };
+function updateTaskDockBadge(runningCount) {
+  const badgeText = $("globalTaskBadgeText");
+  if (!badgeText) return;
+  if (runningCount > 1) {
+    badgeText.textContent = `背景任務執行中 (${runningCount} 個進行中)`;
+  } else {
+    badgeText.textContent = "背景任務執行中";
   }
+}
 
-  if (switchBtn) {
-    switchBtn.onclick = (e) => {
-      e.stopPropagation();
-      if (currentActiveTask && currentActiveTask.project_id && typeof selectProject === "function") {
-        selectProject(currentActiveTask.project_id);
-      }
-    };
-  }
+function setPollInterval(ms) {
+  if (currentPollMs === ms && taskDockPollTimer) return;
+  currentPollMs = ms;
+  if (taskDockPollTimer) clearInterval(taskDockPollTimer);
+  taskDockPollTimer = setInterval(pollGlobalTasks, ms);
 }
 
 async function pollGlobalTasks() {
   try {
-    const res = await fetch(`/api/segments/tasks?project_id=${state.currentProjectId || ""}`);
+    const res = await fetch("/api/segments/tasks");
     if (!res.ok) return;
     const data = await res.json();
     const tasks = data.tasks || [];
-    const runningTask = tasks.find(t => t.status === "running");
+    const runningTasks = tasks.filter((t) => t.status === "running");
 
     const dock = $("globalTaskDock");
-    if (!dock) return;
+    const body = $("globalTaskDockBody");
+    if (!dock || !body) return;
 
-    if (runningTask) {
-      currentActiveTask = runningTask;
+    if (runningTasks.length > 0) {
       dock.style.display = "block";
+      updateTaskDockBadge(runningTasks.length);
 
-      const promptNameEl = $("globalTaskPromptName");
-      const projNameEl = $("globalTaskProjectName");
-      const barInner = $("globalTaskProgressBarInner");
-      const statusText = $("globalTaskStatusText");
-      const switchBtn = $("switchTaskProjectBtn");
+      body.innerHTML = "";
+      runningTasks.forEach((task) => {
+        const pct = task.total > 0 ? Math.round((task.current / task.total) * 100) : 0;
+        const isDifferentProject = state.currentProjectId && task.project_id !== state.currentProjectId;
 
-      if (promptNameEl) promptNameEl.textContent = `Prompt: '${runningTask.prompt}'`;
-      if (projNameEl) projNameEl.textContent = `專案: ${runningTask.project_name || "當前專案"}`;
+        const card = document.createElement("div");
+        card.className = "task-dock-item-card";
+        card.style.cssText = "padding: 8px 0; border-bottom: 1px dashed var(--border);";
 
-      const pct = runningTask.total > 0 ? Math.round((runningTask.current / runningTask.total) * 100) : 0;
-      if (barInner) barInner.style.width = `${pct}%`;
-      if (statusText) statusText.textContent = `${runningTask.current.toLocaleString()} / ${runningTask.total.toLocaleString()} 張 (${pct}%)`;
+        card.innerHTML = `
+          <div style="font-size: 12px; font-weight: 600; color: var(--text); display: flex; justify-content: space-between; align-items: center;">
+            <span>${task.prompt ? `Prompt: '${task.prompt}'` : (task.name || "背景任務")}</span>
+            <span style="font-size: 11px; color: var(--accent); font-weight: 700;">${pct}%</span>
+          </div>
+          <div style="font-size: 11px; color: var(--muted); margin-top: 2px;">專案: ${task.project_name || "當前專案"}</div>
+          <div class="task-progress-bar-wrap" style="height: 6px; margin: 6px 0;">
+            <div class="task-progress-bar-inner" style="width: ${pct}%;"></div>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-top: 4px;">
+            <span style="color: var(--muted); font-weight: 500;">${task.current.toLocaleString()} / ${task.total.toLocaleString()} (${pct}%)</span>
+            <div style="display: flex; gap: 4px;">
+              ${isDifferentProject ? `<button type="button" class="btn-secondary switch-proj-btn" style="padding: 2px 6px; font-size: 10px;">切換專案</button>` : ""}
+              <button type="button" class="btn-danger cancel-task-btn" style="padding: 2px 6px; font-size: 10px;">取消</button>
+            </div>
+          </div>
+        `;
 
-      if (switchBtn) {
-        if (state.currentProjectId && runningTask.project_id !== state.currentProjectId) {
-          switchBtn.style.display = "inline-block";
-        } else {
-          switchBtn.style.display = "none";
+        const switchBtn = card.querySelector(".switch-proj-btn");
+        if (switchBtn) {
+          switchBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (typeof selectProject === "function") selectProject(task.project_id);
+          };
         }
-      }
+
+        const cancelBtn = card.querySelector(".cancel-task-btn");
+        if (cancelBtn) {
+          cancelBtn.onclick = async (e) => {
+            e.stopPropagation();
+            if (confirm(`確定要取消任務「${task.prompt || task.name || task.id}」嗎？`)) {
+              try {
+                const cancelRes = await fetch(`/api/segments/tasks/${task.id}/cancel`, { method: "POST" });
+                if (cancelRes.ok) {
+                  showToast("已發送取消任務訊號", "info");
+                  pollGlobalTasks();
+                }
+              } catch (err) { }
+            }
+          };
+        }
+
+        body.appendChild(card);
+      });
+
+      currentRunningTaskIds = new Set(runningTasks.map((t) => t.id));
+      setPollInterval(2500);
+
     } else {
-      if (currentActiveTask && currentActiveTask.status === "running") {
-        showToast("背景標註任務處理完成！", "success");
-        if (state.currentProjectId && currentActiveTask.project_id === state.currentProjectId) {
-          refreshAfterSegChange();
-          loadThumbs();
-        }
+      if (currentRunningTaskIds.size > 0) {
+        showToast("背景標註/訓練任務已處理完成！", "success");
+        currentRunningTaskIds.clear();
+        refreshAfterSegChange();
+        loadThumbs();
       }
-      currentActiveTask = null;
       dock.style.display = "none";
+      // 無任務進行時，降頻為 8 秒輪詢，減少 HTTP 請求與伺服器日誌
+      setPollInterval(8000);
     }
   } catch (err) { }
 }
@@ -3936,9 +3987,7 @@ async function pollGlobalTasks() {
 function startTaskDockPolling() {
   initTaskDockUI();
   pollGlobalTasks();
-  if (!taskDockPollTimer) {
-    taskDockPollTimer = setInterval(pollGlobalTasks, 2500);
-  }
+  setPollInterval(2500);
 }
 
 // ---------- 一鍵採納高信心遮罩與 Modal 進度條 ----------
@@ -3975,23 +4024,36 @@ function hideProgressModal() {
 }
 
 async function handleBatchConfirmHighConfidence() {
-  const confThreshold = (typeof getConfThreshold === "function" ? getConfThreshold() : 0.60);
+  const actionEl = $("segBatchActionSelect");
+  const opEl = $("segBatchOpSelect");
+  const threshEl = $("segBatchThreshSelect");
 
-  if (!confirm(`確定要一鍵採納所有信心值 ≥ ${confThreshold.toFixed(2)} 的待審核遮罩嗎？\n\n採納後系統將自動觸發模型重訓與重新分類。`)) {
+  const action = actionEl ? actionEl.value : "confirm";
+  const operator = opEl ? opEl.value : "gte";
+  const confThreshold = threshEl ? parseFloat(threshEl.value) : 0.80;
+
+  const opSymbol = operator === "lte" ? "≤" : "≥";
+  const actionText = action === "delete" ? "刪除" : "採納標籤";
+
+  if (!confirm(`確定要將所有信心值 ${opSymbol} ${confThreshold.toFixed(2)} 的待審核遮罩執行「${actionText}」嗎？`)) {
     return;
   }
 
   showProgressModal({
-    title: "正在批次採納高信心遮罩…",
-    desc: `系統正在將信心值 ≥ ${confThreshold.toFixed(2)} 的遮罩採納並進行模型學習，請稍候。`,
-    icon: "⚡"
+    title: `正在批次${actionText}遮罩…`,
+    desc: `系統正在將信心值 ${opSymbol} ${confThreshold.toFixed(2)} 的待審遮罩執行${actionText}，請稍候。`,
+    icon: action === "delete" ? "🗑️" : "⚡"
   });
 
   try {
-    const res = await fetch("/api/segments/batch_confirm_high_confidence", {
+    const res = await fetch("/api/segments/batch_action_by_threshold", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confidence_threshold: confThreshold })
+      body: JSON.stringify({
+        confidence_threshold: confThreshold,
+        operator: operator,
+        action: action
+      })
     });
 
     if (!res.ok) {
@@ -4002,7 +4064,7 @@ async function handleBatchConfirmHighConfidence() {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let finalConfirmed = 0;
+    let finalProcessed = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -4016,13 +4078,13 @@ async function handleBatchConfirmHighConfidence() {
         try {
           const msg = JSON.parse(line);
           if (msg.event === "start") {
-            updateProgressModal(0, msg.total, `找到 ${msg.total} 個高信心遮罩準備採納…`);
+            updateProgressModal(0, msg.total, `找到 ${msg.total} 個符合條件的遮罩準備${actionText}…`);
           } else if (msg.event === "progress") {
-            finalConfirmed = msg.confirmed_count;
-            updateProgressModal(msg.current, msg.total, `已採納 ${msg.confirmed_count.toLocaleString()} / ${msg.total.toLocaleString()} 個遮罩`);
+            finalProcessed = msg.confirmed_count;
+            updateProgressModal(msg.current, msg.total, `已${actionText} ${msg.confirmed_count.toLocaleString()} / ${msg.total.toLocaleString()} 個遮罩`);
           } else if (msg.event === "done") {
-            finalConfirmed = msg.confirmed_count;
-            updateProgressModal(msg.total, msg.total, `採納完成！共採納 ${msg.confirmed_count.toLocaleString()} 個遮罩`);
+            finalProcessed = msg.confirmed_count;
+            updateProgressModal(msg.total, msg.total, `${actionText}完成！共處理 ${msg.confirmed_count.toLocaleString()} 個遮罩`);
           }
         } catch (e) { }
       }
@@ -4030,13 +4092,13 @@ async function handleBatchConfirmHighConfidence() {
 
     await delay(500);
     hideProgressModal();
-    showToast(`成功一鍵採納 ${finalConfirmed} 個高信心遮罩！`, "success");
+    showToast(`成功批次${actionText} ${finalProcessed} 個遮罩！`, "success");
     await refreshAfterSegChange();
     await loadThumbs();
     await refreshSidebar();
   } catch (err) {
     hideProgressModal();
-    showToast("批次採納失敗：" + err.message, "error");
+    showToast(`批次${actionText}失敗：` + err.message, "error");
   }
 }
 
