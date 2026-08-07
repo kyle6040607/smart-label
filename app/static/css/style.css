@@ -42,18 +42,30 @@ body {
 }
 
 header {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 24px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--border);
+  background: rgba(15, 20, 25, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+[data-theme="light"] header {
+  background: rgba(247, 245, 240, 0.88);
 }
 
 header h1 {
   margin: 0;
   font-family: 'Cinzel', 'Outfit', Georgia, serif;
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 600;
   /* Cinzel 是羅馬碑刻體、實際渲染成大寫，加點字距才不會擠在一起 */
   letter-spacing: 0.06em;
@@ -2013,4 +2025,192 @@ kbd {
   font-size: 13.5px;
   color: var(--muted);
   margin-bottom: 16px;
+}
+
+/* ---------- 手機版漢堡選單與 Drawer 浮動視窗 ---------- */
+.mobile-menu-btn {
+  display: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 6px 10px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.mobile-menu-btn:hover {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mobile-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 9990;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.mobile-menu-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mobile-menu-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 320px;
+  max-width: 85vw;
+  height: 100vh;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.4);
+  z-index: 9991;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mobile-menu-drawer.open {
+  transform: translateX(0);
+}
+
+.mobile-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.mobile-menu-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mobile-menu-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.mobile-menu-close-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.mobile-menu-body {
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.mobile-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.mobile-menu-group:last-child {
+  border-bottom: none;
+}
+
+.mobile-menu-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.mobile-menu-row-between {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mobile-user-info-group {
+  background: rgba(0, 0, 0, 0.12);
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.mobile-user-name {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.mobile-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 768px) {
+  header {
+    padding: 8px 16px;
+    height: 48px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: nowrap !important;
+  }
+
+  header > div:first-child {
+    display: flex;
+    align-items: center;
+    height: 100%;
+  }
+
+  header h1 {
+    font-size: 24px;
+    line-height: 1;
+    margin: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .header-center-controls,
+  .header-actions {
+    display: none !important;
+  }
+
+  .mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    align-self: center;
+    height: 34px;
+    padding: 4px 8px;
+  }
+
+  main {
+    grid-template-columns: 1fr;
+    padding: 12px 16px;
+  }
 }

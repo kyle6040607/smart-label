@@ -2629,15 +2629,17 @@ async function fetchProjects() {
     if (!res.ok) return;
     const data = await res.json();
     state.currentProjectId = data.active_project_id;
-    const select = $("projectSelect");
-    if (!select) return;
-    select.innerHTML = "";
-    (data.projects || []).forEach((p) => {
-      const opt = document.createElement("option");
-      opt.value = p.id;
-      opt.textContent = p.name;
-      if (p.id === data.active_project_id) opt.selected = true;
-      select.appendChild(opt);
+    
+    [ $("projectSelect"), $("mobileProjectSelect") ].forEach((select) => {
+      if (!select) return;
+      select.innerHTML = "";
+      (data.projects || []).forEach((p) => {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name;
+        if (p.id === data.active_project_id) opt.selected = true;
+        select.appendChild(opt);
+      });
     });
   } catch (err) {
     console.error("載入專案清單失敗:", err);
@@ -2723,134 +2725,177 @@ function showModal({ title, desc = "", showInput = false, inputLabel = "", input
 }
 
 function initProjectControls() {
-  const select = $("projectSelect");
-  if (select) {
-    select.onchange = async () => {
-      const selectedId = select.value;
-      if (selectedId && selectedId !== state.currentProjectId) {
-        await selectProject(selectedId);
-      }
-    };
-  }
-
-  const createBtn = $("createProjectBtn");
-  if (createBtn) {
-    createBtn.onclick = async () => {
-      let currentName = "新專案";
-      while (true) {
-        const name = await showModal({
-          title: "✨ 建立新專案",
-          showInput: true,
-          inputLabel: "專案名稱",
-          inputValue: currentName,
-          confirmText: "建立專案"
-        });
-        if (name === null || !name.trim()) return;
-        currentName = name.trim();
-        try {
-          const res = await fetch("/api/projects", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: currentName, mode: state.mode })
-          });
-          if (!res.ok) throw new Error(await res.text());
-          clearCanvasAndCurrentState();
-          await fetchProjects();
-          await loadThumbs();
-          await refreshSidebar();
-          break;
-        } catch (err) {
-          let msg = err.message || "未知錯誤";
-          try {
-            const parsed = JSON.parse(msg);
-            if (parsed.error) msg = parsed.error;
-          } catch (_) { }
-          await showModal({
-            title: "⚠️ 建立專案失敗",
-            desc: msg,
-            confirmText: "確定",
-            showCancel: false
-          });
+  [ $("projectSelect"), $("mobileProjectSelect") ].forEach((select) => {
+    if (select) {
+      select.onchange = async () => {
+        const selectedId = select.value;
+        if (selectedId && selectedId !== state.currentProjectId) {
+          await selectProject(selectedId);
+          closeMobileMenu();
         }
-      }
-    };
-  }
+      };
+    }
+  });
 
-  const renameBtn = $("renameProjectBtn");
-  if (renameBtn) {
-    renameBtn.onclick = async () => {
-      if (!state.currentProjectId) return;
-      const selectEl = $("projectSelect");
-      const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
-      const oldName = currentOpt ? currentOpt.textContent : "";
-      let currentName = oldName;
-      while (true) {
-        const newName = await showModal({
-          title: "✏️ 重新命名專案",
-          showInput: true,
-          inputLabel: "新的專案名稱",
-          inputValue: currentName,
-          confirmText: "儲存修改"
-        });
-        if (newName === null || !newName.trim() || newName.trim() === oldName) return;
-        currentName = newName.trim();
-        try {
-          const res = await fetch(`/api/projects/${state.currentProjectId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: currentName })
-          });
-          if (!res.ok) throw new Error(await res.text());
-          await fetchProjects();
-          break;
-        } catch (err) {
-          let msg = err.message || "未知錯誤";
-          try {
-            const parsed = JSON.parse(msg);
-            if (parsed.error) msg = parsed.error;
-          } catch (_) { }
-          await showModal({
-            title: "⚠️ 修改專案名稱失敗",
-            desc: msg,
-            confirmText: "確定",
-            showCancel: false
-          });
-        }
-      }
-    };
-  }
-
-  const deleteBtn = $("deleteProjectBtn");
-  if (deleteBtn) {
-    deleteBtn.onclick = async () => {
-      if (!state.currentProjectId) return;
-      const selectEl = $("projectSelect");
-      const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
-      const projName = currentOpt ? currentOpt.textContent : "此專案";
-      const confirmed = await showModal({
-        title: "⚠️ 確定要刪除專案嗎？",
-        desc: `專案「${projName}」內的所有照片、遮罩檔及分類成果將會被永久刪除且無法復原！`,
-        confirmText: "確認刪除",
-        isDanger: true
+  const handleCreate = async () => {
+    let currentName = "新專案";
+    while (true) {
+      const name = await showModal({
+        title: "✨ 建立新專案",
+        showInput: true,
+        inputLabel: "專案名稱",
+        inputValue: currentName,
+        confirmText: "建立專案"
       });
-      if (!confirmed) return;
-
+      if (name === null || !name.trim()) return;
+      currentName = name.trim();
       try {
-        const res = await fetch(`/api/projects/${state.currentProjectId}`, { method: "DELETE" });
+        const res = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: currentName, mode: state.mode })
+        });
         if (!res.ok) throw new Error(await res.text());
         clearCanvasAndCurrentState();
         await fetchProjects();
         await loadThumbs();
         await refreshSidebar();
+        closeMobileMenu();
+        break;
       } catch (err) {
-        alert("刪除專案失敗: " + err.message);
+        let msg = err.message || "未知錯誤";
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed.error) msg = parsed.error;
+        } catch (_) {}
+        await showModal({
+          title: "⚠️ 建立專案失敗",
+          desc: msg,
+          confirmText: "確定",
+          showCancel: false
+        });
       }
+    }
+  };
+
+  const createBtn = $("createProjectBtn");
+  if (createBtn) createBtn.onclick = handleCreate;
+  const mobileCreateBtn = $("mobileCreateProjectBtn");
+  if (mobileCreateBtn) mobileCreateBtn.onclick = handleCreate;
+
+  const handleRename = async () => {
+    if (!state.currentProjectId) return;
+    const selectEl = $("projectSelect") || $("mobileProjectSelect");
+    const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
+    const oldName = currentOpt ? currentOpt.textContent : "";
+    let currentName = oldName;
+    while (true) {
+      const newName = await showModal({
+        title: "✏️ 重新命名專案",
+        showInput: true,
+        inputLabel: "新的專案名稱",
+        inputValue: currentName,
+        confirmText: "儲存修改"
+      });
+      if (newName === null || !newName.trim() || newName.trim() === oldName) return;
+      currentName = newName.trim();
+      try {
+        const res = await fetch(`/api/projects/${state.currentProjectId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: currentName })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await fetchProjects();
+        closeMobileMenu();
+        break;
+      } catch (err) {
+        let msg = err.message || "未知錯誤";
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed.error) msg = parsed.error;
+        } catch (_) {}
+        await showModal({
+          title: "⚠️ 修改專案名稱失敗",
+          desc: msg,
+          confirmText: "確定",
+          showCancel: false
+        });
+      }
+    }
+  };
+
+  const renameBtn = $("renameProjectBtn");
+  if (renameBtn) renameBtn.onclick = handleRename;
+  const mobileRenameBtn = $("mobileRenameProjectBtn");
+  if (mobileRenameBtn) mobileRenameBtn.onclick = handleRename;
+
+  const handleDelete = async () => {
+    if (!state.currentProjectId) return;
+    const selectEl = $("projectSelect") || $("mobileProjectSelect");
+    const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
+    const projName = currentOpt ? currentOpt.textContent : "此專案";
+    const confirmed = await showModal({
+      title: "⚠️ 確定要刪除專案嗎？",
+      desc: `專案「${projName}」內的所有照片、遮罩檔及分類成果將會被永久刪除且無法復原！`,
+      confirmText: "確認刪除",
+      isDanger: true
+    });
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/projects/${state.currentProjectId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+      clearCanvasAndCurrentState();
+      await fetchProjects();
+      await loadThumbs();
+      await refreshSidebar();
+      closeMobileMenu();
+    } catch (err) {
+      alert("刪除專案失敗: " + err.message);
+    }
+  };
+
+  const deleteBtn = $("deleteProjectBtn");
+  if (deleteBtn) deleteBtn.onclick = handleDelete;
+  const mobileDeleteBtn = $("mobileDeleteProjectBtn");
+  if (mobileDeleteBtn) mobileDeleteBtn.onclick = handleDelete;
+}
+
+function closeMobileMenu() {
+  const drawer = $("mobileMenuDrawer");
+  const backdrop = $("mobileMenuBackdrop");
+  if (drawer) drawer.classList.remove("open");
+  if (backdrop) backdrop.classList.remove("open");
+}
+
+function openMobileMenu() {
+  const drawer = $("mobileMenuDrawer");
+  const backdrop = $("mobileMenuBackdrop");
+  if (drawer) drawer.classList.add("open");
+  if (backdrop) backdrop.classList.add("open");
+}
+
+function initMobileMenu() {
+  const menuBtn = $("mobileMenuBtn");
+  const closeBtn = $("closeMobileMenuBtn");
+  const backdrop = $("mobileMenuBackdrop");
+
+  if (menuBtn) menuBtn.onclick = openMobileMenu;
+  if (closeBtn) closeBtn.onclick = closeMobileMenu;
+  if (backdrop) backdrop.onclick = closeMobileMenu;
+
+  document.querySelectorAll(".mobile-mode-switch").forEach((sw) => {
+    sw.onclick = () => {
+      const mode = state.mode === "layman" ? "engineer" : "layman";
+      applyMode(mode);
     };
-  }
+  });
 }
 
 // 初始載入
 async function initApp() {
+  initMobileMenu();
   initProjectControls();
   await fetchProjects();
   await loadThumbs();
@@ -2875,13 +2920,18 @@ function applyMode(mode) {
   localStorage.setItem("mode", mode);
 
   const isEng = mode === "engineer";
-  $("laymanModeBtn").classList.toggle("active", !isEng);
-  $("engineerModeBtn").classList.toggle("active", isEng);
+  ["laymanModeBtn", "mobileLaymanModeBtn"].forEach((id) => {
+    const el = $(id);
+    if (el) el.classList.toggle("active", !isEng);
+  });
+  ["engineerModeBtn", "mobileEngineerModeBtn"].forEach((id) => {
+    const el = $(id);
+    if (el) el.classList.toggle("active", isEng);
+  });
 
-  const wrapper = document.querySelector(".mode-switch-wrapper");
-  if (wrapper) {
+  document.querySelectorAll(".mode-switch-wrapper").forEach((wrapper) => {
     wrapper.classList.toggle("eng-active", isEng);
-  }
+  });
 
   document.body.classList.toggle("layman-mode", !isEng);
 
@@ -3145,18 +3195,21 @@ if (switchWrapper) {
 
 // 深色 / 淺色主題切換控制 (Dark / Light Mode Toggle)
 function initThemeToggle() {
-  const themeBtn = document.getElementById("themeToggleBtn");
   const savedTheme = localStorage.getItem("app_theme") || "dark";
   document.documentElement.setAttribute("data-theme", savedTheme);
 
-  if (themeBtn) {
-    themeBtn.onclick = () => {
-      const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
-      const nextTheme = currentTheme === "dark" ? "light" : "dark";
-      document.documentElement.setAttribute("data-theme", nextTheme);
-      localStorage.setItem("app_theme", nextTheme);
-    };
-  }
+  const toggleTheme = () => {
+    const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
+    const nextTheme = currentTheme === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", nextTheme);
+    localStorage.setItem("app_theme", nextTheme);
+  };
+
+  const themeBtn = document.getElementById("themeToggleBtn");
+  if (themeBtn) themeBtn.onclick = toggleTheme;
+
+  const mobileThemeBtn = document.getElementById("mobileThemeToggleBtn");
+  if (mobileThemeBtn) mobileThemeBtn.onclick = toggleTheme;
 }
 initThemeToggle();
 
