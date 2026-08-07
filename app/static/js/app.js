@@ -3206,31 +3206,7 @@ function bindNumericInputGuard(inputEl, sliderEl, minVal, maxVal, onUpdate) {
   });
 }
 
-$("confThresholdInput").oninput = (e) => {
-  updateConfThresholdDisplay(e.target.value);
-};
-
-bindNumericInputGuard($("confThresholdValue"), $("confThresholdInput"), 0.0, 1.0, (num) => {
-  const clamped = Math.max(0.0, Math.min(1.0, num));
-  $("confThresholdInput").value = clamped;
-  updateConfThresholdDisplay(clamped);
-});
-
-$("yoloConfInput").oninput = (e) => {
-  const val = Number(e.target.value).toFixed(2);
-  if (document.activeElement !== $("yoloConfValue")) {
-    $("yoloConfValue").value = val;
-  }
-  updateSliderFill(e.target);
-};
-
-bindNumericInputGuard($("yoloConfValue"), $("yoloConfInput"), 0.1, 1.0, (num) => {
-  const clamped = Math.max(0.1, Math.min(1.0, num));
-  $("yoloConfInput").value = clamped;
-  updateSliderFill($("yoloConfInput"));
-});
-
-$("saveParamsBtn").onclick = async () => {
+async function saveAndApplyParameters(quiet = false) {
   let confidence_threshold = parseFloat($("confThresholdValue").value);
   if (isNaN(confidence_threshold)) {
     confidence_threshold = parseFloat($("confThresholdInput").value);
@@ -3241,22 +3217,121 @@ $("saveParamsBtn").onclick = async () => {
   }
   const yolo_imgsz = parseInt($("yoloImgszInput").value, 10);
 
+  const saveBtn = $("saveParamsBtn");
+  const origBtnText = saveBtn ? saveBtn.textContent : "";
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "⏳ 正在處理與重新預測中...";
+  }
+
+  if (!quiet) {
+    showProgressModal({
+      title: "正在儲存參數與重新預測…",
+      desc: "系統正在更新門檻並重新計算標註與送審狀態，請稍候。",
+      icon: "⚡"
+    });
+    updateProgressModal(30, 100, "正在發送參數更新請求…");
+  } else {
+    showToast("⚙️ 正在動態更新門檻與重新計算狀態…", "info", 1500);
+  }
+
   try {
     const res = await fetch("/api/parameters", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confidence_threshold, yolo_world_confidence, yolo_imgsz })
     });
+
+    if (!quiet) {
+      updateProgressModal(75, 100, "正在重繪畫布與更新審核面板…");
+    }
+
     if (res.ok) {
-      alert("參數儲存與重新預測成功！");
-      await refreshAfterSegChange();
+      await refreshSidebar();
+      if (state.currentImage) {
+        const segRes = await fetch(`/api/images/${state.currentImage.id}/segments`);
+        if (segRes.ok) {
+          const segs = await segRes.json();
+          await redraw(segs);
+        }
+      }
+      if (!quiet) {
+        updateProgressModal(100, 100, "計算與重新預測完成！");
+        setTimeout(hideProgressModal, 350);
+        showToast("參數儲存與重新預測成功！", "success");
+      }
     } else {
-      alert("儲存失敗：" + (await res.text()));
+      let errMsg = "儲存失敗";
+      try {
+        const errData = await res.json();
+        errMsg = errData.message || errData.error || errMsg;
+      } catch (e) {
+        errMsg = await res.text();
+      }
+      if (!quiet) {
+        hideProgressModal();
+        alert("儲存失敗：" + errMsg);
+      } else {
+        showToast("儲存失敗：" + errMsg, "error");
+      }
     }
   } catch (err) {
-    console.error(err);
-    alert("儲存時發生錯誤");
+    console.error("更新參數失敗:", err);
+    if (!quiet) {
+      hideProgressModal();
+      alert("儲存時發生錯誤");
+    }
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = origBtnText;
+    }
   }
+}
+
+$("confThresholdInput").oninput = (e) => {
+  updateConfThresholdDisplay(e.target.value);
+};
+
+$("confThresholdInput").onchange = () => {
+  saveAndApplyParameters(true);
+};
+
+bindNumericInputGuard($("confThresholdValue"), $("confThresholdInput"), 0.0, 1.0, (num) => {
+  const clamped = Math.max(0.0, Math.min(1.0, num));
+  $("confThresholdInput").value = clamped;
+  updateConfThresholdDisplay(clamped);
+  saveAndApplyParameters(true);
+});
+
+$("yoloConfInput").oninput = (e) => {
+  const val = Number(e.target.value).toFixed(2);
+  if (document.activeElement !== $("yoloConfValue")) {
+    $("yoloConfValue").value = val;
+  }
+  updateSliderFill(e.target);
+};
+
+$("yoloConfInput").onchange = () => {
+  saveAndApplyParameters(true);
+};
+
+bindNumericInputGuard($("yoloConfValue"), $("yoloConfInput"), 0.1, 1.0, (num) => {
+  const clamped = Math.max(0.1, Math.min(1.0, num));
+  $("yoloConfInput").value = clamped;
+  updateSliderFill($("yoloConfInput"));
+  saveAndApplyParameters(true);
+});
+
+if ($("yoloImgszInput")) {
+  $("yoloImgszInput").onchange = () => {
+    saveAndApplyParameters(true);
+  };
+}
+
+$("saveParamsBtn").onclick = () => {
+  saveAndApplyParameters(false);
 };
 
 // 初始套用模式

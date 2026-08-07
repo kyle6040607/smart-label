@@ -10,6 +10,8 @@ from flask import Blueprint, abort, jsonify, request, send_file, Response
 
 from app.routes import (
     can_access_image,
+    get_current_project_id,
+    get_current_user_id,
     get_owned_image,
     get_owned_segment,
     get_pipeline,
@@ -634,7 +636,13 @@ def update_parameters():
         pipeline.config.yolo_imgsz = val
         repo.set_parameter("yolo_imgsz", val)
 
-    pipeline.reclassify_pending()
+    owner_id = get_current_user_id()
+    project_id = get_current_project_id()
+
+    try:
+        pipeline.reclassify_pending(owner_id, project_id)
+    except InferenceBusyError:
+        pipeline.update_pending_review_status(owner_id, project_id)
 
     return jsonify({
         "status": "success",

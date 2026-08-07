@@ -131,6 +131,18 @@ main {
   color: var(--muted);
 }
 
+button,
+.btn,
+.btn-primary,
+.btn-secondary,
+.btn-danger,
+.btn-link,
+input[type="button"],
+input[type="submit"] {
+  transition: transform 0.1s ease, filter 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  user-select: none;
+}
+
 button {
   background: var(--accent);
   color: #fff;
@@ -141,9 +153,39 @@ button {
   font-size: 13px;
 }
 
-button:disabled {
-  opacity: 0.4;
+button:hover:not(:disabled),
+.btn:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
+.btn-secondary:hover:not(:disabled),
+.btn-danger:hover:not(:disabled),
+.btn-link:hover:not(:disabled),
+input[type="button"]:hover:not(:disabled),
+input[type="submit"]:hover:not(:disabled) {
+  filter: brightness(0.88);
+  transform: translateY(-1px);
+}
+
+button:active:not(:disabled),
+.btn:active:not(:disabled),
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled),
+.btn-danger:active:not(:disabled),
+.btn-link:active:not(:disabled),
+input[type="button"]:active:not(:disabled),
+input[type="submit"]:active:not(:disabled) {
+  filter: brightness(0.75);
+  transform: translateY(0px) scale(0.97);
+}
+
+button:disabled,
+.btn:disabled,
+input[type="button"]:disabled,
+input[type="submit"]:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
+  transform: none !important;
+  filter: none !important;
+  box-shadow: none !important;
 }
 
 button.on {
