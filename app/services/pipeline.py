@@ -604,14 +604,15 @@ class Pipeline:
             seg.probs, seg.predicted_label, seg.confidence, seg.needs_review = {}, None, 0.0, True
 
     # ---------- 把某片段存成 few-shot 種子範例（提案第 3 頁第 1 步）----------
-    def add_example_from_segment(self, seg: Segment, label: str) -> LabelExample:
+    def add_example_from_segment(self, seg: Segment, label: str, reclassify: bool = True) -> LabelExample:
         with self._inference_slot():
-            return self._add_example_from_segment_locked(seg, label)
+            return self._add_example_from_segment_locked(seg, label, reclassify=reclassify)
 
     def _add_example_from_segment_locked(
         self,
         seg: Segment,
         label: str,
+        reclassify: bool = True,
     ) -> LabelExample:
         image = self.repo.get_image(seg.image_id)
         if image is None:
@@ -645,9 +646,10 @@ class Pipeline:
         seg.needs_review = False
         self.repo.update_segment(seg)
 
-        # 主動學習迴圈：回訓 + 重新預測未審片段
-        self.refit(owner_id, project_id)
-        self._reclassify_pending_locked(owner_id, project_id)
+        # 主動學習迴圈：回訓 + 重新預測未審片段 (若 reclassify=False 則延後至批次結束統一執行)
+        if reclassify:
+            self.refit(owner_id, project_id)
+            self._reclassify_pending_locked(owner_id, project_id)
         return ex
 
     def unreview_segment(self, seg: Segment) -> None:

@@ -2082,9 +2082,11 @@ async function refreshAfterSegChange() {
 // ---------- 右側：統計 + 審核佇列 ----------
 async function refreshSidebar() {
   const stats = await (await fetch("/api/stats")).json();
+  const pureAuto = stats.pure_auto_accepted !== undefined ? stats.pure_auto_accepted : Math.max(0, stats.total_segments - stats.reviewed - stats.need_review);
+  const ratio = stats.total_segments ? ((pureAuto / stats.total_segments) * 100).toFixed(0) : "0";
   $("stats").innerHTML = `
     總片段：${stats.total_segments}<br>
-    自動接受：<b>${stats.auto_accepted}</b>（省下工時 ≈ <b>${(stats.auto_ratio * 100).toFixed(0)}%</b>）<br>
+    自動接受：<b>${stats.auto_accepted}</b>（純 AI 免審核 <b>${pureAuto}</b> · 省下工時 ≈ <b>${ratio}%</b>）<br>
     待審：${stats.need_review} · 已審：${stats.reviewed}<br>
     範例數：${stats.num_examples} · 類別數：${stats.num_labels}`;
 
@@ -3080,23 +3082,23 @@ function updateCenterText(chartCanvasId, text, color) {
 function updateCharts(stats) {
   if (typeof Chart === "undefined") return;
 
-  // 1. 自動過審 vs 手動標籤
+  // 1. 純 AI 自動過審 vs 手動標籤 vs 待審核
+  const pureAuto = stats.pure_auto_accepted !== undefined ? stats.pure_auto_accepted : Math.max(0, stats.total_segments - stats.reviewed - stats.need_review);
   const laborSavingCtx = $("laborSavingChart").getContext("2d");
-  const totalLabeled = stats.auto_accepted + stats.reviewed;
-  const autoRatioPercent = totalLabeled ? (stats.auto_accepted / totalLabeled * 100).toFixed(0) + "%" : "0%";
-  $("laborSavingSub").innerHTML = `自動過審: <b>${stats.auto_accepted}</b> / 手動標籤: <b>${stats.reviewed}</b>`;
+  const autoRatioPercent = stats.total_segments ? ((pureAuto / stats.total_segments) * 100).toFixed(0) + "%" : "0%";
+  $("laborSavingSub").innerHTML = `純 AI 自動過審: <b>${pureAuto}</b> / 手動標籤: <b>${stats.reviewed}</b>`;
 
   if (laborSavingChartInstance) {
-    laborSavingChartInstance.data.datasets[0].data = [stats.auto_accepted, stats.reviewed];
+    laborSavingChartInstance.data.datasets[0].data = [pureAuto, stats.reviewed, stats.need_review];
     laborSavingChartInstance.update();
   } else {
     laborSavingChartInstance = new Chart(laborSavingCtx, {
       type: 'doughnut',
       data: {
-        labels: ['自動過審', '手動標籤'],
+        labels: ['純 AI 自動過審', '手動標籤', '待審核'],
         datasets: [{
-          data: [stats.auto_accepted, stats.reviewed],
-          backgroundColor: ['#36d399', '#4f9cff'],
+          data: [pureAuto, stats.reviewed, stats.need_review],
+          backgroundColor: ['#36d399', '#4f9cff', '#ff5470'],
           borderWidth: 1,
           borderColor: '#28323f'
         }]

@@ -450,7 +450,7 @@ def batch_action_by_threshold():
         for img in images:
             segs = repo.list_segments(img.id)
             for seg in segs:
-                if getattr(seg, "needs_review", False) or not getattr(seg, "reviewed", False):
+                if getattr(seg, "needs_review", False) and not getattr(seg, "reviewed", False):
                     conf = getattr(seg, "confidence", 0.0) or getattr(seg, "detection_confidence", 0.0)
                     if is_match(conf):
                         if action == "delete" or (seg.predicted_label or seg.final_label):
@@ -479,7 +479,8 @@ def batch_action_by_threshold():
                 target_label = seg.predicted_label or seg.final_label
                 if target_label:
                     try:
-                        pipeline.add_example_from_segment(seg, target_label)
+                        # 批次過審時暫停單個重算，極速寫入範例與標籤
+                        pipeline.add_example_from_segment(seg, target_label, reclassify=False)
                         processed_cnt += 1
                     except Exception as e:
                         print(f"⚠️ 採納片段 {seg.id} 時發生錯誤: {e}", flush=True)
