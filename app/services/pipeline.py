@@ -604,14 +604,15 @@ class Pipeline:
             seg.probs, seg.predicted_label, seg.confidence, seg.needs_review = {}, None, 0.0, True
 
     # ---------- 把某片段存成 few-shot 種子範例（提案第 3 頁第 1 步）----------
-    def add_example_from_segment(self, seg: Segment, label: str) -> LabelExample:
+    def add_example_from_segment(self, seg: Segment, label: str, reclassify: bool = True) -> LabelExample:
         with self._inference_slot():
-            return self._add_example_from_segment_locked(seg, label)
+            return self._add_example_from_segment_locked(seg, label, reclassify=reclassify)
 
     def _add_example_from_segment_locked(
         self,
         seg: Segment,
         label: str,
+        reclassify: bool = True,
     ) -> LabelExample:
         image = self.repo.get_image(seg.image_id)
         if image is None:
@@ -645,9 +646,10 @@ class Pipeline:
         seg.needs_review = False
         self.repo.update_segment(seg)
 
-        # 主動學習迴圈：回訓 + 重新預測未審片段
-        self.refit(owner_id, project_id)
-        self._reclassify_pending_locked(owner_id, project_id)
+        # 主動學習迴圈：回訓 + 重新預測未審片段 (若 reclassify=False 則延後至批次結束統一執行)
+        if reclassify:
+            self.refit(owner_id, project_id)
+            self._reclassify_pending_locked(owner_id, project_id)
         return ex
 
     def unreview_segment(self, seg: Segment) -> None:
@@ -737,14 +739,19 @@ class Pipeline:
             image = self.repo.get_image(seg.image_id)
             if image is None:
                 continue
-            if owner_id is not None and image.owner_id != owner_id:
+            if owner_id and image.owner_id and image.owner_id != owner_id:
                 continue
-            if project_id is not None and image.project_id != project_id:
+            if project_id and image.project_id and image.project_id != project_id:
                 continue
             classifier = self._classifier_for(image.owner_id, image.project_id)
             if not classifier.ready:
-                # 範例被刪光、分類器失效 → 清掉舊預測，退回送審（別殘留 stale label）
-                seg.probs, seg.predicted_label, seg.confidence, seg.needs_review = {}, None, 0.0, True
+                # 範例被刪光、分類器失效 → 清掉舊預測，依當前門檻判斷送審
+                seg.probs, seg.predicted_label, seg.confidence = {}, None, 0.0
+                conf = getattr(seg, "detection_confidence", 0.0) or 0.0
+                if self.config.confidence_threshold <= 0.0:
+                    seg.needs_review = False
+                else:
+                    seg.needs_review = bool(conf < self.config.confidence_threshold)
                 self.repo.update_segment(seg)
                 continue
             if seg.image_id not in cache:
@@ -752,3 +759,41 @@ class Pipeline:
             mask = self._read_mask(seg.mask_path)
             self._classify_segment(cache[seg.image_id], seg, mask)
             self.repo.update_segment(seg)
+
+    def update_pending_review_status(
+        self,
+        owner_id: str | None = None,
+        project_id: str | None = None,
+    ) -> None:
+        """根據目前的 confidence_threshold，僅快速更新當前專案未審核片段之 needs_review 送審狀態。"""
+        thresh = self.config.confidence_threshold
+
+        # 若指定了 project_id，先精準過濾屬於該專案的圖片
+        if project_id:
+            target_images = self.repo.list_images(project_id=project_id)
+        else:
+            target_images = self.repo.list_images()
+
+        if owner_id:
+            target_images = [img for img in target_images if img.owner_id == owner_id or not img.owner_id]
+
+        image_map = {img.id: img for img in target_images}
+        if not image_map:
+            return
+
+        for img_id in image_map:
+            for seg in self.repo.list_segments(img_id):
+                if seg.reviewed:
+                    continue
+
+                conf = getattr(seg, "confidence", 0.0) or 0.0
+                if conf == 0.0 and getattr(seg, "detection_confidence", 0.0):
+                    conf = float(seg.detection_confidence)
+
+                if thresh <= 0.0:
+                    seg.needs_review = False
+                else:
+                    seg.needs_review = bool(conf < thresh)
+
+                self.repo.update_segment(seg)
+

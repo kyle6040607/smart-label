@@ -55,13 +55,20 @@ def _is_archive(filename: str, allowed_archive_ext: tuple[str, ...]) -> bool:
     return any(lower.endswith(f".{ext}") for ext in allowed_archive_ext)
 
 
+def _make_temp_dir():
+    try:
+        return tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+    except TypeError:
+        return tempfile.TemporaryDirectory()
+
+
 def _extract_images_from_archive(
     filename: str,
     file_bytes: bytes,
     allowed_image_ext: tuple[str, ...],
     max_image_size: int,
 ) -> list[tuple[str, bytes]]:
-    """從壓縮檔 (.zip, .7z, .tar, .tar.gz 等) 提取符合副檔名與大小限制的影像檔案。"""
+    """從高效能壓縮檔 (.zip, .tar, .tar.gz 等) 提取符合副檔名與大小限制的影像檔案。"""
     extracted: list[tuple[str, bytes]] = []
     lower_name = filename.lower()
 
@@ -83,29 +90,16 @@ def _extract_images_from_archive(
                         continue
                     if _should_keep(member.filename):
                         if member.file_size <= max_image_size:
-                            data = zf.read(member)
-                            base_name = os.path.basename(member.filename)
-                            extracted.append((base_name, data))
+                            try:
+                                data = zf.read(member)
+                                base_name = os.path.basename(member.filename)
+                                extracted.append((base_name, data))
+                            except Exception:
+                                pass
         except Exception:
             pass
 
-    # 2. 7Z 檔
-    elif lower_name.endswith(".7z") and py7zr is not None:
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                with py7zr.SevenZipFile(io.BytesIO(file_bytes), mode="r") as sz:
-                    sz.extractall(path=tmpdir)
-                for root, _, files in os.walk(tmpdir):
-                    for fname in files:
-                        full_p = os.path.join(root, fname)
-                        if _should_keep(fname):
-                            if os.path.getsize(full_p) <= max_image_size:
-                                with open(full_p, "rb") as fp:
-                                    extracted.append((fname, fp.read()))
-        except Exception:
-            pass
-
-    # 3. TAR / GZ / BZ2 / XZ 檔
+    # 2. TAR / GZ / BZ2 / XZ 檔
     elif any(
         lower_name.endswith(ext)
         for ext in (
@@ -128,22 +122,25 @@ def _extract_images_from_archive(
                         continue
                     if _should_keep(member.name):
                         if member.size <= max_image_size:
-                            f_obj = tf.extractfile(member)
-                            if f_obj is not None:
-                                data = f_obj.read()
-                                base_name = os.path.basename(member.name)
-                                extracted.append((base_name, data))
+                            try:
+                                f_obj = tf.extractfile(member)
+                                if f_obj is not None:
+                                    data = f_obj.read()
+                                    base_name = os.path.basename(member.name)
+                                    extracted.append((base_name, data))
+                            except Exception:
+                                pass
         except Exception:
             pass
 
     return extracted
 
 
-def _collect_known_hashes(repo, storage) -> set[str]:
-    """收齊目前使用者看得到的照片雜湊值，供上傳去重比對。"""
+def _collect_known_hashes(repo, storage, project_id: str | None = None) -> set[str]:
+    """收齊指定專案中目前使用者看得到的照片雜湊值，供上傳去重比對。"""
     hashes = set()
 
-    for img in repo.list_images():
+    for img in repo.list_images(project_id=project_id):
         if not can_access_image(img):
             continue
 
@@ -161,6 +158,43 @@ def _collect_known_hashes(repo, storage) -> set[str]:
             hashes.add(file_hash)
 
     return hashes
+
+
+def _process_one_image(orig_filename: str, file_bytes: bytes, max_side: int = 1280) -> tuple[bytes, int, int, str]:
+    extension = orig_filename.rsplit(".", 1)[1].lower() if "." in orig_filename else "png"
+    default_mime = Image.MIME.get(extension.upper()) or f"image/{extension}"
+    try:
+        with Image.open(io.BytesIO(file_bytes)) as im:
+            save_format = im.format or extension.upper()
+            if save_format.upper() == "JPG":
+                save_format = "JPEG"
+            w, h = im.size
+
+            exif = im.getexif()
+            has_exif_trans = bool(exif and 0x0112 in exif and exif[0x0112] not in (0, 1))
+
+            if max(w, h) <= max_side and not has_exif_trans:
+                return file_bytes, w, h, default_mime
+
+            processed_image = ImageOps.exif_transpose(im)
+            if max(processed_image.size) > max_side:
+                scale = max_side / max(processed_image.size)
+                new_size = (
+                    int(processed_image.size[0] * scale),
+                    int(processed_image.size[1] * scale),
+                )
+                processed_image = processed_image.resize(
+                    new_size,
+                    Image.Resampling.BILINEAR,
+                )
+
+            out_w, out_h = processed_image.size
+            output = io.BytesIO()
+            processed_image.save(output, format=save_format, quality=85)
+            mime = Image.MIME.get(save_format.upper()) or default_mime
+            return output.getvalue(), out_w, out_h, mime
+    except Exception:
+        return file_bytes, 100, 100, default_mime
 
 
 @bp.post("")
@@ -204,13 +238,25 @@ def upload():
         abort(400, "沒有有效的影像檔或解壓後無支援格式影像")
 
     total_items = len(items_to_process)
-    known_hashes = _collect_known_hashes(repo, storage)
-    project_id = request.form.get("project_id") or get_current_project_id()
+    project_id = request.form.get("project_id") or request.args.get("project_id") or get_current_project_id()
+    known_hashes = _collect_known_hashes(repo, storage, project_id=project_id)
 
     def generate_upload_stream():
         created = []
         duplicates = []
         is_cancelled = False
+        pending_records = []
+
+        if want_stream:
+            yield json.dumps({
+                "event": "progress",
+                "current": 0,
+                "total": total_items,
+                "created_count": 0,
+                "filename": "",
+            }, ensure_ascii=False) + "\n"
+
+        batch_latest = []
 
         for idx, (orig_filename, file_bytes) in enumerate(items_to_process, start=1):
             if user_id in cancelled_uploads:
@@ -222,14 +268,16 @@ def upload():
 
             if file_hash in known_hashes:
                 duplicates.append(orig_filename)
-                if want_stream and (idx % 10 == 0 or idx == total_items):
+                if want_stream and (idx % 10 == 0 or idx == total_items or idx == 1):
                     yield json.dumps({
                         "event": "progress",
                         "current": idx,
                         "total": total_items,
                         "created_count": len(created),
                         "filename": orig_filename,
+                        "latest_images": batch_latest,
                     }, ensure_ascii=False) + "\n"
+                    batch_latest = []
                 continue
 
             extension = orig_filename.rsplit(".", 1)[1].lower() if "." in orig_filename else "png"
@@ -242,55 +290,47 @@ def upload():
                 file_hash=file_hash,
             )
 
-            try:
-                with Image.open(io.BytesIO(file_bytes)) as im:
-                    save_format = im.format or extension.upper()
-                    if save_format.upper() == "JPG":
-                        save_format = "JPEG"
-                    processed_image = ImageOps.exif_transpose(im)
+            raw_to_save, width, height, content_type = _process_one_image(orig_filename, file_bytes)
+            rec.width, rec.height = width, height
 
-                    max_side = 1024
-                    if max(processed_image.size) > max_side:
-                        scale = max_side / max(processed_image.size)
-                        new_size = (
-                            int(processed_image.size[0] * scale),
-                            int(processed_image.size[1] * scale),
-                        )
-                        processed_image = processed_image.resize(
-                            new_size,
-                            Image.Resampling.LANCZOS,
-                        )
-
-                    rec.width, rec.height = processed_image.size
-
-                    output = io.BytesIO()
-                    processed_image.save(output, format=save_format)
-            except Exception:
-                continue
-
-            content_type = (
-                Image.MIME.get(save_format.upper())
-                or f"image/{extension}"
-            )
             rec.path = storage.save_bytes(
                 f"images/{rec.id}_{name}",
-                output.getvalue(),
+                raw_to_save,
                 content_type,
             )
-            repo.add_image(rec)
+
+            pending_records.append(rec)
             known_hashes.add(file_hash)
             rec_dict = rec.to_dict()
             created.append(rec_dict)
+            batch_latest.append(rec_dict)
 
-            if want_stream and (idx % 5 == 0 or idx == total_items or idx == 1):
+            if len(pending_records) >= 25 or idx == total_items:
+                if hasattr(repo, "add_images"):
+                    repo.add_images(pending_records)
+                else:
+                    for r in pending_records:
+                        repo.add_image(r)
+                pending_records.clear()
+
+            if want_stream and (idx % 10 == 0 or idx == total_items or idx == 1):
                 yield json.dumps({
                     "event": "progress",
                     "current": idx,
                     "total": total_items,
                     "created_count": len(created),
                     "filename": name,
-                    "latest_image": rec_dict,
+                    "latest_images": batch_latest,
                 }, ensure_ascii=False) + "\n"
+                batch_latest = []
+
+        if pending_records:
+            if hasattr(repo, "add_images"):
+                repo.add_images(pending_records)
+            else:
+                for r in pending_records:
+                    repo.add_image(r)
+            pending_records.clear()
 
         if want_stream:
             yield json.dumps({
@@ -299,6 +339,7 @@ def upload():
                 "current": len(created),
                 "total": total_items,
                 "created": created,
+                "duplicates": duplicates,
             }, ensure_ascii=False) + "\n"
 
     if want_stream:
@@ -307,6 +348,8 @@ def upload():
     # 非串流模式（相容原本的 API 與測試）
     created = []
     duplicates = []
+    pending_records = []
+
     for idx, (orig_filename, file_bytes) in enumerate(items_to_process, start=1):
         if user_id in cancelled_uploads:
             cancelled_uploads.discard(user_id)
@@ -323,40 +366,22 @@ def upload():
             filename=name,
             file_hash=file_hash,
         )
-        try:
-            with Image.open(io.BytesIO(file_bytes)) as im:
-                save_format = im.format or extension.upper()
-                if save_format.upper() == "JPG":
-                    save_format = "JPEG"
-                processed_image = ImageOps.exif_transpose(im)
-                max_side = 1024
-                if max(processed_image.size) > max_side:
-                    scale = max_side / max(processed_image.size)
-                    new_size = (
-                        int(processed_image.size[0] * scale),
-                        int(processed_image.size[1] * scale),
-                    )
-                    processed_image = processed_image.resize(
-                        new_size,
-                        Image.Resampling.LANCZOS,
-                    )
-                rec.width, rec.height = processed_image.size
-                output = io.BytesIO()
-                processed_image.save(output, format=save_format)
-        except Exception:
-            continue
-        content_type = (
-            Image.MIME.get(save_format.upper())
-            or f"image/{extension}"
-        )
+        raw_to_save, width, height, content_type = _process_one_image(orig_filename, file_bytes)
+        rec.width, rec.height = width, height
         rec.path = storage.save_bytes(
             f"images/{rec.id}_{name}",
-            output.getvalue(),
+            raw_to_save,
             content_type,
         )
-        repo.add_image(rec)
-        known_hashes.add(file_hash)
+        pending_records.append(rec)
         created.append(rec.to_dict())
+
+    if pending_records:
+        if hasattr(repo, "add_images"):
+            repo.add_images(pending_records)
+        else:
+            for r in pending_records:
+                repo.add_image(r)
 
     if duplicates and not created:
         return jsonify({"error": "圖片已上傳過，請勿重複上傳"}), 400
@@ -405,8 +430,9 @@ def image_file(image_id: str):
         abort(404)
     return send_file(
         io.BytesIO(data),
-        mimetype=mimetypes.guess_type(rec.filename)[0],
+        mimetype=mimetypes.guess_type(rec.filename)[0] or "image/png",
         download_name=rec.filename,
+        max_age=86400,
     )
 
 

@@ -9,7 +9,7 @@ from PIL import Image
 
 from app import create_app
 from app.config import Config
-from app.models import ImageRecord
+from app.models import ImageRecord, Project
 
 
 class MySQLLikeRepo:
@@ -24,10 +24,10 @@ class MySQLLikeRepo:
         object.__setattr__(self, "_inner", inner)
         object.__setattr__(self, "_allow_save", allow_save)
 
-    def list_images(self) -> list[ImageRecord]:
+    def list_images(self, project_id: str | None = None) -> list[ImageRecord]:
         return [
             dataclasses.replace(image)
-            for image in self._inner.list_images()
+            for image in self._inner.list_images(project_id=project_id)
         ]
 
     def __getattr__(self, name):
@@ -180,3 +180,53 @@ def test_duplicate_within_single_batch_is_rejected(tmp_path):
 
     assert response.status_code == 201
     assert len(response.get_json()) == 1
+
+
+def test_same_image_upload_to_different_projects_succeeds(tmp_path):
+    app, _ = _make_app(tmp_path)
+    client = app.test_client()
+    user = _login(app, client)
+
+    p1 = app.repo.add_project(Project(owner_id=user.id, name="Project 1"))
+    p2 = app.repo.add_project(Project(owner_id=user.id, name="Project 2"))
+
+    data = _png_bytes((123, 45, 67))
+
+    # Upload image to Project 1
+    res1 = client.post(
+        "/api/images",
+        data={
+            "project_id": p1.id,
+            "files": (io.BytesIO(data), "photo.png"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res1.status_code == 201
+    assert len(res1.get_json()) == 1
+    assert res1.get_json()[0]["project_id"] == p1.id
+
+    # Upload same image to Project 2 (should succeed)
+    res2 = client.post(
+        "/api/images",
+        data={
+            "project_id": p2.id,
+            "files": (io.BytesIO(data), "photo.png"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res2.status_code == 201
+    assert len(res2.get_json()) == 1
+    assert res2.get_json()[0]["project_id"] == p2.id
+
+    # Upload same image to Project 1 again (should be rejected as duplicate)
+    res3 = client.post(
+        "/api/images",
+        data={
+            "project_id": p1.id,
+            "files": (io.BytesIO(data), "photo.png"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res3.status_code == 400
+    assert res3.get_json()["error"] == "圖片已上傳過，請勿重複上傳"
+

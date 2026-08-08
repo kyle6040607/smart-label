@@ -68,9 +68,11 @@ def stats():
         if segment.image_id in owned_image_ids
     ]
     total = len(segments)
-    need_review = sum(1 for segment in segments if segment.needs_review)
+    need_review = sum(1 for segment in segments if segment.needs_review and not segment.reviewed)
     reviewed = sum(1 for segment in segments if segment.reviewed)
+    pure_auto_accepted = sum(1 for segment in segments if not segment.needs_review and not segment.reviewed)
     auto_accepted = total - need_review
+
     labels = {
         segment.final_label for segment in segments if segment.final_label
     }
@@ -84,9 +86,10 @@ def stats():
     return jsonify({
         "total_segments": total,
         "auto_accepted": auto_accepted,
+        "pure_auto_accepted": pure_auto_accepted,
         "need_review": need_review,
         "reviewed": reviewed,
-        "auto_ratio": round(auto_accepted / total, 3) if total else 0.0,
+        "auto_ratio": round(pure_auto_accepted / total, 3) if total else 0.0,
         "num_examples": len(examples),
         "num_labels": len(labels),
         "label_counts": label_counts,

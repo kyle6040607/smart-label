@@ -20,7 +20,7 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 // 圖片載入器：限制同時下載數，並針對 Cloud Run 暫時性錯誤退避重試。
-const IMAGE_FETCH_CONCURRENCY = 4;
+const IMAGE_FETCH_CONCURRENCY = 12;
 const IMAGE_MAX_RETRIES = 3;
 const RETRYABLE_IMAGE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const imageFetchQueue = [];
@@ -854,7 +854,6 @@ function initDropZone() {
         state.currentXhr = null;
       }
       await loadThumbs();
-      expandGallery();
     };
   }
 
@@ -903,7 +902,9 @@ $("uploadBtn").onclick = async (e) => {
   if (e) e.stopPropagation();
   const fileInputEl = $("fileInput");
   const files = state.stagedFiles.length ? state.stagedFiles : Array.from(fileInputEl.files);
-  if (!files.length) return alert("請先選擇照片或資料集壓縮檔");
+  if (!files.length) {
+    return showModal({ title: "提示", desc: "請先選擇照片或資料集壓縮檔", confirmText: "確定", showCancel: false });
+  }
 
   const uploadBtn = $("uploadBtn");
   const cancelUploadBtn = $("cancelUploadBtn");
@@ -916,12 +917,15 @@ $("uploadBtn").onclick = async (e) => {
   }
   state.isUploading = true;
   state.isAborted = false;
+  collapseGallery();
 
   const BATCH_SIZE_LIMIT = 50 * 1024 * 1024; // 50 MB
   const BATCH_COUNT_LIMIT = 50;
 
   let uploadedCount = 0;
   let uploadedBytes = 0;
+  let totalCreatedCount = 0;
+  let accumulatedDuplicates = [];
   const totalFiles = files.length;
   const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
@@ -943,13 +947,19 @@ $("uploadBtn").onclick = async (e) => {
           const currentBatchUploaded = e.loaded;
           const totalProgressBytes = uploadedBytes + currentBatchUploaded;
           const pct = Math.min(100, Math.round((totalProgressBytes / totalBytes) * 100));
-          const mbUploaded = (totalProgressBytes / (1024 * 1024)).toFixed(1);
-          const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
 
-          if (e.loaded >= e.total) {
-            fileCountHint.textContent = `檔案傳送完成 (100%) · 伺服器準備解壓照片…`;
+          if (totalFiles === 1) {
+            const mbUploaded = (totalProgressBytes / (1024 * 1024)).toFixed(1);
+            const mbTotal = (totalBytes / (1024 * 1024)).toFixed(1);
+            if (e.loaded >= e.total) {
+              fileCountHint.textContent = `檔案傳送完成 (100%) · 伺服器準備解壓照片…`;
+            } else {
+              fileCountHint.textContent = `正在傳送檔案… ${pct}% (${mbUploaded} / ${mbTotal} MB)`;
+            }
           } else {
-            fileCountHint.textContent = `正在傳送檔案… ${pct}% (${mbUploaded} / ${mbTotal} MB)`;
+            const batchEstimated = Math.round((e.loaded / e.total) * batch.length);
+            const currentEstimated = Math.min(totalFiles, uploadedCount + batchEstimated);
+            fileCountHint.textContent = `正在處理照片… ${currentEstimated.toLocaleString()} / ${totalFiles.toLocaleString()} 張 (${pct}%)`;
           }
         }
       };
@@ -963,15 +973,24 @@ $("uploadBtn").onclick = async (e) => {
           try {
             const data = JSON.parse(line.trim());
             if (data.event === "progress") {
-              state.lastProcessedCount = data.created_count || data.current;
-              state.lastTotalCount = data.total;
-              const pct = Math.round((data.current / data.total) * 100);
+              const isSingleZip = totalFiles === 1 && data.total > 1;
+              const globalTotal = isSingleZip ? data.total : totalFiles;
+              const globalCurrent = isSingleZip ? data.current : Math.min(totalFiles, uploadedCount + data.current);
+              const pct = Math.min(100, Math.round((globalCurrent / globalTotal) * 100));
+
+              state.lastProcessedCount = isSingleZip
+                ? (data.created_count || data.current)
+                : Math.min(totalFiles, uploadedCount + (data.created_count || data.current));
+              state.lastTotalCount = globalTotal;
+
               if (fileCountHint) {
-                fileCountHint.textContent = `正在解壓與處理照片… ${data.current.toLocaleString()} / ${data.total.toLocaleString()} 張 (${pct}%)`;
+                const actionText = isSingleZip ? "正在解壓與處理照片…" : "正在處理照片…";
+                fileCountHint.textContent = `${actionText} ${globalCurrent.toLocaleString()} / ${globalTotal.toLocaleString()} 張 (${pct}%)`;
               }
-              if (data.latest_image) {
+              if (data.latest_images && Array.isArray(data.latest_images)) {
+                appendThumbs(data.latest_images);
+              } else if (data.latest_image) {
                 appendThumbs([data.latest_image]);
-                expandGallery();
               }
             }
           } catch (err) { }
@@ -986,6 +1005,7 @@ $("uploadBtn").onclick = async (e) => {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             let createdImages = [];
+            let duplicateFiles = [];
             const text = xhr.responseText.trim();
             if (text.startsWith("{")) {
               const lines = text.split("\n");
@@ -993,8 +1013,9 @@ $("uploadBtn").onclick = async (e) => {
                 if (!line.trim()) continue;
                 try {
                   const data = JSON.parse(line.trim());
-                  if (data.event === "done" && Array.isArray(data.created)) {
-                    createdImages = data.created;
+                  if (data.event === "done") {
+                    if (Array.isArray(data.created)) createdImages = data.created;
+                    if (Array.isArray(data.duplicates)) duplicateFiles = data.duplicates;
                   }
                 } catch (e) { }
               }
@@ -1006,9 +1027,8 @@ $("uploadBtn").onclick = async (e) => {
 
             if (Array.isArray(createdImages) && createdImages.length > 0) {
               appendThumbs(createdImages);
-              expandGallery();
             }
-            resolve(createdImages);
+            resolve({ created: createdImages, duplicates: duplicateFiles });
           } catch (err) {
             reject(new Error("伺服器回傳格式錯誤"));
           }
@@ -1045,7 +1065,9 @@ $("uploadBtn").onclick = async (e) => {
     for (const f of files) {
       if (state.isAborted) break;
       if (currentBatch.length > 0 && (currentBatchSize + f.size > BATCH_SIZE_LIMIT || currentBatch.length >= BATCH_COUNT_LIMIT)) {
-        await sendBatch(currentBatch);
+        const res = await sendBatch(currentBatch);
+        totalCreatedCount += res.created.length;
+        if (res.duplicates && res.duplicates.length) accumulatedDuplicates.push(...res.duplicates);
         currentBatch = [];
         currentBatchSize = 0;
       }
@@ -1054,7 +1076,33 @@ $("uploadBtn").onclick = async (e) => {
     }
 
     if (currentBatch.length > 0 && !state.isAborted) {
-      await sendBatch(currentBatch);
+      const res = await sendBatch(currentBatch);
+      totalCreatedCount += res.created.length;
+      if (res.duplicates && res.duplicates.length) accumulatedDuplicates.push(...res.duplicates);
+    }
+
+    if (accumulatedDuplicates.length > 0 && !state.isAborted) {
+      const uniqueDupes = Array.from(new Set(accumulatedDuplicates));
+      let fileListDesc = uniqueDupes.slice(0, 10).map((name) => `• ${name}`).join("\n");
+      if (uniqueDupes.length > 10) {
+        fileListDesc += `\n...等共 ${uniqueDupes.length} 張圖片`;
+      }
+
+      if (totalCreatedCount === 0) {
+        await showModal({
+          title: "圖片已存在 (未重複上傳)",
+          desc: `您選擇的圖片在當前專案中已存在，系統已自動跳過：\n\n${fileListDesc}`,
+          confirmText: "我知道了",
+          showCancel: false,
+        });
+      } else {
+        await showModal({
+          title: "上傳完成 (包含重複圖片)",
+          desc: `已成功上傳 ${totalCreatedCount} 張新照片。\n\n以下 ${uniqueDupes.length} 張圖片因在當前專案中已存在而自動跳過：\n\n${fileListDesc}`,
+          confirmText: "我知道了",
+          showCancel: false,
+        });
+      }
     }
   } catch (err) {
     if (state.isAborted) {
@@ -1065,13 +1113,20 @@ $("uploadBtn").onclick = async (e) => {
         fileCountHint.textContent = `已中途取消上傳${countInfo}`;
       }
     } else {
-      alert(`上傳中斷：${err.message}`);
+      await showModal({
+        title: "上傳失敗",
+        desc: `上傳中斷：${err.message}`,
+        isDanger: true,
+        confirmText: "確定",
+        showCancel: false,
+      });
     }
   } finally {
     fileInputEl.value = "";
     state.stagedFiles = [];
     state.isUploading = false;
     state.currentXhr = null;
+    updateImgFilterOptions();
     uploadBtn.disabled = false;
     if (cancelUploadBtn) {
       cancelUploadBtn.style.display = "none";
@@ -1079,7 +1134,6 @@ $("uploadBtn").onclick = async (e) => {
     }
     if (state.isAborted) {
       await loadThumbs();
-      expandGallery();
       setTimeout(() => {
         if (!state.isUploading) updateFileCountHint();
       }, 3000);
@@ -1108,7 +1162,6 @@ async function loadThumbnailElement(el, im, { force = false } = {}) {
     });
     el.dataset.loadState = "loaded";
     el.alt = im.filename;
-    releaseObjectUrl(`thumb:${im.id}`);
   } catch (error) {
     if (el.dataset.imageId !== im.id) return;
     releaseObjectUrl(`thumb:${im.id}`);
@@ -1283,6 +1336,14 @@ function updateGalleryToggleUI(isExpanded) {
   if (text) text.textContent = isCurrentlyCollapsed ? `展開照片庫 (${countStr})` : `折疊照片庫 (${countStr})`;
 }
 
+function collapseGallery() {
+  const wrapper = $("thumbsWrapper");
+  if (wrapper && !wrapper.classList.contains("collapsed")) {
+    wrapper.classList.add("collapsed");
+  }
+  updateGalleryToggleUI(false);
+}
+
 function expandGallery() {
   const wrapper = $("thumbsWrapper");
   if (wrapper && wrapper.classList.contains("collapsed")) {
@@ -1323,23 +1384,33 @@ function appendThumbs(newImages) {
   newImages.forEach((im) => {
     if (!state.allImages.some((item) => item.id === im.id)) {
       state.allImages.unshift(im);
-      state.renderedImageCount += 1;
     }
   });
 
-  updateImgFilterOptions();
+  if (!state.isUploading) {
+    updateImgFilterOptions();
+  }
 
   const box = $("thumbs");
   if (!box) return;
 
-  const fragment = document.createDocumentFragment();
-  newImages.forEach((im) => {
-    if (box.querySelector(`.thumb-chk[data-id="${im.id}"]`)) return;
-    const wrap = createThumbElement(im);
-    fragment.appendChild(wrap);
-  });
+  // 限制 DOM 中只保留分頁上限的縮圖節點 (GALLERY_PAGE_SIZE)，
+  // 避免大批次上傳 (如 1,500 張) 時將所有圖片標籤一次塞滿 DOM 破壞 Lazy Loading 與引發大量 HTTP 請求。
+  const currentCards = box.querySelectorAll(".thumb-card");
+  const maxAllowedNewDOM = Math.max(0, GALLERY_PAGE_SIZE - currentCards.length);
 
-  box.insertBefore(fragment, box.firstChild);
+  if (maxAllowedNewDOM > 0) {
+    const toRender = newImages.slice(0, maxAllowedNewDOM);
+    const fragment = document.createDocumentFragment();
+    toRender.forEach((im) => {
+      if (box.querySelector(`.thumb-chk[data-id="${im.id}"]`)) return;
+      const wrap = createThumbElement(im);
+      fragment.appendChild(wrap);
+    });
+    box.insertBefore(fragment, box.firstChild);
+  }
+
+  state.renderedImageCount = box.querySelectorAll(".thumb-card").length;
 
   if (!state.imgBatchMode) {
     const selectAll = $("selectAllImgs");
@@ -2011,9 +2082,11 @@ async function refreshAfterSegChange() {
 // ---------- 右側：統計 + 審核佇列 ----------
 async function refreshSidebar() {
   const stats = await (await fetch("/api/stats")).json();
+  const pureAuto = stats.pure_auto_accepted !== undefined ? stats.pure_auto_accepted : Math.max(0, stats.total_segments - stats.reviewed - stats.need_review);
+  const ratio = stats.total_segments ? ((pureAuto / stats.total_segments) * 100).toFixed(0) : "0";
   $("stats").innerHTML = `
     總片段：${stats.total_segments}<br>
-    自動接受：<b>${stats.auto_accepted}</b>（省下工時 ≈ <b>${(stats.auto_ratio * 100).toFixed(0)}%</b>）<br>
+    自動接受：<b>${stats.auto_accepted}</b>（純 AI 免審核 <b>${pureAuto}</b> · 省下工時 ≈ <b>${ratio}%</b>）<br>
     待審：${stats.need_review} · 已審：${stats.reviewed}<br>
     範例數：${stats.num_examples} · 類別數：${stats.num_labels}`;
 
@@ -2168,7 +2241,7 @@ async function refreshSidebar() {
       if (state.currentImage && s.image_id === state.currentImage.id) redraw(state.lastSegments);
     };
     const inputEl = li.querySelector("input[data-seg]");
-    const submitReview = async () => {
+    const submitReview = () => {
       let label = inputEl.value.trim();
       if (!label && pred) {
         label = pred; // 輸入框留白時，直接採納 AI 預測標籤！
@@ -2178,56 +2251,39 @@ async function refreshSidebar() {
         return;
       }
 
-      // 樂觀 UI (Optimistic UI)：立刻將卡片半透明並停用，消除網路延遲的遲滯感
-      li.style.opacity = "0.3";
-      li.style.pointerEvents = "none";
+      // 0 毫秒極速滑出動畫並從 DOM 移除
+      animateAndRemoveQueueItem(li);
+      showToast(`已標記：「${label}」`, "info", 1200);
 
-      try {
-        const res = await fetch(`/api/segments/${s.id}/review`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label }),
-        });
-        if (!res.ok) throw new Error("審核失敗");
-        pushUndoAction({
-          type: "REVIEW_SEGMENT",
-          segId: s.id,
-          prevLabel: s.final_label || "",
-          predictedLabel: s.predicted_label || "",
-          newLabel: label,
-          imageId: s.image_id
-        });
-        await refreshAfterSegChange();
-        showToast(`標籤審核完成：「${label}」`, "success");
-      } catch (err) {
-        console.error(err);
-        li.style.opacity = "1";
-        li.style.pointerEvents = "auto";
-        showToast("審核失敗，請重試", "error");
-      }
+      // 將審核推入背景佇列消化
+      pendingReviewTasks.push({
+        type: "review",
+        segId: s.id,
+        imageId: s.image_id,
+        prevLabel: s.final_label || "",
+        predictedLabel: s.predicted_label || "",
+        label: label
+      });
+      processPendingReviewQueue();
     };
+
     li.querySelector(".confirm").onclick = submitReview;
-    inputEl.onkeydown = async (e) => {
+    inputEl.onkeydown = (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        await submitReview();
+        submitReview();
       }
     };
-    li.querySelector(".seg-del").onclick = async () => {
-      try {
-        const res = await fetch(`/api/segments/${s.id}`, { method: "DELETE" });
-        if (!res.ok) {
-          return showToast("刪除失敗：" + (await res.text()), "error");
-        }
-        releaseSegmentResources(s.id);
-        state.autoSegCompleted = false;
-        updateAutoSegBtn();
-        await refreshAfterSegChange();
-        showToast("已刪除遮罩片段", "info");
-      } catch (error) {
-        console.error(error);
-        showToast("刪除時發生錯誤", "error");
-      }
+
+    li.querySelector(".seg-del").onclick = () => {
+      animateAndRemoveQueueItem(li);
+      showToast("已刪除遮罩片段", "info", 1200);
+
+      pendingReviewTasks.push({
+        type: "delete",
+        segId: s.id
+      });
+      processPendingReviewQueue();
     };
     ul.appendChild(li);
   });
@@ -2237,6 +2293,80 @@ async function refreshSidebar() {
     $("selectAllSegs").checked = false;
     updateSegBatchBtnState();
   }
+}
+
+// ---------- 審核佇列背景非同步佇列與防抖同步 (Async Review Queue & Debounced Sync) ----------
+const pendingReviewTasks = [];
+let isProcessingReviewQueue = false;
+let reviewSyncTimer = null;
+
+function triggerDebouncedQueueSync() {
+  if (reviewSyncTimer) clearTimeout(reviewSyncTimer);
+  // 在使用者停止連續審核/刪除 600ms 後，靜默背景同步統計數據與可能自動過審的佇列
+  reviewSyncTimer = setTimeout(async () => {
+    try {
+      await refreshSidebar();
+    } catch (e) {}
+  }, 600);
+}
+
+async function processPendingReviewQueue() {
+  if (isProcessingReviewQueue || pendingReviewTasks.length === 0) return;
+  isProcessingReviewQueue = true;
+
+  while (pendingReviewTasks.length > 0) {
+    const task = pendingReviewTasks.shift();
+    try {
+      if (task.type === "review") {
+        const res = await fetch(`/api/segments/${task.segId}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label: task.label }),
+        });
+        if (res.ok) {
+          pushUndoAction({
+            type: "REVIEW_SEGMENT",
+            segId: task.segId,
+            prevLabel: task.prevLabel || "",
+            predictedLabel: task.predictedLabel || "",
+            newLabel: task.label,
+            imageId: task.imageId
+          });
+        } else {
+          showToast(`「${task.label}」審核失敗`, "error");
+        }
+      } else if (task.type === "delete") {
+        const res = await fetch(`/api/segments/${task.segId}`, { method: "DELETE" });
+        if (res.ok) {
+          releaseSegmentResources(task.segId);
+          state.autoSegCompleted = false;
+          updateAutoSegBtn();
+        } else {
+          showToast("刪除遮罩失敗", "error");
+        }
+      }
+    } catch (err) {
+      console.error("背景審核任務失敗:", err);
+    }
+  }
+
+  isProcessingReviewQueue = false;
+  triggerDebouncedQueueSync();
+}
+
+function animateAndRemoveQueueItem(liElement, callback) {
+  if (!liElement) return;
+  liElement.classList.add("queue-item-slide-out");
+  setTimeout(() => {
+    if (liElement.parentNode) {
+      liElement.parentNode.removeChild(liElement);
+    }
+    const ul = $("reviewQueue");
+    if (ul && ul.children.length === 0) {
+      ul.innerHTML = "<li class='hint' style='padding: 12px; text-align: center; color: var(--muted);'>🎉 無待審核片段（全數過審完成）</li>";
+    }
+    if (callback) callback();
+  }, 250);
 }
 
 // ---------- 匯出資料集（專案的最終產出：圖 + 遮罩 + 標籤）----------
@@ -2357,6 +2487,8 @@ $("cancelImgBatchBtn").onclick = () => toggleImgBatchUI(false);
 function toggleSegBatchUI(isBatch) {
   state.segBatchMode = isBatch;
   $("toggleSegBatchModeBtn").style.display = isBatch ? "none" : "block";
+  const confWrap = $("batchConfirmConfWrap");
+  if (confWrap) confWrap.style.display = isBatch ? "flex" : "none";
   $("batchDelSegsBtn").style.display = isBatch ? "block" : "none";
   $("cancelSegBatchBtn").style.display = isBatch ? "block" : "none";
   $("selectAllSegsLabel").style.display = isBatch ? "flex" : "none";
@@ -2365,6 +2497,10 @@ function toggleSegBatchUI(isBatch) {
 
 $("toggleSegBatchModeBtn").onclick = () => toggleSegBatchUI(true);
 $("cancelSegBatchBtn").onclick = () => toggleSegBatchUI(false);
+const batchConfirmBtn = $("batchConfirmHighConfBtn");
+if (batchConfirmBtn) {
+  batchConfirmBtn.onclick = handleBatchConfirmHighConfidence;
+}
 
 // 照片篩選器變更事件
 const filterSelectEl = $("imgFilterSelect");
@@ -2532,10 +2668,17 @@ function clearCanvasAndCurrentState() {
   state.autoSegCompleted = false;
   state.lastSegments = [];
   state.points = [];
+  setSegmentationLoading(false);
+  if (typeof hideProgressModal === "function") hideProgressModal();
   $("autoSegBtn").disabled = true;
   $("drawBtn").disabled = true;
-  $("textPromptInput").disabled = true;
+  $("textPromptInput").disabled = false;
   $("textSegBtn").disabled = true;
+  const batchBtn = $("batchTextSegBtn");
+  if (batchBtn) {
+    batchBtn.disabled = false;
+    batchBtn.textContent = "⚡ 批次多圖標註";
+  }
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
@@ -2545,15 +2688,17 @@ async function fetchProjects() {
     if (!res.ok) return;
     const data = await res.json();
     state.currentProjectId = data.active_project_id;
-    const select = $("projectSelect");
-    if (!select) return;
-    select.innerHTML = "";
-    (data.projects || []).forEach((p) => {
-      const opt = document.createElement("option");
-      opt.value = p.id;
-      opt.textContent = p.name;
-      if (p.id === data.active_project_id) opt.selected = true;
-      select.appendChild(opt);
+    
+    [ $("projectSelect"), $("mobileProjectSelect") ].forEach((select) => {
+      if (!select) return;
+      select.innerHTML = "";
+      (data.projects || []).forEach((p) => {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name;
+        if (p.id === data.active_project_id) opt.selected = true;
+        select.appendChild(opt);
+      });
     });
   } catch (err) {
     console.error("載入專案清單失敗:", err);
@@ -2639,134 +2784,177 @@ function showModal({ title, desc = "", showInput = false, inputLabel = "", input
 }
 
 function initProjectControls() {
-  const select = $("projectSelect");
-  if (select) {
-    select.onchange = async () => {
-      const selectedId = select.value;
-      if (selectedId && selectedId !== state.currentProjectId) {
-        await selectProject(selectedId);
-      }
-    };
-  }
-
-  const createBtn = $("createProjectBtn");
-  if (createBtn) {
-    createBtn.onclick = async () => {
-      let currentName = "新專案";
-      while (true) {
-        const name = await showModal({
-          title: "✨ 建立新專案",
-          showInput: true,
-          inputLabel: "專案名稱",
-          inputValue: currentName,
-          confirmText: "建立專案"
-        });
-        if (name === null || !name.trim()) return;
-        currentName = name.trim();
-        try {
-          const res = await fetch("/api/projects", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: currentName, mode: state.mode })
-          });
-          if (!res.ok) throw new Error(await res.text());
-          clearCanvasAndCurrentState();
-          await fetchProjects();
-          await loadThumbs();
-          await refreshSidebar();
-          break;
-        } catch (err) {
-          let msg = err.message || "未知錯誤";
-          try {
-            const parsed = JSON.parse(msg);
-            if (parsed.error) msg = parsed.error;
-          } catch (_) { }
-          await showModal({
-            title: "⚠️ 建立專案失敗",
-            desc: msg,
-            confirmText: "確定",
-            showCancel: false
-          });
+  [ $("projectSelect"), $("mobileProjectSelect") ].forEach((select) => {
+    if (select) {
+      select.onchange = async () => {
+        const selectedId = select.value;
+        if (selectedId && selectedId !== state.currentProjectId) {
+          await selectProject(selectedId);
+          closeMobileMenu();
         }
-      }
-    };
-  }
+      };
+    }
+  });
 
-  const renameBtn = $("renameProjectBtn");
-  if (renameBtn) {
-    renameBtn.onclick = async () => {
-      if (!state.currentProjectId) return;
-      const selectEl = $("projectSelect");
-      const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
-      const oldName = currentOpt ? currentOpt.textContent : "";
-      let currentName = oldName;
-      while (true) {
-        const newName = await showModal({
-          title: "✏️ 重新命名專案",
-          showInput: true,
-          inputLabel: "新的專案名稱",
-          inputValue: currentName,
-          confirmText: "儲存修改"
-        });
-        if (newName === null || !newName.trim() || newName.trim() === oldName) return;
-        currentName = newName.trim();
-        try {
-          const res = await fetch(`/api/projects/${state.currentProjectId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: currentName })
-          });
-          if (!res.ok) throw new Error(await res.text());
-          await fetchProjects();
-          break;
-        } catch (err) {
-          let msg = err.message || "未知錯誤";
-          try {
-            const parsed = JSON.parse(msg);
-            if (parsed.error) msg = parsed.error;
-          } catch (_) { }
-          await showModal({
-            title: "⚠️ 修改專案名稱失敗",
-            desc: msg,
-            confirmText: "確定",
-            showCancel: false
-          });
-        }
-      }
-    };
-  }
-
-  const deleteBtn = $("deleteProjectBtn");
-  if (deleteBtn) {
-    deleteBtn.onclick = async () => {
-      if (!state.currentProjectId) return;
-      const selectEl = $("projectSelect");
-      const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
-      const projName = currentOpt ? currentOpt.textContent : "此專案";
-      const confirmed = await showModal({
-        title: "⚠️ 確定要刪除專案嗎？",
-        desc: `專案「${projName}」內的所有照片、遮罩檔及分類成果將會被永久刪除且無法復原！`,
-        confirmText: "確認刪除",
-        isDanger: true
+  const handleCreate = async () => {
+    let currentName = "新專案";
+    while (true) {
+      const name = await showModal({
+        title: "✨ 建立新專案",
+        showInput: true,
+        inputLabel: "專案名稱",
+        inputValue: currentName,
+        confirmText: "建立專案"
       });
-      if (!confirmed) return;
-
+      if (name === null || !name.trim()) return;
+      currentName = name.trim();
       try {
-        const res = await fetch(`/api/projects/${state.currentProjectId}`, { method: "DELETE" });
+        const res = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: currentName, mode: state.mode })
+        });
         if (!res.ok) throw new Error(await res.text());
         clearCanvasAndCurrentState();
         await fetchProjects();
         await loadThumbs();
         await refreshSidebar();
+        closeMobileMenu();
+        break;
       } catch (err) {
-        alert("刪除專案失敗: " + err.message);
+        let msg = err.message || "未知錯誤";
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed.error) msg = parsed.error;
+        } catch (_) {}
+        await showModal({
+          title: "⚠️ 建立專案失敗",
+          desc: msg,
+          confirmText: "確定",
+          showCancel: false
+        });
       }
+    }
+  };
+
+  const createBtn = $("createProjectBtn");
+  if (createBtn) createBtn.onclick = handleCreate;
+  const mobileCreateBtn = $("mobileCreateProjectBtn");
+  if (mobileCreateBtn) mobileCreateBtn.onclick = handleCreate;
+
+  const handleRename = async () => {
+    if (!state.currentProjectId) return;
+    const selectEl = $("projectSelect") || $("mobileProjectSelect");
+    const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
+    const oldName = currentOpt ? currentOpt.textContent : "";
+    let currentName = oldName;
+    while (true) {
+      const newName = await showModal({
+        title: "✏️ 重新命名專案",
+        showInput: true,
+        inputLabel: "新的專案名稱",
+        inputValue: currentName,
+        confirmText: "儲存修改"
+      });
+      if (newName === null || !newName.trim() || newName.trim() === oldName) return;
+      currentName = newName.trim();
+      try {
+        const res = await fetch(`/api/projects/${state.currentProjectId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: currentName })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await fetchProjects();
+        closeMobileMenu();
+        break;
+      } catch (err) {
+        let msg = err.message || "未知錯誤";
+        try {
+          const parsed = JSON.parse(msg);
+          if (parsed.error) msg = parsed.error;
+        } catch (_) {}
+        await showModal({
+          title: "⚠️ 修改專案名稱失敗",
+          desc: msg,
+          confirmText: "確定",
+          showCancel: false
+        });
+      }
+    }
+  };
+
+  const renameBtn = $("renameProjectBtn");
+  if (renameBtn) renameBtn.onclick = handleRename;
+  const mobileRenameBtn = $("mobileRenameProjectBtn");
+  if (mobileRenameBtn) mobileRenameBtn.onclick = handleRename;
+
+  const handleDelete = async () => {
+    if (!state.currentProjectId) return;
+    const selectEl = $("projectSelect") || $("mobileProjectSelect");
+    const currentOpt = selectEl ? selectEl.selectedOptions[0] : null;
+    const projName = currentOpt ? currentOpt.textContent : "此專案";
+    const confirmed = await showModal({
+      title: "⚠️ 確定要刪除專案嗎？",
+      desc: `專案「${projName}」內的所有照片、遮罩檔及分類成果將會被永久刪除且無法復原！`,
+      confirmText: "確認刪除",
+      isDanger: true
+    });
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/projects/${state.currentProjectId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await res.text());
+      clearCanvasAndCurrentState();
+      await fetchProjects();
+      await loadThumbs();
+      await refreshSidebar();
+      closeMobileMenu();
+    } catch (err) {
+      alert("刪除專案失敗: " + err.message);
+    }
+  };
+
+  const deleteBtn = $("deleteProjectBtn");
+  if (deleteBtn) deleteBtn.onclick = handleDelete;
+  const mobileDeleteBtn = $("mobileDeleteProjectBtn");
+  if (mobileDeleteBtn) mobileDeleteBtn.onclick = handleDelete;
+}
+
+function closeMobileMenu() {
+  const drawer = $("mobileMenuDrawer");
+  const backdrop = $("mobileMenuBackdrop");
+  if (drawer) drawer.classList.remove("open");
+  if (backdrop) backdrop.classList.remove("open");
+}
+
+function openMobileMenu() {
+  const drawer = $("mobileMenuDrawer");
+  const backdrop = $("mobileMenuBackdrop");
+  if (drawer) drawer.classList.add("open");
+  if (backdrop) backdrop.classList.add("open");
+}
+
+function initMobileMenu() {
+  const menuBtn = $("mobileMenuBtn");
+  const closeBtn = $("closeMobileMenuBtn");
+  const backdrop = $("mobileMenuBackdrop");
+
+  if (menuBtn) menuBtn.onclick = openMobileMenu;
+  if (closeBtn) closeBtn.onclick = closeMobileMenu;
+  if (backdrop) backdrop.onclick = closeMobileMenu;
+
+  document.querySelectorAll(".mobile-mode-switch").forEach((sw) => {
+    sw.onclick = () => {
+      const mode = state.mode === "layman" ? "engineer" : "layman";
+      applyMode(mode);
     };
-  }
+  });
 }
 
 // 初始載入
 async function initApp() {
+  initMobileMenu();
   initProjectControls();
   await fetchProjects();
   await loadThumbs();
@@ -2791,13 +2979,18 @@ function applyMode(mode) {
   localStorage.setItem("mode", mode);
 
   const isEng = mode === "engineer";
-  $("laymanModeBtn").classList.toggle("active", !isEng);
-  $("engineerModeBtn").classList.toggle("active", isEng);
+  ["laymanModeBtn", "mobileLaymanModeBtn"].forEach((id) => {
+    const el = $(id);
+    if (el) el.classList.toggle("active", !isEng);
+  });
+  ["engineerModeBtn", "mobileEngineerModeBtn"].forEach((id) => {
+    const el = $(id);
+    if (el) el.classList.toggle("active", isEng);
+  });
 
-  const wrapper = document.querySelector(".mode-switch-wrapper");
-  if (wrapper) {
+  document.querySelectorAll(".mode-switch-wrapper").forEach((wrapper) => {
     wrapper.classList.toggle("eng-active", isEng);
-  }
+  });
 
   document.body.classList.toggle("layman-mode", !isEng);
 
@@ -2889,23 +3082,23 @@ function updateCenterText(chartCanvasId, text, color) {
 function updateCharts(stats) {
   if (typeof Chart === "undefined") return;
 
-  // 1. 自動過審 vs 手動標籤
+  // 1. 純 AI 自動過審 vs 手動標籤 vs 待審核
+  const pureAuto = stats.pure_auto_accepted !== undefined ? stats.pure_auto_accepted : Math.max(0, stats.total_segments - stats.reviewed - stats.need_review);
   const laborSavingCtx = $("laborSavingChart").getContext("2d");
-  const totalLabeled = stats.auto_accepted + stats.reviewed;
-  const autoRatioPercent = totalLabeled ? (stats.auto_accepted / totalLabeled * 100).toFixed(0) + "%" : "0%";
-  $("laborSavingSub").innerHTML = `自動過審: <b>${stats.auto_accepted}</b> / 手動標籤: <b>${stats.reviewed}</b>`;
+  const autoRatioPercent = stats.total_segments ? ((pureAuto / stats.total_segments) * 100).toFixed(0) + "%" : "0%";
+  $("laborSavingSub").innerHTML = `純 AI 自動過審: <b>${pureAuto}</b> / 手動標籤: <b>${stats.reviewed}</b>`;
 
   if (laborSavingChartInstance) {
-    laborSavingChartInstance.data.datasets[0].data = [stats.auto_accepted, stats.reviewed];
+    laborSavingChartInstance.data.datasets[0].data = [pureAuto, stats.reviewed, stats.need_review];
     laborSavingChartInstance.update();
   } else {
     laborSavingChartInstance = new Chart(laborSavingCtx, {
       type: 'doughnut',
       data: {
-        labels: ['自動過審', '手動標籤'],
+        labels: ['純 AI 自動過審', '手動標籤', '待審核'],
         datasets: [{
-          data: [stats.auto_accepted, stats.reviewed],
-          backgroundColor: ['#36d399', '#4f9cff'],
+          data: [pureAuto, stats.reviewed, stats.need_review],
+          backgroundColor: ['#36d399', '#4f9cff', '#ff5470'],
           borderWidth: 1,
           borderColor: '#28323f'
         }]
@@ -3061,18 +3254,21 @@ if (switchWrapper) {
 
 // 深色 / 淺色主題切換控制 (Dark / Light Mode Toggle)
 function initThemeToggle() {
-  const themeBtn = document.getElementById("themeToggleBtn");
   const savedTheme = localStorage.getItem("app_theme") || "dark";
   document.documentElement.setAttribute("data-theme", savedTheme);
 
-  if (themeBtn) {
-    themeBtn.onclick = () => {
-      const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
-      const nextTheme = currentTheme === "dark" ? "light" : "dark";
-      document.documentElement.setAttribute("data-theme", nextTheme);
-      localStorage.setItem("app_theme", nextTheme);
-    };
-  }
+  const toggleTheme = () => {
+    const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
+    const nextTheme = currentTheme === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", nextTheme);
+    localStorage.setItem("app_theme", nextTheme);
+  };
+
+  const themeBtn = document.getElementById("themeToggleBtn");
+  if (themeBtn) themeBtn.onclick = toggleTheme;
+
+  const mobileThemeBtn = document.getElementById("mobileThemeToggleBtn");
+  if (mobileThemeBtn) mobileThemeBtn.onclick = toggleTheme;
 }
 initThemeToggle();
 
@@ -3129,31 +3325,7 @@ function bindNumericInputGuard(inputEl, sliderEl, minVal, maxVal, onUpdate) {
   });
 }
 
-$("confThresholdInput").oninput = (e) => {
-  updateConfThresholdDisplay(e.target.value);
-};
-
-bindNumericInputGuard($("confThresholdValue"), $("confThresholdInput"), 0.0, 1.0, (num) => {
-  const clamped = Math.max(0.0, Math.min(1.0, num));
-  $("confThresholdInput").value = clamped;
-  updateConfThresholdDisplay(clamped);
-});
-
-$("yoloConfInput").oninput = (e) => {
-  const val = Number(e.target.value).toFixed(2);
-  if (document.activeElement !== $("yoloConfValue")) {
-    $("yoloConfValue").value = val;
-  }
-  updateSliderFill(e.target);
-};
-
-bindNumericInputGuard($("yoloConfValue"), $("yoloConfInput"), 0.1, 1.0, (num) => {
-  const clamped = Math.max(0.1, Math.min(1.0, num));
-  $("yoloConfInput").value = clamped;
-  updateSliderFill($("yoloConfInput"));
-});
-
-$("saveParamsBtn").onclick = async () => {
+async function saveAndApplyParameters(quiet = false) {
   let confidence_threshold = parseFloat($("confThresholdValue").value);
   if (isNaN(confidence_threshold)) {
     confidence_threshold = parseFloat($("confThresholdInput").value);
@@ -3164,22 +3336,121 @@ $("saveParamsBtn").onclick = async () => {
   }
   const yolo_imgsz = parseInt($("yoloImgszInput").value, 10);
 
+  const saveBtn = $("saveParamsBtn");
+  const origBtnText = saveBtn ? saveBtn.textContent : "";
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "⏳ 正在處理與重新預測中...";
+  }
+
+  if (!quiet) {
+    showProgressModal({
+      title: "正在儲存參數與重新預測…",
+      desc: "系統正在更新門檻並重新計算標註與送審狀態，請稍候。",
+      icon: "⚡"
+    });
+    updateProgressModal(30, 100, "正在發送參數更新請求…");
+  } else {
+    showToast("⚙️ 正在動態更新門檻與重新計算狀態…", "info", 1500);
+  }
+
   try {
     const res = await fetch("/api/parameters", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confidence_threshold, yolo_world_confidence, yolo_imgsz })
     });
+
+    if (!quiet) {
+      updateProgressModal(75, 100, "正在重繪畫布與更新審核面板…");
+    }
+
     if (res.ok) {
-      alert("參數儲存與重新預測成功！");
-      await refreshAfterSegChange();
+      await refreshSidebar();
+      if (state.currentImage) {
+        const segRes = await fetch(`/api/images/${state.currentImage.id}/segments`);
+        if (segRes.ok) {
+          const segs = await segRes.json();
+          await redraw(segs);
+        }
+      }
+      if (!quiet) {
+        updateProgressModal(100, 100, "計算與重新預測完成！");
+        setTimeout(hideProgressModal, 350);
+        showToast("參數儲存與重新預測成功！", "success");
+      }
     } else {
-      alert("儲存失敗：" + (await res.text()));
+      let errMsg = "儲存失敗";
+      try {
+        const errData = await res.json();
+        errMsg = errData.message || errData.error || errMsg;
+      } catch (e) {
+        errMsg = await res.text();
+      }
+      if (!quiet) {
+        hideProgressModal();
+        alert("儲存失敗：" + errMsg);
+      } else {
+        showToast("儲存失敗：" + errMsg, "error");
+      }
     }
   } catch (err) {
-    console.error(err);
-    alert("儲存時發生錯誤");
+    console.error("更新參數失敗:", err);
+    if (!quiet) {
+      hideProgressModal();
+      alert("儲存時發生錯誤");
+    }
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = origBtnText;
+    }
   }
+}
+
+$("confThresholdInput").oninput = (e) => {
+  updateConfThresholdDisplay(e.target.value);
+};
+
+$("confThresholdInput").onchange = () => {
+  saveAndApplyParameters(true);
+};
+
+bindNumericInputGuard($("confThresholdValue"), $("confThresholdInput"), 0.0, 1.0, (num) => {
+  const clamped = Math.max(0.0, Math.min(1.0, num));
+  $("confThresholdInput").value = clamped;
+  updateConfThresholdDisplay(clamped);
+  saveAndApplyParameters(true);
+});
+
+$("yoloConfInput").oninput = (e) => {
+  const val = Number(e.target.value).toFixed(2);
+  if (document.activeElement !== $("yoloConfValue")) {
+    $("yoloConfValue").value = val;
+  }
+  updateSliderFill(e.target);
+};
+
+$("yoloConfInput").onchange = () => {
+  saveAndApplyParameters(true);
+};
+
+bindNumericInputGuard($("yoloConfValue"), $("yoloConfInput"), 0.1, 1.0, (num) => {
+  const clamped = Math.max(0.1, Math.min(1.0, num));
+  $("yoloConfInput").value = clamped;
+  updateSliderFill($("yoloConfInput"));
+  saveAndApplyParameters(true);
+});
+
+if ($("yoloImgszInput")) {
+  $("yoloImgszInput").onchange = () => {
+    saveAndApplyParameters(true);
+  };
+}
+
+$("saveParamsBtn").onclick = () => {
+  saveAndApplyParameters(false);
 };
 
 // 初始套用模式
@@ -3325,6 +3596,7 @@ if (batchTextBtn) {
       return;
     }
 
+    const taskProjectId = state.currentProjectId;
     batchTextBtn.disabled = true;
     batchTextBtn.textContent = "⚡ 標註處理中...";
     setSegmentationLoading(true, `正在對 ${targetText} 進行批次標註 (${prompt})...`, true);
@@ -3341,7 +3613,25 @@ if (batchTextBtn) {
 
       if (!res.ok) {
         const err = await res.json();
-        alert("批次標註失敗：" + (err.error || "未知錯誤"));
+        if (res.status === 409 && err.error === "task_running" && err.active_task) {
+          const task = err.active_task;
+          const confirmed = await showModal({
+            title: "專案標註任務進行中",
+            desc: `此專案已有標註任務正在執行中：\nPrompt: "${task.prompt}" (${task.current}/${task.total})\n\n您要取消原本執行中的任務，或是前往工作列檢視？`,
+            confirmText: "取消原任務",
+            cancelText: "前往工作列",
+            isDanger: true,
+          });
+          if (confirmed) {
+            await fetch(`/api/segments/tasks/${task.id}/cancel`, { method: "POST" });
+            showToast("已發送取消任務訊號，請稍後重試", "info");
+            if (typeof pollGlobalTasks === "function") pollGlobalTasks();
+          } else {
+            if (typeof expandTaskDock === "function") expandTaskDock();
+          }
+        } else {
+          alert("批次標註失敗：" + (err.error || err.message || "未知錯誤"));
+        }
         setSegmentationLoading(false);
         batchTextBtn.disabled = false;
         batchTextBtn.textContent = "⚡ 批次多圖標註";
@@ -3366,9 +3656,11 @@ if (batchTextBtn) {
           try {
             const msg = JSON.parse(line);
             if (msg.event === "progress") {
-              const pct = Math.round((msg.current / msg.total) * 100);
-              updateProgressBar(pct);
-              setSegmentationLoading(true, `[${msg.current}/${msg.total}] 正在分析 ${msg.filename} (Prompt: '${prompt}')...`, true);
+              if (state.currentProjectId === taskProjectId) {
+                const pct = Math.round((msg.current / msg.total) * 100);
+                updateProgressBar(pct);
+                setSegmentationLoading(true, `[${msg.current}/${msg.total}] 正在分析 ${msg.filename} (Prompt: '${prompt}')...`, true);
+              }
             } else if (msg.event === "image_done") {
               successCnt++;
             } else if (msg.event === "image_error") {
@@ -3379,30 +3671,42 @@ if (batchTextBtn) {
               const totalNum = msg.total_images !== undefined ? msg.total_images : (successNum + failCnt);
               const failedNum = totalNum - successNum;
 
-              if (successNum === totalNum && totalNum > 0) {
-                alert(`🎉 批次標註全數成功！共成功標註 ${successNum} 張圖片！`);
-              } else if (successNum === 0) {
-                alert(`❌ 批次標註全數失敗！共 ${totalNum} 張圖片皆無法處理（請檢查模型或圖片）。`);
+              if (state.currentProjectId === taskProjectId) {
+                if (successNum === totalNum && totalNum > 0) {
+                  alert(`🎉 批次標註全數成功！共成功標註 ${successNum} 張圖片！`);
+                } else if (successNum === 0) {
+                  alert(`❌ 批次標註全數失敗！共 ${totalNum} 張圖片皆無法處理（請檢查模型或圖片）。`);
+                } else {
+                  alert(`⚠️ 批次標註部分完成！成功：${successNum} 張，失敗：${failedNum} 張。`);
+                }
               } else {
-                alert(`⚠️ 批次標註部分完成！成功：${successNum} 張，失敗：${failedNum} 張。`);
+                showToast(`背景標註任務「${prompt}」已完成（成功：${successNum} 張）`, "success");
               }
             } else if (msg.event === "error") {
-              alert("批次標註發生錯誤：" + msg.message);
+              if (state.currentProjectId === taskProjectId) {
+                alert("批次標註發生錯誤：" + msg.message);
+              }
             }
           } catch (e) {
             console.error("解析進度失敗", e);
           }
         }
       }
-      await refreshSidebar();
-      if (state.currentImage && state.currentImage.id) {
-        await selectImageById(state.currentImage.id);
+      if (state.currentProjectId === taskProjectId) {
+        await refreshSidebar();
+        if (state.currentImage && state.currentImage.id) {
+          await selectImageById(state.currentImage.id);
+        }
       }
     } catch (err) {
       console.error("批次標註異常:", err);
-      alert("批次標註通訊失敗：" + err.message);
+      if (state.currentProjectId === taskProjectId) {
+        alert("批次標註通訊失敗：" + err.message);
+      }
     } finally {
-      setSegmentationLoading(false);
+      if (state.currentProjectId === taskProjectId) {
+        setSegmentationLoading(false);
+      }
       batchTextBtn.disabled = false;
       batchTextBtn.textContent = "⚡ 批次多圖標註";
     }
@@ -3594,6 +3898,7 @@ if (trainBtn) {
       alert("🎉 訓練任務已成功發起！正在背景執行訓練...");
       const stopBtn = $("stopTrainingBtn");
       if (stopBtn) stopBtn.style.display = "inline-block";
+      if (typeof wakeTaskDockPolling === "function") wakeTaskDockPolling();
       checkTrainingStatus(state.currentProjectId);
     } catch (err) {
       console.error("觸發訓練失敗:", err);
@@ -3636,3 +3941,305 @@ if (stopTrainBtn) {
     }
   };
 }
+
+// ---------- Google Drive 風格懸浮 Task Dock 管理 ----------
+let taskDockPollTimer = null;
+let currentRunningTaskIds = new Set();
+let currentPollMs = 2500;
+
+function expandTaskDock() {
+  const dock = $("globalTaskDock");
+  if (dock) {
+    dock.style.display = "block";
+    dock.classList.remove("collapsed");
+    const toggleBtn = $("toggleTaskDockBtn");
+    if (toggleBtn) toggleBtn.textContent = "▼";
+  }
+}
+
+function collapseTaskDock() {
+  const dock = $("globalTaskDock");
+  if (dock) {
+    dock.classList.add("collapsed");
+    const toggleBtn = $("toggleTaskDockBtn");
+    if (toggleBtn) toggleBtn.textContent = "▲";
+  }
+}
+
+function initTaskDockUI() {
+  const dockHeader = $("globalTaskDockHeader");
+  const toggleBtn = $("toggleTaskDockBtn");
+
+  if (dockHeader) {
+    dockHeader.onclick = (e) => {
+      if (e.target.closest("button")) return;
+      const dock = $("globalTaskDock");
+      if (dock) {
+        const isCollapsed = dock.classList.toggle("collapsed");
+        if (toggleBtn) toggleBtn.textContent = isCollapsed ? "▲" : "▼";
+      }
+    };
+  }
+
+  if (toggleBtn) {
+    toggleBtn.onclick = (e) => {
+      e.stopPropagation();
+      const dock = $("globalTaskDock");
+      if (dock) {
+        const isCollapsed = dock.classList.toggle("collapsed");
+        toggleBtn.textContent = isCollapsed ? "▲" : "▼";
+      }
+    };
+  }
+}
+
+function updateTaskDockBadge(runningCount) {
+  const badgeText = $("globalTaskBadgeText");
+  if (!badgeText) return;
+  if (runningCount > 1) {
+    badgeText.textContent = `背景任務執行中 (${runningCount} 個進行中)`;
+  } else {
+    badgeText.textContent = "背景任務執行中";
+  }
+}
+
+function setPollInterval(ms) {
+  if (currentPollMs === ms && taskDockPollTimer) return;
+  currentPollMs = ms;
+  stopPollInterval();
+  taskDockPollTimer = setInterval(pollGlobalTasks, ms);
+}
+
+function stopPollInterval() {
+  if (taskDockPollTimer) {
+    clearInterval(taskDockPollTimer);
+    taskDockPollTimer = null;
+  }
+}
+
+function wakeTaskDockPolling() {
+  if (document.hidden) return;
+  pollGlobalTasks();
+  setPollInterval(2500);
+}
+
+async function pollGlobalTasks() {
+  if (document.hidden) {
+    stopPollInterval();
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/segments/tasks");
+    if (!res.ok) return;
+    const data = await res.json();
+    const tasks = data.tasks || [];
+    const runningTasks = tasks.filter((t) => t.status === "running");
+
+    const dock = $("globalTaskDock");
+    const body = $("globalTaskDockBody");
+    if (!dock || !body) return;
+
+    if (runningTasks.length > 0) {
+      dock.style.display = "block";
+      updateTaskDockBadge(runningTasks.length);
+
+      body.innerHTML = "";
+      runningTasks.forEach((task) => {
+        const pct = task.total > 0 ? Math.round((task.current / task.total) * 100) : 0;
+        const isDifferentProject = state.currentProjectId && task.project_id !== state.currentProjectId;
+
+        const card = document.createElement("div");
+        card.className = "task-dock-item-card";
+        card.style.cssText = "padding: 8px 0; border-bottom: 1px dashed var(--border);";
+
+        card.innerHTML = `
+          <div style="font-size: 12px; font-weight: 600; color: var(--text); display: flex; justify-content: space-between; align-items: center;">
+            <span>${task.prompt ? `Prompt: '${task.prompt}'` : (task.name || "背景任務")}</span>
+            <span style="font-size: 11px; color: var(--accent); font-weight: 700;">${pct}%</span>
+          </div>
+          <div style="font-size: 11px; color: var(--muted); margin-top: 2px;">專案: ${task.project_name || "當前專案"}</div>
+          <div class="task-progress-bar-wrap" style="height: 6px; margin: 6px 0;">
+            <div class="task-progress-bar-inner" style="width: ${pct}%;"></div>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; margin-top: 4px;">
+            <span style="color: var(--muted); font-weight: 500;">${task.current.toLocaleString()} / ${task.total.toLocaleString()} (${pct}%)</span>
+            <div style="display: flex; gap: 4px;">
+              ${isDifferentProject ? `<button type="button" class="btn-secondary switch-proj-btn" style="padding: 2px 6px; font-size: 10px;">切換專案</button>` : ""}
+              <button type="button" class="btn-danger cancel-task-btn" style="padding: 2px 6px; font-size: 10px;">取消</button>
+            </div>
+          </div>
+        `;
+
+        const switchBtn = card.querySelector(".switch-proj-btn");
+        if (switchBtn) {
+          switchBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (typeof selectProject === "function") selectProject(task.project_id);
+          };
+        }
+
+        const cancelBtn = card.querySelector(".cancel-task-btn");
+        if (cancelBtn) {
+          cancelBtn.onclick = async (e) => {
+            e.stopPropagation();
+            if (confirm(`確定要取消任務「${task.prompt || task.name || task.id}」嗎？`)) {
+              try {
+                const cancelRes = await fetch(`/api/segments/tasks/${task.id}/cancel`, { method: "POST" });
+                if (cancelRes.ok) {
+                  showToast("已發送取消任務訊號", "info");
+                  wakeTaskDockPolling();
+                }
+              } catch (err) { }
+            }
+          };
+        }
+
+        body.appendChild(card);
+      });
+
+      currentRunningTaskIds = new Set(runningTasks.map((t) => t.id));
+      setPollInterval(2500);
+
+    } else {
+      if (currentRunningTaskIds.size > 0) {
+        showToast("背景標註/訓練任務已處理完成！", "success");
+        currentRunningTaskIds.clear();
+        refreshAfterSegChange();
+        loadThumbs();
+      }
+      dock.style.display = "none";
+      // 完全無任務時，徹底停止定時器進入休眠 (Sleep)，伺服器 0 廢請求與廢日誌！
+      stopPollInterval();
+    }
+  } catch (err) { }
+}
+
+function startTaskDockPolling() {
+  initTaskDockUI();
+  // 綁定 Page Visibility API：切換分頁時暫停輪詢，切回時自動檢查與喚醒
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopPollInterval();
+    } else {
+      wakeTaskDockPolling();
+    }
+  });
+  // 初次加載時只查詢一次，無任務則進入休眠
+  pollGlobalTasks();
+}
+
+// ---------- 一鍵採納高信心遮罩與 Modal 進度條 ----------
+function showProgressModal({ title, desc, icon = "⏳" }) {
+  const modal = $("batchProgressModal");
+  if (!modal) return;
+  const iconEl = $("batchProgressIcon");
+  const titleEl = $("batchProgressTitle");
+  const descEl = $("batchProgressDesc");
+  const barInner = $("batchProgressBarInner");
+  const countText = $("batchProgressCountText");
+
+  if (iconEl) iconEl.textContent = icon;
+  if (titleEl) titleEl.textContent = title;
+  if (descEl) descEl.textContent = desc;
+  if (barInner) barInner.style.width = "0%";
+  if (countText) countText.textContent = "0 / 0 (0%)";
+
+  modal.classList.add("active");
+}
+
+function updateProgressModal(current, total, textHint) {
+  const barInner = $("batchProgressBarInner");
+  const countText = $("batchProgressCountText");
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+
+  if (barInner) barInner.style.width = `${pct}%`;
+  if (countText) countText.textContent = textHint || `已處理 ${current.toLocaleString()} / ${total.toLocaleString()} (${pct}%)`;
+}
+
+function hideProgressModal() {
+  const modal = $("batchProgressModal");
+  if (modal) modal.classList.remove("active");
+}
+
+async function handleBatchConfirmHighConfidence() {
+  const actionEl = $("segBatchActionSelect");
+  const opEl = $("segBatchOpSelect");
+  const threshEl = $("segBatchThreshSelect");
+
+  const action = actionEl ? actionEl.value : "confirm";
+  const operator = opEl ? opEl.value : "gte";
+  const confThreshold = threshEl ? parseFloat(threshEl.value) : 0.80;
+
+  const opSymbol = operator === "lte" ? "≤" : "≥";
+  const actionText = action === "delete" ? "刪除" : "採納標籤";
+
+  if (!confirm(`確定要將所有信心值 ${opSymbol} ${confThreshold.toFixed(2)} 的待審核遮罩執行「${actionText}」嗎？`)) {
+    return;
+  }
+
+  showProgressModal({
+    title: `正在批次${actionText}遮罩…`,
+    desc: `系統正在將信心值 ${opSymbol} ${confThreshold.toFixed(2)} 的待審遮罩執行${actionText}，請稍候。`,
+    icon: action === "delete" ? "🗑️" : "⚡"
+  });
+
+  try {
+    const res = await fetch("/api/segments/batch_action_by_threshold", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confidence_threshold: confThreshold,
+        operator: operator,
+        action: action
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || err.message || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalProcessed = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.event === "start") {
+            updateProgressModal(0, msg.total, `找到 ${msg.total} 個符合條件的遮罩準備${actionText}…`);
+          } else if (msg.event === "progress") {
+            finalProcessed = msg.confirmed_count;
+            updateProgressModal(msg.current, msg.total, `已${actionText} ${msg.confirmed_count.toLocaleString()} / ${msg.total.toLocaleString()} 個遮罩`);
+          } else if (msg.event === "done") {
+            finalProcessed = msg.confirmed_count;
+            updateProgressModal(msg.total, msg.total, `${actionText}完成！共處理 ${msg.confirmed_count.toLocaleString()} 個遮罩`);
+          }
+        } catch (e) { }
+      }
+    }
+
+    await delay(500);
+    hideProgressModal();
+    showToast(`成功批次${actionText} ${finalProcessed} 個遮罩！`, "success");
+    await refreshAfterSegChange();
+    await loadThumbs();
+    await refreshSidebar();
+  } catch (err) {
+    hideProgressModal();
+    showToast(`批次${actionText}失敗：` + err.message, "error");
+  }
+}
+
+// 啟動 Task Dock 背景輪詢機制
+startTaskDockPolling();

@@ -68,14 +68,76 @@
       {% endif %}
       <a class="btn-link" href="{{ url_for('auth.logout') }}">登出</a>
     </div>
+    <button id="mobileMenuBtn" class="mobile-menu-btn" type="button" aria-label="切換選單">
+      <svg class="hamburger-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24">
+        <line x1="3" y1="12" x2="21" y2="12"></line>
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="18" x2="21" y2="18"></line>
+      </svg>
+    </button>
   </header>
+
+  <!-- 手機版浮動選單遮罩與 Drawer Modal -->
+  <div id="mobileMenuBackdrop" class="mobile-menu-backdrop"></div>
+  <div id="mobileMenuDrawer" class="mobile-menu-drawer">
+    <div class="mobile-menu-header">
+      <h3 class="mobile-menu-title">選單與設定</h3>
+      <button id="closeMobileMenuBtn" class="mobile-menu-close-btn" type="button" aria-label="關閉選單">✕</button>
+    </div>
+    <div class="mobile-menu-body">
+      <!-- 使用者帳號與 LINE 狀態 -->
+      <div class="mobile-menu-group mobile-user-info-group">
+        {% if display_name %}<div class="mobile-user-name">👤 <b>{{ display_name }}</b></div>{% endif %}
+        <div class="mobile-user-actions">
+          {% if line_bound %}
+          <span class="line-badge">已綁定 LINE</span>
+          {% else %}
+          <a class="btn-link line" href="{{ url_for('auth.line_start') }}">綁定 LINE</a>
+          {% endif %}
+          <a class="btn-link" href="{{ url_for('auth.logout') }}">登出</a>
+        </div>
+      </div>
+
+      <!-- 專案選擇與管理 -->
+      <div class="mobile-menu-group">
+        <label class="mobile-menu-label">📂 專案選擇與管理</label>
+        <div class="mobile-project-select-row">
+          <select id="mobileProjectSelect" class="project-select" style="width: 100%; padding: 8px 10px; border-radius: 8px; font-size: 14px; margin-bottom: 8px;">
+          </select>
+        </div>
+        <div class="mobile-project-btns-row" style="display: flex; gap: 6px; width: 100%;">
+          <button id="mobileCreateProjectBtn" class="btn-secondary" type="button" style="flex: 1; padding: 7px 0; font-size: 13px;">+ 新建</button>
+          <button id="mobileRenameProjectBtn" class="btn-secondary" type="button" style="flex: 1; padding: 7px 0; font-size: 13px;">重新命名</button>
+          <button id="mobileDeleteProjectBtn" class="btn-danger" type="button" style="flex: 1; padding: 7px 0; font-size: 13px;">刪除</button>
+        </div>
+      </div>
+
+      <!-- 模式切換 -->
+      <div class="mobile-menu-group">
+        <label class="mobile-menu-label">🎨 模式切換</label>
+        <div class="mode-switch-wrapper mobile-mode-switch" style="width: 100%; margin-top: 4px;">
+          <div class="mode-switch-bg"></div>
+          <button id="mobileLaymanModeBtn" class="mode-btn active" type="button" style="flex: 1;">素人模式</button>
+          <button id="mobileEngineerModeBtn" class="mode-btn" type="button" style="flex: 1;">工程師模式</button>
+        </div>
+      </div>
+
+      <!-- 主題切換 -->
+      <div class="mobile-menu-group mobile-menu-row-between">
+        <label class="mobile-menu-label">🌙 外觀主題</label>
+        <button id="mobileThemeToggleBtn" class="btn-secondary" type="button" style="padding: 8px 14px; font-size: 13px;">
+          切換深色/淺色主題
+        </button>
+      </div>
+    </div>
+  </div>
 
   <main>
     <div class="left-col">
       <!-- 1. 上傳 -->
       <section class="panel">
         <h2 style="margin-bottom: 8px;">1 · 上傳照片與資料集</h2>
-        <input type="file" id="fileInput" multiple accept="image/*,.zip,.7z,.tar,.gz,.tgz,.bz2,.xz"
+        <input type="file" id="fileInput" multiple accept="image/*,.zip,.tar,.gz,.tgz,.bz2,.xz"
           style="display: none;" />
         <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="點擊或拖曳檔案至此進行上傳">
           <div class="drop-zone-icon">
@@ -93,7 +155,7 @@
             <div class="drop-zone-specs">
               <div class="spec-line"><span class="spec-label">單張照片 &lt;25 MB</span> — JPG, PNG, WEBP, BMP, TIFF, HEIC,
                 AVIF</div>
-              <div class="spec-line"><span class="spec-label">資料集壓縮檔 &lt;8 GB</span> — ZIP, TAR, 7Z (自動解壓提取圖片)</div>
+              <div class="spec-line"><span class="spec-label">資料集壓縮檔 &lt;8 GB</span> — ZIP, TAR (自動解壓提取圖片)</div>
             </div>
 
             <div class="drop-zone-actions"
@@ -238,7 +300,7 @@
       </div>
       <div class="toolbar">
         <div class="tool-group">
-          <button id="autoSegBtn" class="layman-hide" disabled>自動分割整張</button>
+          <button id="autoSegBtn" disabled>自動分割整張</button>
           <div class="text-seg-wrap">
             <input type="text" id="textPromptInput" placeholder="輸入文字搜尋物件（如：strawberry）" />
             <button id="textSegBtn" disabled class="btn-link text-seg-btn">🔍 文字分割</button>
@@ -293,11 +355,34 @@
             style="display: none; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; margin: 0;">
             <input type="checkbox" id="selectAllSegs" /> 全選
           </label>
-          <div style="display: flex; gap: 6px; margin-left: auto;">
+          <div style="display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap;">
+            <div id="batchConfirmConfWrap" style="display: none; align-items: center; gap: 4px; flex-wrap: wrap;">
+              <select id="segBatchActionSelect" class="btn-secondary"
+                style="padding: 2px 6px; font-size: 11px; border-radius: 4px; cursor: pointer; background: var(--input-bg);">
+                <option value="confirm" selected>✅ 採納遮罩</option>
+                <option value="delete">🗑️ 刪除遮罩</option>
+              </select>
+              <select id="segBatchOpSelect" class="btn-secondary"
+                style="padding: 2px 6px; font-size: 11px; border-radius: 4px; cursor: pointer; background: var(--input-bg);">
+                <option value="gte" selected>≥ (大於等於)</option>
+                <option value="lte">≤ (小於等於)</option>
+              </select>
+              <select id="segBatchThreshSelect" class="btn-secondary"
+                style="padding: 2px 6px; font-size: 11px; border-radius: 4px; cursor: pointer; background: var(--input-bg);">
+                <option value="0.90">0.90 (極高)</option>
+                <option value="0.80" selected>0.80 (高信心)</option>
+                <option value="0.70">0.70 (中高)</option>
+                <option value="0.60">0.60 (一般)</option>
+                <option value="0.50">0.50 (寬鬆)</option>
+                <option value="0.30">0.30 (極低)</option>
+              </select>
+              <button id="batchConfirmHighConfBtn" class="btn-primary"
+                style="padding: 3px 8px; font-size: 11px; background: linear-gradient(135deg, #10b981, #059669); color: white; border-radius: 4px; border: none; cursor: pointer; white-space: nowrap;">⚡ 確定執行</button>
+            </div>
             <button id="toggleSegBatchModeBtn" class="btn-secondary"
               style="padding: 3px 8px; font-size: 11px;">批次管理</button>
             <button id="batchDelSegsBtn" class="btn-danger" style="padding: 3px 8px; font-size: 11px; display: none;"
-              disabled>確認刪除</button>
+              disabled>刪除勾選項目</button>
             <button id="cancelSegBatchBtn" class="btn-secondary"
               style="padding: 3px 8px; font-size: 11px; display: none;">取消</button>
           </div>
@@ -498,8 +583,52 @@
     </div>
   </div>
 
+  <!-- 6. 專用批次處理進度 Modal (Batch Progress Modal) -->
+  <div id="batchProgressModal" class="modal-overlay" style="z-index: 10000;">
+    <div class="modal-card progress-modal-card">
+      <div style="font-size: 32px; margin-bottom: 8px;" id="batchProgressIcon">⏳</div>
+      <h3 id="batchProgressTitle" class="progress-modal-title">正在進行批次處理…</h3>
+      <p id="batchProgressDesc" class="progress-modal-desc">請稍候，伺服器正在計算並更新資料，請勿關閉網頁。</p>
+      
+      <div class="task-progress-bar-wrap" style="height: 10px; border-radius: 5px; margin: 16px 0;">
+        <div id="batchProgressBarInner" class="task-progress-bar-inner" style="height: 100%; border-radius: 5px; width: 0%;"></div>
+      </div>
+      
+      <div style="font-size: 13px; color: var(--muted); font-weight: 600;" id="batchProgressCountText">0 / 0 (0%)</div>
+    </div>
+  </div>
+
+  <!-- 7. Google Drive 風格懸浮 Task Dock -->
+  <div id="globalTaskDock" class="global-task-dock collapsed" style="display: none;">
+    <div id="globalTaskDockHeader" class="global-task-dock-header">
+      <div class="global-task-dock-title">
+        <span id="globalTaskBadgeIcon">⚡</span>
+        <span id="globalTaskBadgeText">背景任務執行中</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button id="toggleTaskDockBtn" type="button" class="toast-close" title="展開/縮小" style="font-size: 12px;">▲</button>
+      </div>
+    </div>
+    <div id="globalTaskDockBody" class="global-task-dock-body">
+      <div style="font-size: 12.5px; font-weight: 600; color: var(--text);" id="globalTaskPromptName">Prompt: -</div>
+      <div style="font-size: 11.5px; color: var(--muted); margin-top: 2px;" id="globalTaskProjectName">專案: -</div>
+      
+      <div class="task-progress-bar-wrap">
+        <div id="globalTaskProgressBarInner" class="task-progress-bar-inner"></div>
+      </div>
+      
+      <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; margin-top: 4px;">
+        <span id="globalTaskStatusText" style="color: var(--muted); font-weight: 500;">0 / 0 張 (0%)</span>
+        <div style="display: flex; gap: 6px;">
+          <button id="switchTaskProjectBtn" type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 11px; display: none;">切換至此專案</button>
+          <button id="cancelGlobalTaskBtn" type="button" class="btn-danger" style="padding: 2px 8px; font-size: 11px;">取消任務</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="{{ url_for('static', filename='js/vendor/chart.umd.min.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=1.2"></script>
 </body>
 
 </html>
