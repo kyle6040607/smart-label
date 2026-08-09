@@ -69,23 +69,39 @@ def trigger_training(project_id: str):
         }), 400
 
     data = request.get_json(silent=True) or {}
+    mode = str(data.get("mode", "normal"))
+
+    if mode == "quick":
+        epochs = 10
+        patience = 3
+    elif mode == "normal":
+        epochs = 50
+        patience = 10
+    else:
+        try:
+            epochs = int(data.get("epochs", 50))
+        except (ValueError, TypeError):
+            return jsonify({"error": "訓練輪數 (epochs) 必須為有效的整數"}), 400
+
+        if epochs < 1 or epochs > 500:
+            return jsonify({"error": "訓練輪數 (epochs) 必須介於 1 至 500 之間"}), 400
+
+        try:
+            patience = int(data.get("patience", 10))
+        except (ValueError, TypeError):
+            return jsonify({"error": "早停忍受輪數 (patience) 必須為有效的整數"}), 400
+
+        if patience < 0 or patience > 500:
+            return jsonify({"error": "早停忍受輪數 (patience) 必須介於 0 至 500 之間"}), 400
+
+        if patience > 0 and patience > epochs:
+            return jsonify({"error": f"早停忍受輪數 (patience: {patience}) 不得大於訓練輪數 (epochs: {epochs})"}), 400
+
     try:
-        epochs = int(data.get("epochs", 5))
+        imgsz = int(data.get("imgsz", 640))
     except (ValueError, TypeError):
-        return jsonify({"error": "訓練輪數 (epochs) 必須為有效的整數"}), 400
+        imgsz = 640
 
-    if epochs < 1 or epochs > 500:
-        return jsonify({"error": "訓練輪數 (epochs) 必須介於 1 至 500 之間"}), 400
-
-    try:
-        patience = int(data.get("patience", 100))
-    except (ValueError, TypeError):
-        return jsonify({"error": "早停忍受輪數 (patience) 必須為有效的整數"}), 400
-
-    if patience < 0 or patience > 100:
-        return jsonify({"error": "早停忍受輪數 (patience) 必須介於 0 至 100 之間"}), 400
-
-    imgsz = int(data.get("imgsz", 640))
     device = str(data.get("device", "auto"))
 
     task = AnnotationTask(

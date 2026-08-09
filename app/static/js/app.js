@@ -3839,6 +3839,48 @@ function stopTrainingPolling() {
   }
 }
 
+state.selectedTrainMode = "normal";
+
+function updateTrainingModeUI() {
+  const customParams = $("trainCustomParams");
+  const modeBtns = document.querySelectorAll(".train-mode-btn");
+
+  // 若非工程師模式卻選到了 custom，自動回退切回 normal 模式
+  if (state.mode !== "engineer" && state.selectedTrainMode === "custom") {
+    state.selectedTrainMode = "normal";
+  }
+
+  modeBtns.forEach((btn) => {
+    const btnMode = btn.dataset.mode;
+    const isSelected = btnMode === state.selectedTrainMode;
+    btn.classList.toggle("active", isSelected);
+    if (isSelected) {
+      btn.style.border = "1px solid var(--accent, #3b82f6)";
+      btn.style.background = "rgba(59,130,246,0.2)";
+      btn.style.color = "#60a5fa";
+      btn.style.fontWeight = "600";
+    } else {
+      btn.style.border = "1px solid var(--border-color, rgba(255,255,255,0.2))";
+      btn.style.background = "rgba(0,0,0,0.2)";
+      btn.style.color = "inherit";
+      btn.style.fontWeight = "normal";
+    }
+  });
+
+  const isCustom = state.selectedTrainMode === "custom" && state.mode === "engineer";
+  if (customParams) {
+    customParams.style.display = isCustom ? "flex" : "none";
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".train-mode-btn");
+  if (btn && btn.dataset.mode) {
+    state.selectedTrainMode = btn.dataset.mode;
+    updateTrainingModeUI();
+  }
+});
+
 const trainBtn = $("startTrainingBtn");
 if (trainBtn) {
   trainBtn.onclick = async () => {
@@ -3847,31 +3889,63 @@ if (trainBtn) {
       return;
     }
 
-    let epochs = 5;
-    let patience = 100;
+    updateTrainingModeUI();
+    const mode = state.selectedTrainMode || "normal";
+    let epochs = 50;
+    let patience = 10;
 
-    // 只有在工程師模式下才允許自訂與讀取輪數/早停參數
-    if (state.mode === "engineer") {
+    if (mode === "quick") {
+      epochs = 10;
+      patience = 3;
+    } else if (mode === "normal") {
+      epochs = 50;
+      patience = 10;
+    } else if (mode === "custom" && state.mode === "engineer") {
       const epochsEl = $("trainEpochsInput");
-      epochs = epochsEl ? parseInt(epochsEl.value, 10) : 5;
-      if (isNaN(epochs) || epochs < 1 || epochs > 500) {
-        alert("訓練輪數 (Epochs) 必須為 1 到 500 之間的整數！");
+      const epochsVal = epochsEl ? epochsEl.value.trim() : "";
+      if (!epochsVal || isNaN(parseInt(epochsVal, 10))) {
+        alert("自訂訓練輪數 (Epochs) 不得為空白且必須為有效整數！");
+        if (epochsEl) epochsEl.focus();
+        return;
+      }
+      epochs = parseInt(epochsVal, 10);
+      if (epochs < 1 || epochs > 500) {
+        alert("訓練輪數 (Epochs) 必須介於 1 到 500 之間的整數！");
         if (epochsEl) epochsEl.focus();
         return;
       }
 
       const patienceEl = $("trainPatienceInput");
-      patience = patienceEl ? parseInt(patienceEl.value, 10) : 100;
-      if (isNaN(patience) || patience < 0 || patience > 100) {
-        alert("早停忍受輪數 (Patience) 必須為 0 到 100 之間的整數！");
+      const patienceVal = patienceEl ? patienceEl.value.trim() : "";
+      if (!patienceVal || isNaN(parseInt(patienceVal, 10))) {
+        alert("自訂早停忍受輪數 (Patience) 不得為空白且必須為有效整數！");
         if (patienceEl) patienceEl.focus();
         return;
       }
+      patience = parseInt(patienceVal, 10);
+      if (patience < 0 || patience > 500) {
+        alert("早停忍受輪數 (Patience) 必須介於 0 到 500 之間的整數！");
+        if (patienceEl) patienceEl.focus();
+        return;
+      }
+
+      // 防早停大於訓練輪數
+      if (patience > 0 && patience > epochs) {
+        alert(`⚠️ 早停忍受輪數 (Patience: ${patience} 輪) 不得大於總訓練輪數 (Epochs: ${epochs} 輪)！`);
+        if (patienceEl) patienceEl.focus();
+        return;
+      }
+    } else {
+      epochs = 50;
+      patience = 10;
     }
 
-    const confirmMsg = state.mode === "engineer"
-      ? `確定要發送訓練請求嗎？\n- 訓練輪數 (Epochs): ${epochs}\n- 早停忍受輪數 (Patience): ${patience === 0 ? "不啟用" : patience + " 輪"}`
-      : "確定要對此專案已標註的照片發起 YOLOv26x-seg 模型訓練嗎？";
+    // 自動讀取套用 YOLO-World 設定的 imgsz 數值
+    const yoloImgszEl = $("yoloImgszInput");
+    const imgsz = yoloImgszEl ? (parseInt(yoloImgszEl.value, 10) || 640) : 640;
+
+    const modeNames = { quick: "⚡ 快速訓練", normal: "🎯 正常訓練", custom: "⚙️ 自訂訓練" };
+    const confirmMsg = `確定要發送訓練請求嗎？\n- 訓練模式: ${modeNames[mode] || mode}\n- 訓練輪數 (Epochs): ${epochs}\n- 早停忍受輪數 (Patience): ${patience === 0 ? "不啟用" : patience + " 輪"}\n- 訓練解析度 (imgsz): ${imgsz}`;
 
     if (!confirm(confirmMsg)) {
       return;
@@ -3884,7 +3958,7 @@ if (trainBtn) {
       const res = await fetch(`/api/projects/${state.currentProjectId}/train`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ epochs: epochs, patience: patience, imgsz: 640 }),
+        body: JSON.stringify({ mode: mode, epochs: epochs, patience: patience, imgsz: imgsz }),
       });
 
       const data = await res.json();

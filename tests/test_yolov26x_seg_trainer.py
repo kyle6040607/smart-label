@@ -211,23 +211,28 @@ def test_trigger_training_epochs_validation(tmp_path):
             with client.session_transaction() as sess:
                 sess["user_id"] = user.id
 
-            # 測試超出邊界 (epochs = 0)
-            res = client.post(f"/api/projects/{proj.id}/train", json={"epochs": 0})
+            # 測試自訂模式下超出邊界 (epochs = 0)
+            res = client.post(f"/api/projects/{proj.id}/train", json={"mode": "custom", "epochs": 0, "patience": 0})
             assert res.status_code == 400
             assert "必須介於 1 至 500 之間" in res.get_json()["error"]
 
-            # 測試非數值 (epochs = "abc")
-            res = client.post(f"/api/projects/{proj.id}/train", json={"epochs": "abc"})
+            # 測試自訂模式下非數值 (epochs = "abc")
+            res = client.post(f"/api/projects/{proj.id}/train", json={"mode": "custom", "epochs": "abc", "patience": 0})
             assert res.status_code == 400
             assert "必須為有效的整數" in res.get_json()["error"]
 
-            # 測試 patience 超出邊界 (patience = 101)
-            res = client.post(f"/api/projects/{proj.id}/train", json={"epochs": 10, "patience": 101})
+            # 測試自訂模式下 patience > epochs 防呆 (patience = 20, epochs = 10)
+            res = client.post(f"/api/projects/{proj.id}/train", json={"mode": "custom", "epochs": 10, "patience": 20})
             assert res.status_code == 400
-            assert "必須介於 0 至 100 之間" in res.get_json()["error"]
+            assert "不得大於訓練輪數" in res.get_json()["error"]
 
-            # 測試合法數值 (epochs = 10, patience = 3)
+            # 測試快速模式與正常模式合法觸發
             with patch("threading.Thread") as mock_thread:
-                res = client.post(f"/api/projects/{proj.id}/train", json={"epochs": 10, "patience": 3})
+                res = client.post(f"/api/projects/{proj.id}/train", json={"mode": "quick", "imgsz": 640})
+                assert res.status_code == 202
+                assert mock_thread.called
+
+            with patch("threading.Thread") as mock_thread:
+                res = client.post(f"/api/projects/{proj.id}/train", json={"mode": "normal", "imgsz": 640})
                 assert res.status_code == 202
                 assert mock_thread.called
