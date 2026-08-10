@@ -406,14 +406,32 @@
         <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
           <span>🤖 YOLOv26x-seg 線上訓練</span>
         </h3>
-        <div class="engineer-only" style="margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px;">
+          <label style="font-size: 12px; color: var(--muted, #aaa); font-weight: 500;">訓練模式:</label>
+          <div id="trainModeGroup" style="display: flex; gap: 6px; width: 100%; align-items: stretch;">
+            <button type="button" class="train-mode-btn" data-mode="quick" style="flex: 1 1 0px; min-width: 0; height: 52px; min-height: 52px; padding: 8px 4px !important; margin: 0 !important; font-size: 11px; border-radius: 6px; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); background: rgba(0,0,0,0.2); color: inherit; cursor: pointer; transition: all 0.2s; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.3; box-sizing: border-box;">
+              <span style="font-weight: 600;">⚡ 快速模式</span>
+              <span style="font-size: 10px; opacity: 0.85; margin-top: 3px;">(10輪 / 早停3)</span>
+            </button>
+            <button type="button" class="train-mode-btn active" data-mode="normal" style="flex: 1 1 0px; min-width: 0; height: 52px; min-height: 52px; padding: 8px 4px !important; margin: 0 !important; font-size: 11px; border-radius: 6px; border: 1px solid var(--accent, #3b82f6); background: rgba(59,130,246,0.2); color: #60a5fa; cursor: pointer; transition: all 0.2s; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.3; box-sizing: border-box;">
+              <span style="font-weight: 600;">🎯 正常模式</span>
+              <span style="font-size: 10px; opacity: 0.85; margin-top: 3px;">(50輪 / 早停10)</span>
+            </button>
+            <button type="button" class="train-mode-btn engineer-only" data-mode="custom" style="flex: 1 1 0px; min-width: 0; height: 52px; min-height: 52px; padding: 8px 4px !important; margin: 0 !important; font-size: 11px; border-radius: 6px; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); background: rgba(0,0,0,0.2); color: inherit; cursor: pointer; transition: all 0.2s; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.3; box-sizing: border-box;">
+              <span style="font-weight: 600;">⚙️ 自訂模式</span>
+              <span style="font-size: 10px; opacity: 0.85; margin-top: 3px;">(工程師專用)</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="trainCustomParams" class="engineer-only" style="margin-bottom: 10px; display: none; flex-direction: column; gap: 8px;">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
             <label for="trainEpochsInput" style="font-size: 12px; color: var(--muted, #aaa); white-space: nowrap;">訓練輪數 (Epochs):</label>
-            <input id="trainEpochsInput" type="number" min="1" max="500" value="5" placeholder="預設: 5" style="width: 90px; padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); background: rgba(0,0,0,0.2); color: inherit;" />
+            <input id="trainEpochsInput" type="number" min="1" max="500" value="50" placeholder="必填 (如: 50)" style="width: 90px; padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); background: rgba(0,0,0,0.2); color: inherit;" />
           </div>
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
             <label for="trainPatienceInput" style="font-size: 12px; color: var(--muted, #aaa); white-space: nowrap;" title="當訓練驗證指標連續特定輪數未提升時自動提前終止 (0 表示不啟用)">早停忍受輪數 (Patience):</label>
-            <input id="trainPatienceInput" type="number" min="0" max="100" value="100" placeholder="預設: 100" style="width: 90px; padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); background: rgba(0,0,0,0.2); color: inherit;" />
+            <input id="trainPatienceInput" type="number" min="0" max="500" value="10" placeholder="必填 (0不啟用)" style="width: 90px; padding: 4px 8px; font-size: 12px; border-radius: 4px; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); background: rgba(0,0,0,0.2); color: inherit;" />
           </div>
         </div>
         <div style="display: flex; gap: 8px; width: 100%;">

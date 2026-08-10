@@ -2232,3 +2232,18 @@ kbd {
   pointer-events: none !important;
 }
 
+/* 修復訓練模式按鈕在工程師模式下受 .engineer-only.show 全域外邊距污染問題 */
+.train-mode-btn.engineer-only {
+  max-height: none !important;
+  overflow: visible !important;
+}
+.train-mode-btn.engineer-only.show {
+  margin-top: 0 !important;
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+  border-color: var(--border-color, rgba(255,255,255,0.2)) !important;
+}
+.train-mode-btn.engineer-only.show.active {
+  border-color: var(--accent, #3b82f6) !important;
+}
+

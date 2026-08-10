@@ -87,12 +87,16 @@ def _mask_to_polygons(mask: np.ndarray) -> list[list[float]]:
     return polys
 
 
+from app.ml.yolo_world import letterbox
+
+
 def prepare_yolo_dataset(
     repo: Repository,
     storage: StorageService | None,
     user_id: str,
     project_id: str | None,
     work_dir: Path,
+    target_imgsz: int = 640,
 ) -> tuple[Path, list[str]]:
     """依據 user_id 與 project_id 從 Repository 撈出已標註片段，並建立 YOLO segmentation 資料集。
 
@@ -119,18 +123,27 @@ def prepare_yolo_dataset(
         if not image:
             continue
 
-        w, h = _image_size(image, segs, storage)
         safe_stem = f"{image.id}_{Path(image.filename).stem or 'img'}"
         suffix = Path(image.filename).suffix or ".jpg"
         img_dest = images_dir / f"{safe_stem}{suffix}"
 
-        # 複製/解出圖片檔至暫存區
+        # 讀取圖片矩陣並套用與 YOLO-World 相同的 Letterbox 預處理
         try:
             img_bytes = _read_bytes(image.path, storage)
-            img_dest.write_bytes(img_bytes)
+            bgr_img = cv2.imdecode(np.frombuffer(img_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if bgr_img is None:
+                logger.warning("無法解碼圖片 %s", image.path)
+                continue
+
+            letterbox_img, r, (pad_w, pad_h) = letterbox(
+                bgr_img, new_shape=target_imgsz, color=(114, 114, 114), scaleup=False
+            )
+            cv2.imwrite(str(img_dest), letterbox_img)
         except Exception as e:
-            logger.warning("無法讀取圖片 %s: %s", image.path, e)
+            logger.warning("無法處理圖片 %s: %s", image.path, e)
             continue
+
+        lh, lw = letterbox_img.shape[:2]
 
         lines: list[str] = []
         for s in segs:
@@ -140,9 +153,23 @@ def prepare_yolo_dataset(
             if mask is None:
                 continue
 
-            for poly in _mask_to_polygons(mask):
+            # 對 Mask 套用與原圖對應一致的 Letterbox (Resize + Border Padding)
+            orig_h, orig_w = mask.shape[:2]
+            new_unpad = (int(round(orig_w * r)), int(round(orig_h * r)))
+            if (orig_w, orig_h) != new_unpad:
+                mask_resized = cv2.resize(mask, new_unpad, interpolation=cv2.INTER_NEAREST)
+            else:
+                mask_resized = mask
+
+            top, bottom = int(round(pad_h - 0.1)), int(round(pad_h + 0.1))
+            left, right = int(round(pad_w - 0.1)), int(round(pad_w + 0.1))
+            letterbox_mask = cv2.copyMakeBorder(
+                mask_resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0
+            )
+
+            for poly in _mask_to_polygons(letterbox_mask):
                 coords = " ".join(
-                    f"{(v / w if i % 2 == 0 else v / h):.6f}"
+                    f"{(v / lw if i % 2 == 0 else v / lh):.6f}"
                     for i, v in enumerate(poly)
                 )
                 lines.append(f"{cls_idx[s.final_label]} {coords}")
@@ -218,6 +245,7 @@ def train_yolov26x_seg(
             user_id=task.user_id,
             project_id=task.project_id,
             work_dir=work_dir,
+            target_imgsz=imgsz,
         )
 
         from ultralytics import YOLO, settings
